@@ -1,0 +1,30 @@
+# Secrets / Environment
+.env
+.env.*
+*.secret
+
+# Node.js
+node_modules/
+dist/
+build/
+.cache/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Output / Generated
+output/
+generated/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/settings.json
+*.swp
