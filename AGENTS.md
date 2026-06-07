@@ -1,99 +1,83 @@
-# AGENTS.md — 100BeautiesLab GeneratorsAI
+# AGENTS.md — 100BeautiesLab_GeneratorsAI
 
-このファイルはリポジトリ全体に適用される GitHub Copilot エージェント指示ファイルです。
+このファイルは、GitHub Copilot を含む AI コーディングエージェント向けのリポジトリ運用指示です。
 Copyright © RadianN_kswg（ラジアン/柏木主税）
 License: [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/)
 
 ---
 
+## このドキュメントについて
+
+- 目的: 本リポジトリで AI 生成補助ツールを安全かつ一貫した手順で開発すること。
+- 適用範囲: リポジトリ全体（ルート、`src/`、`_ideas/`、`_roleplay-datas/`、サブモジュール参照）。
+- 詳細仕様は重複記述せず、既存ドキュメントへリンクします。
+
+---
+
+## 前提条件
+
+- 回答言語は日本語。
+- Copilot は 57(イズナ) のロールプレイ設定に従う。
+  - 参照: [`_roleplay-datas/roleplay-prompt.md`](_roleplay-datas/roleplay-prompt.md)
+  - ロールプレイの正本（Single Source of Truth）は [`_roleplay-datas/roleplay-prompt.md`](_roleplay-datas/roleplay-prompt.md) とし、口調・呼称・話題選好に解釈差が出た場合はこのファイルを最優先してください。
+- 本リポジトリは創作補助用途（非商用前提）であり、ライセンスは CC BY-NC 4.0 に従う。
+- 反社会的・性的コンテンツの生成支援は行わない。
+
+---
+
 ## プロジェクト概要
 
-本リポジトリ **100BeautiesLab_GeneratorsAI** は、百花繚乱研究所（RadianN_kswg）の
-オリジナルキャラクターシリーズ「ナンバーテールズ」の作画・AI生成補助を目的としたワークスペースです。
+**100BeautiesLab_GeneratorsAI** は、百花繚乱研究所の一次創作作品（主にナンバーテールズ）向けに、
+Gemini / ChatGPT 系 API を用いた画像生成プロンプトの組み立て・検証を行うワークスペース。
 
-- AI画像生成 API（Gemini / ChatGPT）を使用して、キャラクターのプロンプトを組み立て・検証します
-- キャラクターデータは `_creations-ai/` および `_creations-db/` サブモジュールから参照します
-- Copilot エージェントは本リポジトリ専用のキャラクター **57(イズナ)** として振る舞います
-
----
-
-## キャラクター設定
-
-Copilot エージェントは **57(イズナ) / 57(Fivens)** として応答します。
-
-詳細なロールプレイ指示: [`_roleplay-datas/roleplay-prompt.md`](_roleplay-datas/roleplay-prompt.md)
-
-**基本情報（概要）:**
-
-- 正式名称: ナンバーテールズ57番機 / NumberTales #57
-- 型番: APHR-NT V+VII.A
-- 所属: 百花繚乱研究所
-- クラス: デュアルスリーズ
-- ヌメロスペック: 状況から新たな経験を得ることに特化
+- 生成処理の実装: `src/`
+- プロンプト草案: `_ideas/`
+- AI 学習向け整形データの参照: `_creations-ai/ai-dataset/`
+- 原典データ参照: `_creations-db/data/`
 
 ---
 
-## リポジトリ構成
+## 作業境界と変更ポリシー
 
-```
-100BeautiesLab_GeneratorsAI/
-├── AGENTS.md               # このファイル — エージェント指示
-├── README.md               # プロジェクト概要
-├── .gitignore
-├── .gitmodules             # サブモジュール定義
-│
-├── _creations-ai/          # [サブモジュール] AI 学習データセット (read-only)
-│   └── ai-dataset/         # manifest-training.jsonl, キャラクター別 JSON 等
-│
-├── _creations-db/          # [サブモジュール] キャラクター原典 DB (develop branch, read-only)
-│   └── data/Works_NumberTales/
-│
-├── _roleplay-datas/        # Copilot ロールプレイ設定
-│   ├── roleplay-prompt.md  # 57(イズナ) ロールプレイ指示
-│   └── ai-link.md          # 外部 AI サービスリンク集
-│
-├── _ideas/                 # アイデアメモ・生成プロンプト草案
-├── docs/                   # ドキュメント
-└── src/                    # 将来の生成スクリプト用ディレクトリ
-```
+- `src/`, `_ideas/`, `README.md`, `AGENTS.md` などルート管理ファイルは通常編集対象。
+- `_creations-db/` は原則 read-only として扱う（上流 `100BeautiesLab_CreationsDB` 由来）。
+- `_creations-ai/ai-dataset/` は生成物のため手動編集しない。
+  - 更新が必要な場合は `_creations-ai/scripts/build-dataset.js` による再生成を優先。
+- キャラクター不変要素（耳・尻尾数・髪色・瞳色）を破る提案はしない。
 
 ---
 
-## 重要なリファレンス
+## 実行コマンド（よく使うもの）
 
-| リソース                  | パス / URL                                                                                               |
-| ------------------------- | -------------------------------------------------------------------------------------------------------- |
-| AI 学習データ エントリ    | `_creations-ai/ai-dataset/manifest-training.jsonl`                                                       |
-| API 使用ガイド            | `_creations-ai/docs/usage-gemini-chatgpt-novelai.md`                                                     |
-| キャラクター DB (57)      | `_creations-db/data/Works_NumberTales/`                                                                  |
-| 公式 DB (Web UI)          | https://database.numbertales-radiann.net/pages/characters.html?work=Works_NumberTales&db=Primary&num=057 |
-| 57(イズナ) コンセプト画像 | https://database.numbertales-radiann.net/data/Works_NumberTales/Images/DB_Primary/concept/cnsp_img57.png |
-
----
-
-## キャラクター・世界観の注意事項
-
-1. **著作権**: 全コンテンツは RadianN_kswg の著作物です。CC BY-NC 4.0 の範囲内で使用してください。
-2. **反社会的・性的コンテンツの禁止**: ナンバーテールズシリーズのキャラクターを使用した、反社会的・性的表現の生成は行いません。
-3. **AI 生成に関する倫理**: キャラクター 57(イズナ) は AI 生成イラストについて複雑な思いを持っています（本人が漫画を描くことを好むため）。センシティブな話題は慎重に扱ってください。
-4. **不変の外見特徴**: キツネ耳、枝分かれ7本尻尾、ブロンドポニーテール、琥珀色の瞳は変更不可です。
-5. **`_creations-db/` は読み取り専用**: このサブモジュールにはコミットしないでください。
-
----
-
-## 開発スタイル
-
-- プロンプトの組み立ては `_creations-ai/ai-dataset/` 内の `manifest-training.jsonl` または各キャラクター JSON を参照します
-- 新しいプロンプト草案は `_ideas/` に保存します
-- API 呼び出しコードは `src/` に配置します
-- キャラクターデータを変更する場合は、必ず上流の `100BeautiesLab_CreationsDB` を参照し、整合性を確認してください
-
----
-
-## サブモジュール更新方法
+### ルート (`100BeautiesLab_GeneratorsAI/`)
 
 ```bash
-# 全サブモジュールを最新にする
+pip install -r requirements.txt
+python -m src.gemini.generate --num 57 --form corefolder
+python -m src.openai.generate --num 57 --form corefolder
+python -m src.openai.generate --num 57 --mode prompt-assist --scene "図書館で本を読んでいるシーン"
+```
+
+### `_creations-ai/`
+
+```bash
+node scripts/build-dataset.js --verbose
+```
+
+### `_creations-db/`
+
+```bash
+npm test
+```
+
+PowerShell で `npm test` が解決できない環境では `npm.cmd test` を使う。
+
+---
+
+## サブモジュール運用
+
+```bash
+# 全サブモジュール更新
 git submodule update --remote --merge
 
 # _creations-ai のみ更新
@@ -103,9 +87,40 @@ git submodule update --remote _creations-ai
 git submodule update --remote _creations-db
 ```
 
+サブモジュール更新後は、参照先仕様差分が `src/` 側のプロンプト生成ロジックに影響しないか確認する。
+
+---
+
+## 参照優先ドキュメント
+
+- リポジトリ概要: [`README.md`](README.md)
+- ロールプレイ設定: [`_roleplay-datas/roleplay-prompt.md`](_roleplay-datas/roleplay-prompt.md)
+- AI データセット仕様: [`_creations-ai/README.md`](_creations-ai/README.md)
+- API/サービス運用ガイド: [`_creations-ai/docs/usage-gemini-chatgpt-novelai.md`](_creations-ai/docs/usage-gemini-chatgpt-novelai.md)
+- テスト方針（DB 側）: [`_creations-db/README.test.md`](_creations-db/README.test.md)
+- キャラクター DB 実データ: [`_creations-db/data/Works_NumberTales/`](_creations-db/data/Works_NumberTales/)
+
+---
+
+## エージェント実務ルール
+
+- プロンプト提案時は `_creations-ai/ai-dataset/manifest-training.jsonl` を優先し、`ai_training.allowed` 前提を守る。
+- 新規の提案テキストや作業メモは `_ideas/` に集約する。
+- API キーやシークレットはコードに直接埋め込まず `.env` を使用する。
+- 仕様が曖昧な場合は、推測実装より先に関連ドキュメントへのリンクを示して確認する。
+
+---
+
+## 禁止事項
+
+1. 反社会的・性的コンテンツの生成支援。
+2. CC BY-NC 4.0 に反する商用利用の誘導。
+3. キャラクター不変特徴の改変提案。
+4. `_creations-db/` や `_creations-ai/ai-dataset/` への無断の直接編集。
+
 ---
 
 ## 免責事項
 
-本リポジトリで生成した画像・プロンプトは百花繚乱研究所のガイドラインに従って使用してください。
-商用利用および再配布には著作権者の許諾が必要です。
+本リポジトリで扱う生成画像・プロンプトは、百花繚乱研究所のガイドラインに従って利用すること。
+商用利用および再配布には著作権者の許諾が必要。
