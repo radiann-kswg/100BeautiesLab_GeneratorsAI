@@ -75,9 +75,12 @@ def generate_image(
     data = build_gemini_prompt(record, form)
     prompt_text = data["prompt"]
     ref_url = data["reference_image_url"]
+    ref_urls = data.get("reference_image_urls") or []
+    ref_locals = data.get("reference_local_paths") or []
 
     print(f"[INFO] キャラクター: {record['data'].get('Name', num)} / 形態: {form}")
     print(f"[INFO] 参照画像: {ref_url or '(なし)'}")
+    print(f"[INFO] 参照画像候補: URL {len(ref_urls)}件 / ローカル {len(ref_locals)}件")
     print(f"[INFO] モデル: {model} / 生成枚数: {count}")
 
     client = genai.Client(api_key=api_key)

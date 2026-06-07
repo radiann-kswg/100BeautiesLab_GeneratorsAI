@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import mimetypes
 import os
 import sys
 from pathlib import Path
@@ -31,7 +32,19 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-from src.utils import find_character, build_dalle_prompt  # noqa: E402
+from src.utils import find_character, build_dalle_prompt, collect_reference_images  # noqa: E402
+
+
+def _local_image_to_data_url(path: str) -> str | None:
+    p = Path(path)
+    if not p.exists() or not p.is_file():
+        return None
+    mime, _ = mimetypes.guess_type(str(p))
+    if not mime:
+        mime = "image/png"
+    raw = p.read_bytes()
+    encoded = base64.b64encode(raw).decode("ascii")
+    return f"data:{mime};base64,{encoded}"
 
 
 def generate_image_dalle(
@@ -76,9 +89,14 @@ def generate_image_dalle(
         sys.exit(f"[ERROR] キャラクター #{num} ({work_key}) が見つかりません。")
 
     prompt_text = build_dalle_prompt(record, form)
+    references = collect_reference_images(record, form=form)
 
     print(f"[INFO] キャラクター: {record['data'].get('Name', num)} / 形態: {form}")
     print(f"[INFO] モデル: {model} / サイズ: {size}")
+    print(
+        f"[INFO] 参照画像候補: URL {len(references['urls'])}件 / "
+        f"ローカル {len(references['local_paths'])}件"
+    )
 
     client = OpenAI(api_key=api_key)
 
@@ -138,27 +156,45 @@ def assist_prompt_gpt(
 
     base_prompt = build_dalle_prompt(record, form)
     char_name = record["data"].get("Name", f"#{num}")
+    references = collect_reference_images(record, form=form)
 
     system_message = (
         "あなたは画像生成プロンプトの専門家です。"
         "ナンバーテールズシリーズのキャラクターデータを元に、"
         "DALL-E 3 向けに最適化された自然文プロンプトを提案してください。"
         "外見不変要素（耳・尻尾の本数・髪色・瞳色）は必ず維持してください。"
+        "可能な限り添付された参照画像と作風を合わせてください。"
     )
 
     user_message = (
         f"キャラクター「{char_name}」の {form} 形態のプロンプトを改善してください。\n\n"
+        "添付した創作DBの既存画像を優先参照し、画風と特徴の一貫性を高めてください。\n\n"
         f"[ベースプロンプト]\n{base_prompt}\n"
     )
     if user_scene:
         user_message += f"\n[描きたいシーン・追加要素]\n{user_scene}"
+
+    user_content: list[dict[str, object]] = [{"type": "text", "text": user_message}]
+
+    for url in references["urls"][:3]:
+        user_content.append({"type": "image_url", "image_url": {"url": url}})
+
+    for local_path in references["local_paths"][:3]:
+        data_url = _local_image_to_data_url(local_path)
+        if data_url:
+            user_content.append({"type": "image_url", "image_url": {"url": data_url}})
+
+    print(
+        f"[INFO] prompt-assist 参照画像投入: URL {min(len(references['urls']), 3)}件 / "
+        f"ローカル {sum(1 for p in references['local_paths'][:3] if Path(p).exists())}件"
+    )
 
     client = OpenAI(api_key=api_key)
     response = client.chat.completions.create(
         model=gpt_model,
         messages=[
             {"role": "system", "content": system_message},
-            {"role": "user", "content": user_message},
+            {"role": "user", "content": user_content},
         ],
         max_tokens=1024,
     )
