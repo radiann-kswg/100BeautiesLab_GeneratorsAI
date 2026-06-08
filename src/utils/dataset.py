@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,15 @@ def _append_unique(values: list[str], value: Any) -> None:
     text = value.strip()
     if text and text not in values:
         values.append(text)
+
+
+def _sanitize_natural_language_description(text: Any) -> str:
+    """翻訳指示のメタ文言を除去し、モデルに渡す説明文を安定化する。"""
+    if not isinstance(text, str):
+        return ""
+    cleaned = text.strip()
+    cleaned = re.sub(r"^\[TRANSLATE[^\]]*\]:\s*", "", cleaned, flags=re.IGNORECASE)
+    return cleaned
 
 
 def _infer_image_category(path_text: str) -> str:
@@ -65,6 +75,43 @@ def _get_within_category_priority(path_text: str, form: str) -> int:
             return 1
 
     return 5
+
+
+def _apply_form_reference_focus(paths: list[str], form: str) -> list[str]:
+    """形態ごとの参照絞り込みを適用する。"""
+    if form != "corefolder":
+        return paths
+
+    focused_primary: list[str] = []
+    focused_fallback: list[str] = []
+    for path in paths:
+        category = _infer_image_category(path)
+        lower = path.replace("\\", "/").lower()
+        if category == "corefolder" or "/arts/corefolders/" in lower:
+            _append_unique(focused_primary, path)
+        elif category == "concept":
+            _append_unique(focused_fallback, path)
+
+    if focused_primary:
+        return focused_primary
+    if focused_fallback:
+        return focused_fallback
+
+    return paths
+
+
+def _sort_paths_for_form(paths: list[str], form: str) -> list[str]:
+    category_priority = _get_category_priority(form)
+    ranked = sorted(
+        enumerate(paths),
+        key=lambda item: (
+            category_priority.get(_infer_image_category(item[1]), len(category_priority)),
+            _get_within_category_priority(item[1], form),
+            _get_db_priority(item[1]),
+            item[0],
+        ),
+    )
+    return [path for _, path in ranked]
 
 
 def _extract_work_dir_from_key(work_key: str) -> str:
@@ -144,10 +191,10 @@ def collect_reference_images(
     form_data = (hints.get("forms") or {}).get(form) or {}
     url_values: list[str] = []
 
-    for value in (common.get("reference_images") or {}).values():
+    for value in (form_data.get("reference_images") or {}).values():
         if isinstance(value, str) and _is_path_compatible_with_form(value, form):
             _append_unique(url_values, value)
-    for value in (form_data.get("reference_images") or {}).values():
+    for value in (common.get("reference_images") or {}).values():
         if isinstance(value, str) and _is_path_compatible_with_form(value, form):
             _append_unique(url_values, value)
 
@@ -172,18 +219,14 @@ def collect_reference_images(
     for forced_path in _collect_forced_local_images(record, form, creations_db_base):
         _append_unique(local_candidates, forced_path)
 
-    category_priority = _get_category_priority(form)
-    ranked_candidates = sorted(
-        enumerate(local_candidates),
-        key=lambda item: (
-            category_priority.get(_infer_image_category(item[1]), len(category_priority)),
-            _get_within_category_priority(item[1], form),
-            _get_db_priority(item[1]),
-            item[0],
-        ),
-    )
-    for _, path in ranked_candidates:
+    ranked_candidates = _sort_paths_for_form(local_candidates, form)
+    for path in ranked_candidates:
         _append_unique(local_values, path)
+
+    url_values = _apply_form_reference_focus(url_values, form)
+    local_values = _apply_form_reference_focus(local_values, form)
+    url_values = _sort_paths_for_form(url_values, form)
+    local_values = _sort_paths_for_form(local_values, form)
 
     return {
         "urls": url_values[:max_images],
@@ -232,6 +275,49 @@ def find_character(
     return None
 
 
+@lru_cache(maxsize=1)
+def _load_form_common_dataset() -> dict[str, Any]:
+    """共通形態データセットを読み込む。存在しない場合は空辞書を返す。"""
+    path = Path(
+        os.environ.get(
+            "FORM_COMMON_DATASET_PATH",
+            "_ideas/form_common_dataset_numbertales.json",
+        )
+    )
+    if not path.exists() or not path.is_file():
+        return {}
+
+    try:
+        with path.open(encoding="utf-8") as f:
+            loaded = json.load(f)
+    except Exception:
+        return {}
+
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _build_form_common_dataset_block(form: str) -> str:
+    """共通形態データセットの要点をプロンプト用テキストとして返す。"""
+    dataset = _load_form_common_dataset()
+    forms = dataset.get("forms") or {}
+    profile = forms.get(form) if isinstance(forms, dict) else None
+    if not isinstance(profile, dict):
+        return ""
+
+    definition_ja = str(profile.get("definition_ja") or "").strip()
+    definition_en = str(profile.get("definition_en") or "").strip()
+    shape_keywords = ", ".join(profile.get("required_shape_keywords") or [])
+    disallow_keywords = ", ".join(profile.get("disallow_cross_form_keywords") or [])
+
+    return (
+        "[形態共通データセット]\n"
+        f"- 定義(ja): {definition_ja or '(なし)'}\n"
+        f"- 定義(en): {definition_en or '(なし)'}\n"
+        f"- 必須形状キーワード: {shape_keywords or '(なし)'}\n"
+        f"- 形態混入の禁止キーワード: {disallow_keywords or '(なし)'}"
+    )
+
+
 def build_novelai_prompt(record: dict[str, Any], form: str = "corefolder") -> dict[str, str]:
     """NovelAI / Stable Diffusion 用のポジティブ・ネガティブプロンプトを返す。"""
     hints = record.get("ai_hints") or {}
@@ -247,12 +333,54 @@ def build_dalle_prompt(record: dict[str, Any], form: str = "corefolder") -> str:
     hints = record.get("ai_hints") or {}
     common = hints.get("common") or {}
     form_data = (hints.get("forms") or {}).get(form) or {}
+    other_form = "humanoid" if form == "corefolder" else "corefolder"
+    other_form_data = (hints.get("forms") or {}).get(other_form) or {}
     references = collect_reference_images(record, form=form)
 
     identity_tags = ", ".join(common.get("identity_tags", []))
+    immutable_traits = ", ".join(common.get("immutable_traits", []))
     form_tags = ", ".join(form_data.get("form_tags", []))
-    negative_visuals = ", ".join(form_data.get("negative_visuals", []))
+    extra_negative_items: list[str] = []
+    if form == "corefolder":
+        extra_negative_items.extend(
+            [
+                "full humanoid body",
+                "human arms",
+                "human legs",
+                "school uniform",
+                "teenager body proportions",
+            ]
+        )
+    else:
+        extra_negative_items.extend(["extra arms", "extra hands", "more than two arms"])
+    negative_parts = [*form_data.get("negative_visuals", []), *extra_negative_items]
+    negative_visuals = ", ".join(negative_parts)
+    other_form_tags = ", ".join(other_form_data.get("form_tags", []))
+    other_outfit = ", ".join(other_form_data.get("outfit_features", []))
     ref_urls = ", ".join(references["urls"])
+    current_form_description = _sanitize_natural_language_description(
+        form_data.get("natural_language_description", "")
+    )
+    if form == "corefolder":
+        current_form_description += (
+            " Keep a compact mascot-like corefolder silhouette,"
+            " with no humanoid torso and no human limbs."
+        )
+    form_common_block = _build_form_common_dataset_block(form)
+    if form == "corefolder":
+        form_lock = (
+            "- corefolder 形態として描く\n"
+            "- humanoid の私服寄り要素を混入しない\n"
+            "- 装備・衣装の識別要素を省略しない\n"
+            "- 人型の腕・手・脚・足を描かない（非人型のコアフォルダ体型を維持）"
+        )
+    else:
+        form_lock = (
+            "- humanoid 形態として描く\n"
+            "- corefolder 装備を混入しない\n"
+            "- 私服寄りの表現を優先する\n"
+            "- 腕は必ず2本、手は2つ（余分な腕・手を描かない）"
+        )
 
     return (
         "このキャラクターを描いてください。\n\n"
@@ -260,11 +388,15 @@ def build_dalle_prompt(record: dict[str, Any], form: str = "corefolder") -> str:
         f"- 可能であれば以下の既存画像も参照してください。\n"
         f"- URL: {ref_urls or '(なし)'}\n"
         "- ローカル画像は添付される前提です。\n\n"
-        f"[素体特徴]\n{common.get('natural_language_description', '')}\n\n"
-        f"[今回の姿]\n{form_data.get('natural_language_description', '')}\n\n"
+        f"[素体特徴]\n{_sanitize_natural_language_description(common.get('natural_language_description', ''))}\n\n"
+        f"[今回の姿]\n{current_form_description}\n\n"
+        f"[形態固定ルール]\n{form_lock}\n\n"
         f"[識別記号 (必ず満たしてください)]\n"
         f"- {identity_tags}\n"
+        f"- {immutable_traits}\n"
         f"- {form_tags}\n\n"
+        f"{form_common_block}\n\n"
+        f"[混入禁止 (別形態由来)]\n{other_form_tags}, {other_outfit}\n\n"
         f"[避けるべき要素]\n{negative_visuals}"
     )
 
@@ -274,22 +406,69 @@ def build_gemini_prompt(record: dict[str, Any], form: str = "corefolder") -> dic
     hints = record.get("ai_hints") or {}
     common = hints.get("common") or {}
     form_data = (hints.get("forms") or {}).get(form) or {}
+    other_form = "humanoid" if form == "corefolder" else "corefolder"
+    other_form_data = (hints.get("forms") or {}).get(other_form) or {}
     references = collect_reference_images(record, form=form)
 
     palette = common.get("palette_priority") or {}
     identity_tags = ", ".join(common.get("identity_tags", []))
     form_tags = ", ".join(form_data.get("form_tags", []))
+    current_outfit = ", ".join(form_data.get("outfit_features", []))
+    extra_negative_items: list[str] = []
+    if form == "corefolder":
+        extra_negative_items.extend(
+            [
+                "full humanoid body",
+                "human arms",
+                "human legs",
+                "school uniform",
+                "teenager body proportions",
+            ]
+        )
+    else:
+        extra_negative_items.extend(["extra arms", "extra hands", "more than two arms"])
+    current_negative = ", ".join([*form_data.get("negative_visuals", []), *extra_negative_items])
+    other_form_tags = ", ".join(other_form_data.get("form_tags", []))
+    other_outfit = ", ".join(other_form_data.get("outfit_features", []))
     ref_urls = "\n".join(f"- {u}" for u in references["urls"])
+    current_form_description = _sanitize_natural_language_description(
+        form_data.get("natural_language_description", "")
+    )
+    if form == "corefolder":
+        current_form_description += (
+            " Keep a compact mascot-like corefolder silhouette,"
+            " with no humanoid torso and no human limbs."
+        )
+    form_common_block = _build_form_common_dataset_block(form)
+
+    if form == "corefolder":
+        form_lock = (
+            "- 必ず corefolder 形態として描くこと\n"
+            "- safety device harness / hoodie / corefolder要素を明確に残すこと\n"
+            "- humanoid の私服寄り表現に寄せないこと\n"
+            "- 人型の腕・手・脚・足を描かないこと（非人型シルエットを維持）"
+        )
+    else:
+        form_lock = (
+            "- 必ず humanoid 形態として描くこと\n"
+            "- corefolder 装備（harness/hoodie）を混入させないこと\n"
+            "- 私服寄りの humanoid 表現を優先すること\n"
+            "- 腕は2本、手は2つで固定し、余分な腕を描かないこと"
+        )
 
     prompt = (
         "以下の参照画像と同じキャラクターを、別のポーズで描いてください。\n\n"
         f"[参照画像URL]\n{ref_urls or '- (なし)'}\n\n"
         "[参照画像ローカル]\n- ローカル画像はAPIリクエスト時に添付されます。\n\n"
-        f"[素体特徴]\n{common.get('natural_language_description', '')}\n\n"
-        f"[今回の姿]\n{form_data.get('natural_language_description', '')}\n\n"
+        f"[素体特徴]\n{_sanitize_natural_language_description(common.get('natural_language_description', ''))}\n\n"
+        f"[今回の姿]\n{current_form_description}\n\n"
+        f"[形態固定ルール]\n{form_lock}\n\n"
         f"[識別記号 (必ず満たしてください)]\n"
         f"- {identity_tags}\n"
         f"- {form_tags}\n\n"
+        f"{form_common_block}\n\n"
+        f"[現在形態の重点要素]\n{current_outfit}\n\n"
+        f"[混入禁止 (別形態由来)]\n{other_form_tags}, {other_outfit}, {current_negative}\n\n"
         f"[パレット参考]\n"
         f"primary: {palette.get('primary', '')}\n"
         f"secondary: {palette.get('secondary', '')}\n"

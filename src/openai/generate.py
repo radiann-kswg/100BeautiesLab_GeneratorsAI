@@ -187,14 +187,17 @@ def assist_prompt_gpt(
         user_message += f"\n[描きたいシーン・追加要素]\n{user_scene}"
 
     user_content: list[dict[str, object]] = [{"type": "text", "text": user_message}]
+    response_input_parts: list[dict[str, object]] = [{"type": "input_text", "text": user_message}]
 
     for url in references["urls"][:3]:
         user_content.append({"type": "image_url", "image_url": {"url": url}})
+        response_input_parts.append({"type": "input_image", "image_url": url})
 
     for local_path in references["local_paths"][:3]:
         data_url = _local_image_to_data_url(local_path)
         if data_url:
             user_content.append({"type": "image_url", "image_url": {"url": data_url}})
+            response_input_parts.append({"type": "input_image", "image_url": data_url})
 
     print(
         f"[INFO] prompt-assist 参照画像投入: URL {min(len(references['urls']), 3)}件 / "
@@ -202,15 +205,52 @@ def assist_prompt_gpt(
     )
 
     client = OpenAI(api_key=api_key)
-    response = client.chat.completions.create(
-        model=gpt_model,
-        messages=[
-            {"role": "system", "content": system_message},
-            {"role": "user", "content": user_content},
-        ],
-        max_tokens=1024,
-    )
-    result = response.choices[0].message.content or ""
+    result = ""
+
+    def _local_fallback_prompt() -> str:
+        ref_urls = "\n".join(f"- {u}" for u in references["urls"][:3]) or "- (なし)"
+        scene_block = user_scene.strip() or "既存デザインに寄せた自然な立ち姿"
+        return (
+            "[fallback] OpenAI応答が取得できなかったため、ローカル補助案を返します。\n\n"
+            "このキャラクターを描いてください。\n\n"
+            "[参照画像URL]\n"
+            f"{ref_urls}\n\n"
+            f"[形態]\n{form}\n\n"
+            "[追加シーン]\n"
+            f"{scene_block}\n\n"
+            "[重要ルール]\n"
+            "- 既存画像の顔立ち・髪型・配色を優先\n"
+            "- 耳・尻尾本数・髪色・瞳色は不変\n"
+            "- corefolder 指定時は装備要素を維持し、humanoid寄せを避ける\n\n"
+            "[ベースプロンプト]\n"
+            f"{base_prompt}"
+        )
+
+    try:
+        resp = client.responses.create(
+            model=gpt_model,
+            instructions=system_message,
+            input=[{"role": "user", "content": response_input_parts}],
+            max_output_tokens=1024,
+        )
+        result = (getattr(resp, "output_text", None) or "").strip()
+    except Exception as err:
+        print(f"[WARN] responses API 失敗: {err} / chat.completions へフォールバック")
+
+    if not result or result.strip().lower().startswith("i'm sorry"):
+        response = client.chat.completions.create(
+            model=gpt_model,
+            messages=[
+                {"role": "system", "content": system_message},
+                {"role": "user", "content": user_content},
+            ],
+            max_tokens=1024,
+        )
+        result = (response.choices[0].message.content or "").strip()
+
+    if not result or result.strip().lower().startswith("i'm sorry"):
+        result = _local_fallback_prompt()
+
     return result
 
 
