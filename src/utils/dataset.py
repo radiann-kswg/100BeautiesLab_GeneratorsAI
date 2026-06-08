@@ -6,8 +6,10 @@ Copyright © RadianN_kswg — CC BY-NC 4.0
 from __future__ import annotations
 
 import json
+import importlib
 import os
 import re
+import sys
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -267,12 +269,95 @@ def find_character(
     work_key: str = "#Works_NumberTales",
     manifest_path: str | None = None,
 ) -> dict[str, Any] | None:
-    """番号と作品キーでキャラクターを検索して返す。見つからない場合は None。"""
+    """番号と作品キーでキャラクターを検索して返す。見つからない場合は None。
+
+    `_creations-db/pkg/python` の `CreationsDBClient` が利用可能な場合、
+    取得したレコードに原典DBレコードを `db_record` として統合する。
+    """
+    target: dict[str, Any] | None = None
     for r in get_characters(manifest_path):
         data = r.get("data", {})
         if r.get("work_key") == work_key and data.get("Num") == num:
-            return r
-    return None
+            target = r
+            break
+    if target is None:
+        return None
+
+    db_record = _fetch_db_record_via_creations_db_pkg(num=num, work_key=work_key)
+    if db_record is not None:
+        merged = dict(target)
+        merged["db_record"] = db_record
+        return merged
+    return target
+
+
+def _is_creations_db_pkg_enabled() -> bool:
+    return os.environ.get("CREATIONS_DB_PACKAGE_ENABLE", "1").strip() not in {
+        "0",
+        "false",
+        "False",
+    }
+
+
+def _creations_db_repo_root() -> Path:
+    project_root = Path(
+        os.environ.get("PROJECT_ROOT", Path(__file__).resolve().parents[2])
+    )
+    return Path(
+        os.environ.get(
+            "CREATIONS_DB_REPO_ROOT", project_root / "_creations-db"
+        )
+    )
+
+
+@lru_cache(maxsize=1)
+def _get_creationdb_client() -> Any | None:
+    """`_creations-db/pkg/python` の CreationsDBClient を返す。利用不可なら None。"""
+    if not _is_creations_db_pkg_enabled():
+        return None
+
+    repo_root = _creations_db_repo_root()
+    if not repo_root.exists() or not repo_root.is_dir():
+        return None
+
+    pkg_path = repo_root / "pkg" / "python"
+    if not pkg_path.exists():
+        return None
+
+    pkg_path_text = str(pkg_path)
+    if pkg_path_text not in sys.path:
+        sys.path.insert(0, pkg_path_text)
+
+    try:
+        module = importlib.import_module("creationsdb")
+    except Exception:
+        return None
+
+    client_cls = getattr(module, "CreationsDBClient", None)
+    if client_cls is None:
+        return None
+
+    try:
+        return client_cls(str(repo_root))
+    except Exception:
+        return None
+
+
+def _fetch_db_record_via_creations_db_pkg(
+    num: int, work_key: str
+) -> dict[str, Any] | None:
+    """原典DBレコードを `pkg/python` 経由で取得する。"""
+    client = _get_creationdb_client()
+    if client is None:
+        return None
+
+    work_id = work_key[1:] if work_key.startswith("#") else work_key
+    try:
+        record = client.get_record(work_id, "Primary", num, idx_key="Num")
+    except Exception:
+        return None
+
+    return record if isinstance(record, dict) else None
 
 
 @lru_cache(maxsize=1)
@@ -296,18 +381,46 @@ def _load_form_common_dataset() -> dict[str, Any]:
     return loaded if isinstance(loaded, dict) else {}
 
 
-def _build_form_common_dataset_block(form: str) -> str:
-    """共通形態データセットの要点をプロンプト用テキストとして返す。"""
+def _build_form_common_dataset_block(
+    form: str, record: dict[str, Any] | None = None
+) -> str:
+    """共通形態データセットの要点をプロンプト用テキストとして返す。
+
+    `record["db_record"]` がある場合は、原典DB起源の不変属性（TailsUnit / RaceType / FormalName）を
+    差し込んで形態表現のぶれを抑える。
+    """
     dataset = _load_form_common_dataset()
     forms = dataset.get("forms") or {}
     profile = forms.get(form) if isinstance(forms, dict) else None
     if not isinstance(profile, dict):
-        return ""
+        profile = {}
 
     definition_ja = str(profile.get("definition_ja") or "").strip()
     definition_en = str(profile.get("definition_en") or "").strip()
     shape_keywords = ", ".join(profile.get("required_shape_keywords") or [])
     disallow_keywords = ", ".join(profile.get("disallow_cross_form_keywords") or [])
+
+    db_lines: list[str] = []
+    if isinstance(record, dict):
+        db_record = record.get("db_record")
+        if isinstance(db_record, dict):
+            tails_unit = str(db_record.get("TailsUnit") or "").strip()
+            race_type = str(db_record.get("RaceType") or "").strip()
+            formal_name = str(db_record.get("FormalName") or "").strip()
+            formal_name_en = str(db_record.get("FormalName_EN") or "").strip()
+            if tails_unit:
+                db_lines.append(f"- DB原典/尾の構造: {tails_unit}")
+            if race_type:
+                db_lines.append(f"- DB原典/種別: {race_type}")
+            if formal_name:
+                db_lines.append(f"- DB原典/正式名: {formal_name}")
+            if formal_name_en:
+                db_lines.append(f"- DB原典/正式名(en): {formal_name_en}")
+
+    db_block = ("\n" + "\n".join(db_lines)) if db_lines else ""
+
+    if not (definition_ja or definition_en or shape_keywords or disallow_keywords or db_block):
+        return ""
 
     return (
         "[形態共通データセット]\n"
@@ -315,6 +428,7 @@ def _build_form_common_dataset_block(form: str) -> str:
         f"- 定義(en): {definition_en or '(なし)'}\n"
         f"- 必須形状キーワード: {shape_keywords or '(なし)'}\n"
         f"- 形態混入の禁止キーワード: {disallow_keywords or '(なし)'}"
+        f"{db_block}"
     )
 
 
@@ -366,21 +480,36 @@ def build_dalle_prompt(record: dict[str, Any], form: str = "corefolder") -> str:
             " Keep a compact mascot-like corefolder silhouette,"
             " with no humanoid torso and no human limbs."
         )
-    form_common_block = _build_form_common_dataset_block(form)
+    form_common_block = _build_form_common_dataset_block(form, record)
     if form == "corefolder":
         form_lock = (
             "- corefolder 形態として描く\n"
             "- humanoid の私服寄り要素を混入しない\n"
             "- 装備・衣装の識別要素を省略しない\n"
-            "- 人型の腕・手・脚・足を描かない（非人型のコアフォルダ体型を維持）"
+            "- 人型の腕・手・脚・足を描かない（非人型のコアフォルダ体型を維持）\n"
+            "- 尾は枝分かれを含めて·合計 7 本·を守る（定義以上も以下も描かない）"
         )
     else:
         form_lock = (
             "- humanoid 形態として描く\n"
             "- corefolder 装備を混入しない\n"
             "- 私服寄りの表現を優先する\n"
-            "- 腕は必ず2本、手は2つ（余分な腕・手を描かない）"
+            "- 腕は必ず 2 本、手は 2 つ（余分な腕・手を描かない）\n"
+            "- 尾は枝分かれを含めて·合計 7 本·を守る（定義以上も以下も描かない）"
         )
+
+    current_outfit_dalle = ", ".join(form_data.get("outfit_features", []))
+    silhouette_features = ", ".join(common.get("silhouette_features", []))
+    current_focus_lines: list[str] = []
+    if current_outfit_dalle:
+        current_focus_lines.append(f"- 衣装: {current_outfit_dalle}")
+    if silhouette_features:
+        current_focus_lines.append(f"- シルエット (形態によらず固定): {silhouette_features}")
+    current_focus_block = (
+        "[現在形態の重点要素]\n" + "\n".join(current_focus_lines) + "\n\n"
+        if current_focus_lines
+        else ""
+    )
 
     return (
         "このキャラクターを描いてください。\n\n"
@@ -395,6 +524,7 @@ def build_dalle_prompt(record: dict[str, Any], form: str = "corefolder") -> str:
         f"- {identity_tags}\n"
         f"- {immutable_traits}\n"
         f"- {form_tags}\n\n"
+        f"{current_focus_block}"
         f"{form_common_block}\n\n"
         f"[混入禁止 (別形態由来)]\n{other_form_tags}, {other_outfit}\n\n"
         f"[避けるべき要素]\n{negative_visuals}"
@@ -439,21 +569,23 @@ def build_gemini_prompt(record: dict[str, Any], form: str = "corefolder") -> dic
             " Keep a compact mascot-like corefolder silhouette,"
             " with no humanoid torso and no human limbs."
         )
-    form_common_block = _build_form_common_dataset_block(form)
+    form_common_block = _build_form_common_dataset_block(form, record)
 
     if form == "corefolder":
         form_lock = (
             "- 必ず corefolder 形態として描くこと\n"
             "- safety device harness / hoodie / corefolder要素を明確に残すこと\n"
             "- humanoid の私服寄り表現に寄せないこと\n"
-            "- 人型の腕・手・脚・足を描かないこと（非人型シルエットを維持）"
+            "- 人型の腕・手・脚・足を描かないこと（非人型シルエットを維持）\n"
+            "- 尾は枝分かれを含めて·合計 7 本·を厳守（それ以上も以下も描かない）"
         )
     else:
         form_lock = (
             "- 必ず humanoid 形態として描くこと\n"
             "- corefolder 装備（harness/hoodie）を混入させないこと\n"
             "- 私服寄りの humanoid 表現を優先すること\n"
-            "- 腕は2本、手は2つで固定し、余分な腕を描かないこと"
+            "- 腕は 2 本、手は 2 つで固定し、余分な腕を描かないこと\n"
+            "- 尾は枝分かれを含めて·合計 7 本·を厳守（それ以上も以下も描かない）"
         )
 
     prompt = (
@@ -466,6 +598,7 @@ def build_gemini_prompt(record: dict[str, Any], form: str = "corefolder") -> dic
         f"[識別記号 (必ず満たしてください)]\n"
         f"- {identity_tags}\n"
         f"- {form_tags}\n\n"
+        f"[シルエット特徴 (形態によらず固定)]\n- {', '.join(common.get('silhouette_features', [])) or '(なし)'}\n\n"
         f"{form_common_block}\n\n"
         f"[現在形態の重点要素]\n{current_outfit}\n\n"
         f"[混入禁止 (別形態由来)]\n{other_form_tags}, {other_outfit}, {current_negative}\n\n"
