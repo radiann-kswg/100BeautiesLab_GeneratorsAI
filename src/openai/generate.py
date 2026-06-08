@@ -42,7 +42,9 @@ from src.utils import (  # noqa: E402
     build_dalle_prompt,
     build_run_output_dir,
     collect_reference_images,
+    finalize_run_logs,
     find_character,
+    initialize_run_logs,
 )
 
 
@@ -118,21 +120,51 @@ def generate_image_dalle(
         f"ローカル {len(references['local_paths'])}件"
     )
 
+    log_paths = initialize_run_logs(
+        output_dir,
+        provider="openai",
+        num=num,
+        form=form,
+        work_key=work_key,
+        model=model,
+        prompt_text=prompt_text,
+        meta={
+            "mode": "dalle",
+            "size": size,
+            "quality_requested": requested_quality,
+            "reference_urls": references["urls"],
+            "reference_local_paths": references["local_paths"],
+            "character_name": record["data"].get("Name", str(num)),
+        },
+    )
+    print(f"[INFO] ログ: {log_paths['meta']}")
+
     client = OpenAI(api_key=api_key)
 
     quality = requested_quality
     if model.startswith("gpt-image") and quality == "standard":
         quality = "medium"
 
-    response = client.images.generate(
-        model=model,
-        prompt=prompt_text,
-        size=size,
-        quality=quality,
-        n=1,
-    )
-
     out_path = output_dir / f"num{num:03d}_{form}_dalle.png"
+
+    try:
+        response = client.images.generate(
+            model=model,
+            prompt=prompt_text,
+            size=size,
+            quality=quality,
+            n=1,
+        )
+    except Exception as err:
+        print(f"[ERROR] OpenAI 画像生成 API に失敗: {err}")
+        finalize_run_logs(
+            output_dir,
+            status="failed",
+            results=[{"file": str(out_path.name), "status": "failed"}],
+            errors=[{"messages": [str(err)]}],
+            extra={"quality": quality},
+        )
+        return None
 
     first = response.data[0]
     img_b64 = getattr(first, "b64_json", None)
@@ -144,9 +176,23 @@ def generate_image_dalle(
         urllib.request.urlretrieve(img_url, out_path)
     else:
         print("[WARN] 画像データ (url/b64_json) が空でした。")
+        finalize_run_logs(
+            output_dir,
+            status="failed",
+            results=[{"file": str(out_path.name), "status": "failed"}],
+            errors=[{"messages": ["画像データ (url/b64_json) が空"]}],
+            extra={"quality": quality},
+        )
         return None
 
     print(f"[OK] 保存: {out_path}")
+    finalize_run_logs(
+        output_dir,
+        status="ok",
+        results=[{"file": str(out_path.name), "status": "ok"}],
+        errors=[],
+        extra={"quality": quality},
+    )
     return out_path
 
 
@@ -155,6 +201,7 @@ def assist_prompt_gpt(
     form: str = "corefolder",
     work_key: str = "#Works_NumberTales",
     user_scene: str = "",
+    out_dir: str | None = None,
 ) -> str:
     """GPT-4o でプロンプトの改善提案を得る。
 
@@ -164,6 +211,9 @@ def assist_prompt_gpt(
     form:       形態
     work_key:   作品キー
     user_scene: 追加で描きたいシーンの説明 (任意)
+    out_dir:    出力ベースディレクトリ (省略時は ``OUTPUT_BASE_DIR``)。
+                配下に ``{ts}_openai_{form}_num{NNN}_prompt-assist/`` を作り、
+                プロンプト・GPT応答・メタを保存する。
 
     Returns
     -------
@@ -187,6 +237,33 @@ def assist_prompt_gpt(
     base_prompt = build_dalle_prompt(record, form)
     char_name = record["data"].get("Name", f"#{num}")
     references = collect_reference_images(record, form=form)
+
+    output_dir = build_run_output_dir(
+        provider="openai",
+        num=num,
+        form=form,
+        base_dir=out_dir,
+        suffix="prompt-assist",
+    )
+    print(f"[INFO] prompt-assist 出力先: {output_dir}")
+
+    log_paths = initialize_run_logs(
+        output_dir,
+        provider="openai",
+        num=num,
+        form=form,
+        work_key=work_key,
+        model=gpt_model,
+        prompt_text=base_prompt,
+        meta={
+            "mode": "prompt-assist",
+            "user_scene": user_scene,
+            "character_name": char_name,
+            "reference_urls": references["urls"][:3],
+            "reference_local_paths": references["local_paths"][:3],
+        },
+    )
+    print(f"[INFO] ログ: {log_paths['meta']}")
 
     system_message = (
         "あなたは画像生成プロンプトの専門家です。"
@@ -269,6 +346,16 @@ def assist_prompt_gpt(
     if not result or result.strip().lower().startswith("i'm sorry"):
         result = _local_fallback_prompt()
 
+    response_path = output_dir / "gpt_response.md"
+    response_path.write_text(result, encoding="utf-8")
+    print(f"[OK] GPT応答を保存: {response_path}")
+    finalize_run_logs(
+        output_dir,
+        status="ok" if result else "failed",
+        results=[{"file": response_path.name, "status": "ok" if result else "failed"}],
+        errors=[],
+    )
+
     return result
 
 
@@ -323,6 +410,7 @@ def main() -> None:
             form=args.form,
             work_key=args.work,
             user_scene=args.scene,
+            out_dir=args.out,
         )
         print("\n[GPT-4o プロンプト改善提案]\n")
         print(result)

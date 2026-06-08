@@ -33,7 +33,14 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-from src.utils import build_gemini_prompt, build_run_output_dir, find_character  # noqa: E402
+from src.utils import (  # noqa: E402
+    build_gemini_prompt,
+    build_run_output_dir,
+    finalize_run_logs,
+    find_character,
+    initialize_run_logs,
+    write_run_meta,
+)
 
 
 def _guess_mime_type(path_or_url: str) -> str:
@@ -162,6 +169,25 @@ def generate_image(
     print(f"[INFO] 参照画像候補: URL {len(ref_urls)}件 / ローカル {len(ref_locals)}件")
     print(f"[INFO] モデル: {model} / 生成枚数: {count}")
 
+    log_paths = initialize_run_logs(
+        output_dir,
+        provider="gemini",
+        num=num,
+        form=form,
+        work_key=work_key,
+        model=model,
+        prompt_text=prompt_text,
+        meta={
+            "character_name": record["data"].get("Name", str(num)),
+            "count": int(count),
+            "reference_model": reference_model,
+            "reference_image_url": ref_url,
+            "reference_image_urls": ref_urls,
+            "reference_local_paths": ref_locals,
+        },
+    )
+    print(f"[INFO] ログ: {log_paths['meta']}")
+
     client = genai.Client(api_key=api_key)
     ref_parts = _build_reference_parts(types, ref_urls, ref_locals, limit=4)
     use_reference_input = bool(ref_parts)
@@ -175,9 +201,20 @@ def generate_image(
             f"(IMAGEN_MODEL={model} から自動切替)"
         )
 
+    write_run_meta(
+        output_dir,
+        {
+            "multimodal_model": multimodal_model,
+            "use_reference_input": use_reference_input,
+        },
+    )
+
     saved: list[Path] = []
+    results: list[dict[str, object]] = []
+    errors: list[dict[str, object]] = []
     for i in range(count):
         image_data: bytes | None = None
+        attempt_errors: list[str] = []
 
         if use_reference_input:
             try:
@@ -193,41 +230,63 @@ def generate_image(
                 if generated:
                     image_data = generated[0]
                 else:
-                    print(
-                        f"[WARN] 画像 {i + 1}: 参照入力モードの生成結果が空でした。"
-                        "通常生成へフォールバックします。"
+                    msg = (
+                        f"画像 {i + 1}: 参照入力モードの生成結果が空でした。通常生成へフォールバックします。"
                     )
+                    print(f"[WARN] {msg}")
+                    attempt_errors.append(msg)
             except Exception as err:
-                print(
-                    f"[WARN] 画像 {i + 1}: 参照入力モードに失敗しました ({err})。"
-                    "通常生成へフォールバックします。"
-                )
+                msg = f"画像 {i + 1}: 参照入力モードに失敗 ({err})。通常生成へフォールバックします。"
+                print(f"[WARN] {msg}")
+                attempt_errors.append(msg)
 
         if image_data is None:
-            response = client.models.generate_images(
-                model=model,
-                prompt=prompt_text,
-                config=types.GenerateImagesConfig(
-                    number_of_images=1,
-                    aspect_ratio="1:1",
-                    safety_filter_level=types.SafetyFilterLevel.BLOCK_LOW_AND_ABOVE,
-                ),
-            )
+            try:
+                response = client.models.generate_images(
+                    model=model,
+                    prompt=prompt_text,
+                    config=types.GenerateImagesConfig(
+                        number_of_images=1,
+                        aspect_ratio="1:1",
+                        safety_filter_level=types.SafetyFilterLevel.BLOCK_LOW_AND_ABOVE,
+                    ),
+                )
 
-            generated = _extract_generated_image_bytes(response)
-            if generated:
-                image_data = generated[0]
-            else:
-                print(f"[WARN] 画像 {i + 1} の生成結果が空でした。スキップします。")
-                continue
+                generated = _extract_generated_image_bytes(response)
+                if generated:
+                    image_data = generated[0]
+                else:
+                    msg = f"画像 {i + 1} の生成結果が空でした。スキップします。"
+                    print(f"[WARN] {msg}")
+                    attempt_errors.append(msg)
+            except Exception as err:
+                msg = f"画像 {i + 1}: 通常生成も失敗しました ({err})"
+                print(f"[ERROR] {msg}")
+                attempt_errors.append(msg)
 
         out_path = output_dir / f"num{num:03d}_{form}_{i + 1:02d}.png"
         if image_data is None:
             print(f"[WARN] 画像 {i + 1}: 画像データが取得できませんでした。スキップします。")
+            results.append({"index": i + 1, "file": str(out_path.name), "status": "failed"})
+            errors.append({"index": i + 1, "messages": attempt_errors})
             continue
         out_path.write_bytes(image_data)
         print(f"[OK] 保存: {out_path}")
         saved.append(out_path)
+        results.append({"index": i + 1, "file": str(out_path.name), "status": "ok"})
+        if attempt_errors:
+            errors.append({"index": i + 1, "messages": attempt_errors})
+
+    final_status = "ok" if saved and not errors else (
+        "partial" if saved else "failed"
+    )
+    finalize_run_logs(
+        output_dir,
+        status=final_status,
+        results=results,
+        errors=errors,
+        extra={"saved_count": len(saved)},
+    )
 
     return saved
 

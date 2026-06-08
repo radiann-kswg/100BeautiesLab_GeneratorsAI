@@ -1,0 +1,130 @@
+{
+  "dataset": "NumberTales Form Common Dataset",
+  "work_key": "#Works_NumberTales",
+  "work_title_ja": "ナンバーテールズ",
+  "work_title_en": "NumberTales",
+  "version": "2026-06-08",
+  "source": {
+    "glossary": "_creations-db/data/Works_NumberTales/References/ref_Glossary.json",
+    "manifest": "_creations-ai/ai-dataset/manifest-training.jsonl",
+    "images_root": "_creations-db/data/Works_NumberTales/Images",
+    "glossary_figures_root": "_creations-db/data/Works_NumberTales/Images/Ref_Glossary/concept-figure"
+  },
+  "coverage": {
+    "characters_total": 105,
+    "characters_with_ai_hints": 92,
+    "corefolder_forms": 89,
+    "humanoid_forms": 24,
+    "both_forms": 24,
+    "db_primary_corefolder_png": 152,
+    "db_primary_arts_corefolders_png": 34,
+    "db_primary_arts_humanoids_png": 33
+  },
+  "forms": {
+    "corefolder": {
+      "db_term_ja": "コアフォルダ形態",
+      "db_term_en": "CoreFolder Form",
+      "db_summary_ja": "球体型でコンパクト収納された形態。メンテナンス時などに躯体の一部を内部に収納し、中枢部を保護する。コミュニケーション機能は維持されており、クッションやぬいぐるみのように抱きしめたり寄り添ったりできる。",
+      "definition_ja": "コアフォルダ形態は球体型で、躯体をコンパクト収納して中枢部を保護する形態。コミュニケーション性は維持される。",
+      "definition_en": "Corefolder form is a spherical compact-storage form that protects the central unit while retaining communication ability.",
+      "surface_description_ja": "全体は丸みのある球体〜卵型シルエットで、表面は柔らかいクッション/ぬいぐるみのような質感。中枢部を覆う一体型の外装と、首〜頭部相当の小さな顔面パーツのみ露出する。人間のような胴体・腕・脚は持たない。",
+      "surface_description_en": "A rounded spherical or egg-shaped silhouette with a soft cushion-like / plush-like surface. A one-piece outer shell covers the central unit, with only a small face/head element exposed. It has no humanoid torso, arms, or legs.",
+      "silhouette_summary_ja": "球体型・自立できる程度のサイズ・人型シルエットを持たない・抱きかかえられるスケール",
+      "silhouette_summary_en": "spherical compact body, sized to be held in arms, non-humanoid silhouette",
+      "common_equipment": [
+        "safety device harness wrapped around the spherical body (protects the central unit)",
+        "hood-like or shell-like outer covering attached to the harness",
+        "number marking embroidered or printed on the harness or hood",
+        "small face/head element exposed at the front-top of the sphere"
+      ],
+      "texture_traits": [
+        "cushion-like soft outer surface",
+        "huggable plush-like feel",
+        "matte fabric or soft-shell appearance (not glossy mecha plating)"
+      ],
+      "function_traits": [
+        "communication ability is retained even in this form",
+        "treated like a hug-pillow / plush mascot by the master",
+        "compact-storage mode used during maintenance or rest"
+      ],
+      "figure_reference_local": [
+        "_creations-db/data/Works_NumberTales/Images/Ref_Glossary/concept-figure/cnsp-fg_NTsCoreFolder.png"
+      ],
+      "figure_reference_url": [
+        "https://database.numbertales-radiann.net/data/Works_NumberTales/Images/Ref_Glossary/concept-figure/cnsp-fg_NTsCoreFolder.png"
+      ],
+      "observed_common_tags": [
+        "corefolder form",
+        "with safety device harness",
+        "compact mascot-like silhouette",
+        "non-humanoid body"
+      ],
+      "required_shape_keywords": [
+        "spherical",
+        "compact",
+        "non-humanoid silhouette",
+        "no human limbs",
+        "huggable plush-like body"
+      ],
+      "disallow_cross_form_keywords": [
+        "full humanoid body",
+        "human arms",
+        "human legs",
+        "casual private outfit",
+        "school-uniform humanoid styling",
+        "long flowing dress on a humanoid torso",
+        "standing pose with two legs"
+      ]
+    },
+    "humanoid": {
+      "db_term_ja": "ヒューマノイド形態",
+      "db_term_en": "Humanoid Form",
+      "db_summary_ja": "普段の人型の姿。従事する主人を最大限に支えられるよう、人間と差異のない動作と体格を実現している。日常生活に溶け込むことを前提とした形態。",
+      "definition_ja": "ヒューマノイド形態は人間と差異のない動作と体格で主人を支える日常形態。",
+      "definition_en": "Humanoid form is a human-like everyday form with near-human body proportions and motion.",
+      "surface_description_ja": "人間に極めて近い体格と動作を持ち、二足歩行・二本腕・二本手を備える。妖獣型のしるしとして耳と尻尾は残るが、それ以外の体型は人間に準拠する。",
+      "surface_description_en": "Near-human body proportions and motion, bipedal with exactly two arms and two hands. Beast-type ears and tails remain as species markers, but the rest of the body conforms to human anatomy.",
+      "silhouette_summary_ja": "人間に近い体格・二本腕・二本手・二本脚・直立姿勢・私服または日常着",
+      "silhouette_summary_en": "human-like proportions, exactly two arms / hands / legs, upright stance, casual private outfit",
+      "common_equipment": [
+        "casual private outfit (not the corefolder harness)",
+        "species marker: beast-type ears (fox / nekomata / etc. depending on the character)",
+        "species marker: tails (count and arrangement strictly per character)"
+      ],
+      "texture_traits": [
+        "human-like skin and hair rendering",
+        "fabric clothing with everyday styling",
+        "no spherical shell, no harness, no hug-pillow appearance"
+      ],
+      "function_traits": [
+        "everyday companion mode",
+        "supports the master with near-human motion"
+      ],
+      "figure_reference_local": [
+        "_creations-db/data/Works_NumberTales/Images/Ref_Glossary/concept-figure/cnsp-fg_NTsHumanoid.png"
+      ],
+      "figure_reference_url": [
+        "https://database.numbertales-radiann.net/data/Works_NumberTales/Images/Ref_Glossary/concept-figure/cnsp-fg_NTsHumanoid.png"
+      ],
+      "observed_common_tags": [
+        "humanoid form",
+        "human-like body proportions",
+        "casual private outfit"
+      ],
+      "required_shape_keywords": [
+        "human-like proportions",
+        "exactly two arms",
+        "exactly two hands",
+        "exactly two legs",
+        "upright bipedal stance"
+      ],
+      "disallow_cross_form_keywords": [
+        "corefolder spherical body",
+        "corefolder-only harness/hoodie",
+        "huggable plush-like body",
+        "extra arms",
+        "extra hands"
+      ]
+    }
+  }
+}

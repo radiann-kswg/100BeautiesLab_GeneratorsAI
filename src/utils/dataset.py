@@ -360,25 +360,51 @@ def _fetch_db_record_via_creations_db_pkg(
     return record if isinstance(record, dict) else None
 
 
-@lru_cache(maxsize=1)
-def _load_form_common_dataset() -> dict[str, Any]:
-    """共通形態データセットを読み込む。存在しない場合は空辞書を返す。"""
-    path = Path(
-        os.environ.get(
-            "FORM_COMMON_DATASET_PATH",
-            "_ideas/form_common_dataset_numbertales.json",
-        )
-    )
-    if not path.exists() or not path.is_file():
-        return {}
+def _extract_work_dir_from_work_key(work_key: str) -> str:
+    """`#Works_NumberTales` -> `Works_NumberTales` の正規化。"""
+    text = (work_key or "").strip()
+    return text[1:] if text.startswith("#") else text
 
-    try:
-        with path.open(encoding="utf-8") as f:
-            loaded = json.load(f)
-    except Exception:
-        return {}
 
-    return loaded if isinstance(loaded, dict) else {}
+def _form_common_dataset_candidate_paths(work_key: str) -> list[Path]:
+    """作品キーに対応する共通形態データセットの候補パスを返す。
+
+    優先順位:
+      1. 環境変数 ``FORM_COMMON_DATASET_PATH`` (明示指定; 旧運用との完全互換)
+      2. ``_ideas/form_common_datasets/{Works_<Name>}.json`` (作品別; 新標準)
+      3. ``_ideas/form_common_dataset_numbertales.json`` (旧パス; NumberTales 限定の後方互換)
+    """
+    candidates: list[Path] = []
+
+    env_path = os.environ.get("FORM_COMMON_DATASET_PATH")
+    if env_path:
+        candidates.append(Path(env_path))
+
+    work_dir = _extract_work_dir_from_work_key(work_key or "#Works_NumberTales")
+    if work_dir:
+        candidates.append(Path("_ideas/form_common_datasets") / f"{work_dir}.json")
+
+    # 旧パス: 既存ユーザー環境との後方互換 (NumberTales のみ)
+    if work_dir == "Works_NumberTales":
+        candidates.append(Path("_ideas/form_common_dataset_numbertales.json"))
+
+    return candidates
+
+
+@lru_cache(maxsize=8)
+def _load_form_common_dataset(work_key: str = "#Works_NumberTales") -> dict[str, Any]:
+    """指定作品キーの共通形態データセットを読み込む。存在しない場合は空辞書。"""
+    for path in _form_common_dataset_candidate_paths(work_key):
+        if not path.exists() or not path.is_file():
+            continue
+        try:
+            with path.open(encoding="utf-8") as f:
+                loaded = json.load(f)
+        except Exception:
+            continue
+        if isinstance(loaded, dict):
+            return loaded
+    return {}
 
 
 def _build_form_common_dataset_block(
@@ -388,8 +414,17 @@ def _build_form_common_dataset_block(
 
     `record["db_record"]` がある場合は、原典DB起源の不変属性（TailsUnit / RaceType / FormalName）を
     差し込んで形態表現のぶれを抑える。
+
+    作品キーは ``record["work_key"]`` から取得し、対応する
+    ``_ideas/form_common_datasets/<work>.json`` を読み込む。
     """
-    dataset = _load_form_common_dataset()
+    work_key = "#Works_NumberTales"
+    if isinstance(record, dict):
+        candidate = record.get("work_key")
+        if isinstance(candidate, str) and candidate.strip():
+            work_key = candidate.strip()
+
+    dataset = _load_form_common_dataset(work_key)
     forms = dataset.get("forms") or {}
     profile = forms.get(form) if isinstance(forms, dict) else None
     if not isinstance(profile, dict):
@@ -397,8 +432,15 @@ def _build_form_common_dataset_block(
 
     definition_ja = str(profile.get("definition_ja") or "").strip()
     definition_en = str(profile.get("definition_en") or "").strip()
+    surface_ja = str(profile.get("surface_description_ja") or "").strip()
+    surface_en = str(profile.get("surface_description_en") or "").strip()
+    silhouette_ja = str(profile.get("silhouette_summary_ja") or "").strip()
+    silhouette_en = str(profile.get("silhouette_summary_en") or "").strip()
     shape_keywords = ", ".join(profile.get("required_shape_keywords") or [])
     disallow_keywords = ", ".join(profile.get("disallow_cross_form_keywords") or [])
+    common_equipment = ", ".join(profile.get("common_equipment") or [])
+    texture_traits = ", ".join(profile.get("texture_traits") or [])
+    function_traits = ", ".join(profile.get("function_traits") or [])
 
     db_lines: list[str] = []
     # 原典 DB 詳細は humanoid 形態でのみ有効。
@@ -422,17 +464,38 @@ def _build_form_common_dataset_block(
 
     db_block = ("\n" + "\n".join(db_lines)) if db_lines else ""
 
-    if not (definition_ja or definition_en or shape_keywords or disallow_keywords or db_block):
+    has_any_content = any([
+        definition_ja, definition_en,
+        surface_ja, surface_en,
+        silhouette_ja, silhouette_en,
+        shape_keywords, disallow_keywords,
+        common_equipment, texture_traits, function_traits,
+        db_block,
+    ])
+    if not has_any_content:
         return ""
 
-    return (
-        "[形態共通データセット]\n"
-        f"- 定義(ja): {definition_ja or '(なし)'}\n"
-        f"- 定義(en): {definition_en or '(なし)'}\n"
-        f"- 必須形状キーワード: {shape_keywords or '(なし)'}\n"
-        f"- 形態混入の禁止キーワード: {disallow_keywords or '(なし)'}"
-        f"{db_block}"
-    )
+    lines: list[str] = ["[形態共通データセット]"]
+    lines.append(f"- 定義(ja): {definition_ja or '(なし)'}")
+    lines.append(f"- 定義(en): {definition_en or '(なし)'}")
+    if surface_ja or surface_en:
+        lines.append(f"- 表面/質感(ja): {surface_ja or '(なし)'}")
+        lines.append(f"- 表面/質感(en): {surface_en or '(なし)'}")
+    if silhouette_ja or silhouette_en:
+        lines.append(f"- シルエット要約(ja): {silhouette_ja or '(なし)'}")
+        lines.append(f"- シルエット要約(en): {silhouette_en or '(なし)'}")
+    if common_equipment:
+        lines.append(f"- 共通装備/付属要素: {common_equipment}")
+    if texture_traits:
+        lines.append(f"- 質感特徴: {texture_traits}")
+    if function_traits:
+        lines.append(f"- 機能/振る舞い: {function_traits}")
+    lines.append(f"- 必須形状キーワード: {shape_keywords or '(なし)'}")
+    lines.append(f"- 形態混入の禁止キーワード: {disallow_keywords or '(なし)'}")
+    if db_block:
+        lines.append(db_block.lstrip("\n"))
+
+    return "\n".join(lines)
 
 
 def build_novelai_prompt(record: dict[str, Any], form: str = "corefolder") -> dict[str, str]:
