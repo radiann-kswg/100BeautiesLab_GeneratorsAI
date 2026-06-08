@@ -22,6 +22,7 @@ import base64
 import mimetypes
 import os
 import sys
+import urllib.request
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -81,6 +82,7 @@ def generate_image_dalle(
         sys.exit("[ERROR] OPENAI_API_KEY が設定されていません。.env を確認してください。")
 
     model = os.environ.get("DALLE_MODEL", "dall-e-3")
+    requested_quality = os.environ.get("OPENAI_IMAGE_QUALITY", "standard")
     output_dir = Path(out_dir or os.environ.get("OUTPUT_DIR", "output")) / "openai"
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -100,22 +102,32 @@ def generate_image_dalle(
 
     client = OpenAI(api_key=api_key)
 
+    quality = requested_quality
+    if model.startswith("gpt-image") and quality == "standard":
+        quality = "medium"
+
     response = client.images.generate(
         model=model,
         prompt=prompt_text,
         size=size,
-        quality="standard",
+        quality=quality,
         n=1,
     )
 
-    img_url = response.data[0].url
-    if not img_url:
-        print("[WARN] 画像URLが空でした。")
+    out_path = output_dir / f"num{num:03d}_{form}_dalle.png"
+
+    first = response.data[0]
+    img_b64 = getattr(first, "b64_json", None)
+    img_url = getattr(first, "url", None)
+
+    if img_b64:
+        out_path.write_bytes(base64.b64decode(img_b64))
+    elif img_url:
+        urllib.request.urlretrieve(img_url, out_path)
+    else:
+        print("[WARN] 画像データ (url/b64_json) が空でした。")
         return None
 
-    import urllib.request
-    out_path = output_dir / f"num{num:03d}_{form}_dalle.png"
-    urllib.request.urlretrieve(img_url, out_path)
     print(f"[OK] 保存: {out_path}")
     return out_path
 
