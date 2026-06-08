@@ -9,10 +9,15 @@ Copyright © RadianN_kswg — CC BY-NC 4.0
     # GPT-4o でプロンプト補助（テキスト出力）
     python -m src.openai.generate --num 57 --mode prompt-assist
 
+保存先:
+    実行ごとに ``{OUTPUT_BASE_DIR}/{YYYYMMDD_HHMMSS}_openai_{form}_num{NNN}/`` を作成し、
+    過去の生成結果が上書きされないようにします。``--out`` でベースを上書き可能。
+
 必要な環境変数 (.env):
-    OPENAI_API_KEY  — OpenAI Platform の API キー
-    DALLE_MODEL     — 使用モデル (デフォルト: dall-e-3)
-    GPT_MODEL       — 使用モデル (デフォルト: gpt-4o)
+    OPENAI_API_KEY   — OpenAI Platform の API キー
+    DALLE_MODEL      — 使用モデル (デフォルト: dall-e-3)
+    GPT_MODEL        — 使用モデル (デフォルト: gpt-4o)
+    OUTPUT_BASE_DIR  — 出力ベースディレクトリ (デフォルト: output)
 """
 
 from __future__ import annotations
@@ -33,7 +38,12 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-from src.utils import find_character, build_dalle_prompt, collect_reference_images  # noqa: E402
+from src.utils import (  # noqa: E402
+    build_dalle_prompt,
+    build_run_output_dir,
+    collect_reference_images,
+    find_character,
+)
 
 
 def _local_image_to_data_url(path: str) -> str | None:
@@ -62,7 +72,10 @@ def generate_image_dalle(
     num:      キャラクター番号
     form:     形態 ("corefolder" または "humanoid")
     work_key: 作品キー
-    out_dir:  保存先ディレクトリ
+    out_dir:  出力ベースディレクトリ (None の場合は環境変数
+              ``OUTPUT_BASE_DIR`` → ``OUTPUT_DIR`` → ``output`` を使用)。
+              実際の保存先はその配下に
+              ``{YYYYMMDD_HHMMSS}_openai_{form}_num{NNN}/`` を切る。
     size:     画像サイズ ("1024x1024" / "1792x1024" / "1024x1792")
 
     Returns
@@ -83,8 +96,13 @@ def generate_image_dalle(
 
     model = os.environ.get("DALLE_MODEL", "dall-e-3")
     requested_quality = os.environ.get("OPENAI_IMAGE_QUALITY", "standard")
-    output_dir = Path(out_dir or os.environ.get("OUTPUT_DIR", "output")) / "openai"
-    output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir = build_run_output_dir(
+        provider="openai",
+        num=num,
+        form=form,
+        base_dir=out_dir,
+    )
+    print(f"[INFO] 出力先: {output_dir}")
 
     record = find_character(num, work_key)
     if record is None:
@@ -266,7 +284,14 @@ def main() -> None:
         help="生成する形態 (デフォルト: corefolder)",
     )
     parser.add_argument("--work", default="#Works_NumberTales", help="作品キー")
-    parser.add_argument("--out", default=None, help="出力ディレクトリ")
+    parser.add_argument(
+        "--out",
+        default=None,
+        help=(
+            "出力ベースディレクトリ (省略時は OUTPUT_BASE_DIR / OUTPUT_DIR / 'output')。"
+            "実際は配下に {YYYYMMDD_HHMMSS}_openai_{form}_num{NNN}/ を作って保存します。"
+        ),
+    )
     parser.add_argument(
         "--mode",
         choices=["dalle", "prompt-assist"],

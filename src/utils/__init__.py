@@ -11,6 +11,7 @@ from .dataset import (
     build_gemini_prompt,
     get_local_image_paths,
 )
+from .paths import build_run_output_dir, default_output_base
 
 __all__ = [
     "load_manifest",
@@ -21,4 +22,6 @@ __all__ = [
     "build_dalle_prompt",
     "build_gemini_prompt",
     "get_local_image_paths",
+    "build_run_output_dir",
+    "default_output_base",
 ]
