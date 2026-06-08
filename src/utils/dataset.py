@@ -253,6 +253,43 @@ def _collect_forced_local_images(
     return found
 
 
+def _collect_work_common_reference_images(
+    record: dict[str, Any],
+    form: str,
+    creations_db_base: str,
+) -> tuple[list[str], list[str]]:
+    """`ai_hints.work_common.reference_images.{form}_reference[]` から URL とローカルを収集する。
+
+    作品共通の設計図 (`Ref_Glossary/concept-figure/cnsp-fg_*CoreFolder.png` 等) を想定する。
+    キャラクター番号フィルタは通さない (作品共通リソースのため)。
+    ローカル相対パスは ``_creations-db/`` 配下と仮定して絶対化する。
+    """
+    hints = record.get("ai_hints") or {}
+    work_common = hints.get("work_common") or {}
+    ref_block = work_common.get("reference_images") or {}
+    key = f"{form}_reference"
+    raw = ref_block.get(key) or []
+    if not isinstance(raw, list):
+        return ([], [])
+
+    urls: list[str] = []
+    locals_: list[str] = []
+    for item in raw:
+        if not isinstance(item, str):
+            continue
+        text = item.strip()
+        if not text:
+            continue
+        if text.startswith(("http://", "https://")):
+            if _is_path_compatible_with_form(text, form):
+                _append_unique(urls, text)
+        else:
+            path = str(Path(creations_db_base) / text)
+            if _is_path_compatible_with_form(path, form):
+                _append_unique(locals_, path)
+    return (urls, locals_)
+
+
 def collect_reference_images(
     record: dict[str, Any],
     form: str = "corefolder",
@@ -318,6 +355,16 @@ def collect_reference_images(
     local_values = _apply_form_reference_focus(local_values, form)
     url_values = _sort_paths_for_form(url_values, form)
     local_values = _sort_paths_for_form(local_values, form)
+
+    # work_common (作品共通の設計図画像) を末尾に追加。
+    # キャラ固有性が低いため最優先にはせず、キャラ固有参照の後に並べる。
+    wc_urls, wc_locals = _collect_work_common_reference_images(
+        record, form, creations_db_base
+    )
+    for wc_url in wc_urls:
+        _append_unique(url_values, wc_url)
+    for wc_local in wc_locals:
+        _append_unique(local_values, wc_local)
 
     return {
         "urls": url_values[:max_images],
@@ -711,6 +758,15 @@ def build_dalle_prompt(
     identity_tags = ", ".join(common.get("identity_tags", []))
     immutable_traits = ", ".join(common.get("immutable_traits", []))
     form_tags = ", ".join(form_data.get("form_tags", []))
+    form_silhouette_notes = [
+        str(x).strip() for x in (form_data.get("silhouette_notes") or []) if str(x).strip()
+    ]
+    form_immutable_constraints = [
+        str(x).strip() for x in (form_data.get("immutable_constraints") or []) if str(x).strip()
+    ]
+    form_negative_keywords = [
+        str(x).strip() for x in (form_data.get("negative_keywords") or []) if str(x).strip()
+    ]
     extra_negative_items: list[str] = []
     if form == "corefolder":
         extra_negative_items.extend(
@@ -722,7 +778,11 @@ def build_dalle_prompt(
         )
     else:
         extra_negative_items.extend(["extra arms", "extra hands", "more than two arms"])
-    negative_parts = [*form_data.get("negative_visuals", []), *extra_negative_items]
+    negative_parts = [
+        *form_data.get("negative_visuals", []),
+        *form_negative_keywords,
+        *extra_negative_items,
+    ]
     negative_visuals = ", ".join(negative_parts)
     ref_urls = ", ".join(references["urls"])
     current_form_description = _sanitize_natural_language_description(
@@ -749,6 +809,10 @@ def build_dalle_prompt(
             "- 腕は必ず 2 本、手は 2 つ（余分な腕・手を描かない）\n"
             "- 尾は枝分かれを含めて·合計 7 本·を守る（定義以上も以下も描かない）"
         )
+    if form_immutable_constraints:
+        form_lock += "\n" + "\n".join(
+            f"- {item}" for item in form_immutable_constraints
+        )
 
     current_outfit_features = form_data.get("outfit_features", []) or []
     if form == "corefolder":
@@ -772,6 +836,10 @@ def build_dalle_prompt(
             current_focus_lines.append(
                 f"- 顔/種別記号 (保持): {', '.join(face_features)}"
             )
+    if form_silhouette_notes:
+        current_focus_lines.append(
+            "- 形状補足 (form silhouette notes): " + "; ".join(form_silhouette_notes)
+        )
     current_focus_block = (
         "[現在形態の重点要素]\n" + "\n".join(current_focus_lines) + "\n\n"
         if current_focus_lines
@@ -825,6 +893,15 @@ def build_gemini_prompt(
     palette = common.get("palette_priority") or {}
     identity_tags = ", ".join(common.get("identity_tags", []))
     form_tags = ", ".join(form_data.get("form_tags", []))
+    form_silhouette_notes = [
+        str(x).strip() for x in (form_data.get("silhouette_notes") or []) if str(x).strip()
+    ]
+    form_immutable_constraints = [
+        str(x).strip() for x in (form_data.get("immutable_constraints") or []) if str(x).strip()
+    ]
+    form_negative_keywords = [
+        str(x).strip() for x in (form_data.get("negative_keywords") or []) if str(x).strip()
+    ]
     current_outfit_features = form_data.get("outfit_features", []) or []
     if form == "corefolder":
         current_outfit_features = _filter_corefolder_outfit_features(
@@ -842,7 +919,13 @@ def build_gemini_prompt(
         )
     else:
         extra_negative_items.extend(["extra arms", "extra hands", "more than two arms"])
-    current_negative = ", ".join([*form_data.get("negative_visuals", []), *extra_negative_items])
+    current_negative = ", ".join(
+        [
+            *form_data.get("negative_visuals", []),
+            *form_negative_keywords,
+            *extra_negative_items,
+        ]
+    )
     ref_urls = "\n".join(f"- {u}" for u in references["urls"])
     current_form_description = _sanitize_natural_language_description(
         form_data.get("natural_language_description", "")
@@ -871,6 +954,10 @@ def build_gemini_prompt(
             "- 尾は枝分かれを含めて·合計 7 本·を守る（それ以上も以下も描かない）"
         )
         cross_form_block = "- corefolder 形態由来の球体コア・ハーネス・フードを一切混入しない"
+    if form_immutable_constraints:
+        form_lock += "\n" + "\n".join(
+            f"- {item}" for item in form_immutable_constraints
+        )
 
     # corefolder では「[シルエット特徴]」ブロック (共通 silhouette 由来の髪型・ポニーテール) を出さない。
     # ただし瞳色・耳・尾など「顔/種別記号」は corefolder でも保持したいため、抽出して別ブロックに記載しわも衡とる。
@@ -891,8 +978,17 @@ def build_gemini_prompt(
             silhouette_block = ""
 
     # 現在形態の重点要素 ブロックは、フィルタ後の要素が有る場合のみ出す。
+    focus_lines: list[str] = []
     if current_outfit:
-        current_focus_block = f"[現在形態の重点要素]\n{current_outfit}\n\n"
+        focus_lines.append(current_outfit)
+    if form_silhouette_notes:
+        focus_lines.append(
+            "形状補足 (form silhouette notes): " + "; ".join(form_silhouette_notes)
+        )
+    if focus_lines:
+        current_focus_block = "[現在形態の重点要素]\n" + "\n".join(
+            f"- {line}" for line in focus_lines
+        ) + "\n\n"
     else:
         current_focus_block = ""
 
