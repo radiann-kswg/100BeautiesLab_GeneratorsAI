@@ -401,7 +401,10 @@ def _build_form_common_dataset_block(
     disallow_keywords = ", ".join(profile.get("disallow_cross_form_keywords") or [])
 
     db_lines: list[str] = []
-    if isinstance(record, dict):
+    # 原典 DB 詳細は humanoid 形態でのみ有効。
+    # corefolder に TailsUnit の「上2束5本+下1束2本」等を注入すると、
+    # 球体型のコアフォルダに分裂シッポを誘発するため出力しない。
+    if form == "humanoid" and isinstance(record, dict):
         db_record = record.get("db_record")
         if isinstance(db_record, dict):
             tails_unit = str(db_record.get("TailsUnit") or "").strip()
@@ -447,8 +450,6 @@ def build_dalle_prompt(record: dict[str, Any], form: str = "corefolder") -> str:
     hints = record.get("ai_hints") or {}
     common = hints.get("common") or {}
     form_data = (hints.get("forms") or {}).get(form) or {}
-    other_form = "humanoid" if form == "corefolder" else "corefolder"
-    other_form_data = (hints.get("forms") or {}).get(other_form) or {}
     references = collect_reference_images(record, form=form)
 
     identity_tags = ", ".join(common.get("identity_tags", []))
@@ -461,33 +462,28 @@ def build_dalle_prompt(record: dict[str, Any], form: str = "corefolder") -> str:
                 "full humanoid body",
                 "human arms",
                 "human legs",
-                "school uniform",
-                "teenager body proportions",
             ]
         )
     else:
         extra_negative_items.extend(["extra arms", "extra hands", "more than two arms"])
     negative_parts = [*form_data.get("negative_visuals", []), *extra_negative_items]
     negative_visuals = ", ".join(negative_parts)
-    other_form_tags = ", ".join(other_form_data.get("form_tags", []))
-    other_outfit = ", ".join(other_form_data.get("outfit_features", []))
     ref_urls = ", ".join(references["urls"])
     current_form_description = _sanitize_natural_language_description(
         form_data.get("natural_language_description", "")
     )
     if form == "corefolder":
         current_form_description += (
-            " Keep a compact mascot-like corefolder silhouette,"
+            " Keep a compact spherical corefolder silhouette,"
             " with no humanoid torso and no human limbs."
         )
     form_common_block = _build_form_common_dataset_block(form, record)
     if form == "corefolder":
         form_lock = (
             "- corefolder 形態として描く\n"
-            "- humanoid の私服寄り要素を混入しない\n"
+            "- humanoid 形態由来の要素は一切混入しない\n"
             "- 装備・衣装の識別要素を省略しない\n"
-            "- 人型の腕・手・脚・足を描かない（非人型のコアフォルダ体型を維持）\n"
-            "- 尾は枝分かれを含めて·合計 7 本·を守る（定義以上も以下も描かない）"
+            "- 人型の腕・手・脚・足を描かない（非人型のコアフォルダ体型を維持）"
         )
     else:
         form_lock = (
@@ -503,13 +499,22 @@ def build_dalle_prompt(record: dict[str, Any], form: str = "corefolder") -> str:
     current_focus_lines: list[str] = []
     if current_outfit_dalle:
         current_focus_lines.append(f"- 衣装: {current_outfit_dalle}")
-    if silhouette_features:
+    # silhouette_features (髪型・瞳色など) は humanoid 形態でのみ有効。
+    # corefolder (球体型・髪なし) に「ポニーテールのブロンド髪」を指示すると矛盾するため出さない。
+    if form == "humanoid" and silhouette_features:
         current_focus_lines.append(f"- シルエット (形態によらず固定): {silhouette_features}")
     current_focus_block = (
         "[現在形態の重点要素]\n" + "\n".join(current_focus_lines) + "\n\n"
         if current_focus_lines
         else ""
     )
+
+    # 別形態由来のセクションは「抽象表現」のみとし、具体的な衣装単語をプロンプトに露出しない。
+    # （拡散モデルは否定語より「具体名のチラ見せ」に引きずられやすいため）
+    if form == "corefolder":
+        cross_form_block = "- humanoid 形態由来の衣装・人型体型・髪型を一切混入しない"
+    else:
+        cross_form_block = "- corefolder 形態由来の球体コア・ハーネス・フードを一切混入しない"
 
     return (
         "このキャラクターを描いてください。\n\n"
@@ -526,7 +531,7 @@ def build_dalle_prompt(record: dict[str, Any], form: str = "corefolder") -> str:
         f"- {form_tags}\n\n"
         f"{current_focus_block}"
         f"{form_common_block}\n\n"
-        f"[混入禁止 (別形態由来)]\n{other_form_tags}, {other_outfit}\n\n"
+        f"[混入禁止 (別形態由来)]\n{cross_form_block}\n\n"
         f"[避けるべき要素]\n{negative_visuals}"
     )
 
@@ -536,8 +541,6 @@ def build_gemini_prompt(record: dict[str, Any], form: str = "corefolder") -> dic
     hints = record.get("ai_hints") or {}
     common = hints.get("common") or {}
     form_data = (hints.get("forms") or {}).get(form) or {}
-    other_form = "humanoid" if form == "corefolder" else "corefolder"
-    other_form_data = (hints.get("forms") or {}).get(other_form) or {}
     references = collect_reference_images(record, form=form)
 
     palette = common.get("palette_priority") or {}
@@ -551,22 +554,18 @@ def build_gemini_prompt(record: dict[str, Any], form: str = "corefolder") -> dic
                 "full humanoid body",
                 "human arms",
                 "human legs",
-                "school uniform",
-                "teenager body proportions",
             ]
         )
     else:
         extra_negative_items.extend(["extra arms", "extra hands", "more than two arms"])
     current_negative = ", ".join([*form_data.get("negative_visuals", []), *extra_negative_items])
-    other_form_tags = ", ".join(other_form_data.get("form_tags", []))
-    other_outfit = ", ".join(other_form_data.get("outfit_features", []))
     ref_urls = "\n".join(f"- {u}" for u in references["urls"])
     current_form_description = _sanitize_natural_language_description(
         form_data.get("natural_language_description", "")
     )
     if form == "corefolder":
         current_form_description += (
-            " Keep a compact mascot-like corefolder silhouette,"
+            " Keep a compact spherical corefolder silhouette,"
             " with no humanoid torso and no human limbs."
         )
     form_common_block = _build_form_common_dataset_block(form, record)
@@ -575,18 +574,29 @@ def build_gemini_prompt(record: dict[str, Any], form: str = "corefolder") -> dic
         form_lock = (
             "- 必ず corefolder 形態として描くこと\n"
             "- safety device harness / hoodie / corefolder要素を明確に残すこと\n"
-            "- humanoid の私服寄り表現に寄せないこと\n"
-            "- 人型の腕・手・脚・足を描かないこと（非人型シルエットを維持）\n"
-            "- 尾は枝分かれを含めて·合計 7 本·を厳守（それ以上も以下も描かない）"
+            "- humanoid 形態由来の要素に一切寄せないこと\n"
+            "- 人型の腕・手・脚・足を描かないこと（非人型シルエットを維持）"
         )
+        cross_form_block = "- humanoid 形態由来の衣装・人型体型・髪型を一切混入しない"
     else:
         form_lock = (
             "- 必ず humanoid 形態として描くこと\n"
             "- corefolder 装備（harness/hoodie）を混入させないこと\n"
             "- 私服寄りの humanoid 表現を優先すること\n"
             "- 腕は 2 本、手は 2 つで固定し、余分な腕を描かないこと\n"
-            "- 尾は枝分かれを含めて·合計 7 本·を厳守（それ以上も以下も描かない）"
+            "- 尾は枝分かれを含めて·合計 7 本·を守る（それ以上も以下も描かない）"
         )
+        cross_form_block = "- corefolder 形態由来の球体コア・ハーネス・フードを一切混入しない"
+
+    # corefolder では「[シルエット特徴]」「[現在形態の重点要素]」(共通silhouette由来) を出さない
+    # (球体型コアに blonde ponytail を強制すると矛盾するため)
+    if form == "humanoid":
+        silhouette_block = (
+            "[シルエット特徴 (形態によらず固定)]\n"
+            f"- {', '.join(common.get('silhouette_features', [])) or '(なし)'}\n\n"
+        )
+    else:
+        silhouette_block = ""
 
     prompt = (
         "以下の参照画像と同じキャラクターを、別のポーズで描いてください。\n\n"
@@ -598,10 +608,11 @@ def build_gemini_prompt(record: dict[str, Any], form: str = "corefolder") -> dic
         f"[識別記号 (必ず満たしてください)]\n"
         f"- {identity_tags}\n"
         f"- {form_tags}\n\n"
-        f"[シルエット特徴 (形態によらず固定)]\n- {', '.join(common.get('silhouette_features', [])) or '(なし)'}\n\n"
+        f"{silhouette_block}"
         f"{form_common_block}\n\n"
         f"[現在形態の重点要素]\n{current_outfit}\n\n"
-        f"[混入禁止 (別形態由来)]\n{other_form_tags}, {other_outfit}, {current_negative}\n\n"
+        f"[混入禁止 (別形態由来)]\n{cross_form_block}\n\n"
+        f"[避けるべき要素]\n{current_negative}\n\n"
         f"[パレット参考]\n"
         f"primary: {palette.get('primary', '')}\n"
         f"secondary: {palette.get('secondary', '')}\n"
