@@ -47,6 +47,7 @@ from src.utils import (  # noqa: E402
     finalize_run_logs,
     find_character,
     initialize_run_logs,
+    save_image_bytes,
 )
 
 
@@ -220,9 +221,12 @@ def generate_image_dalle(
     img_url = getattr(first, "url", None)
 
     if img_b64:
-        out_path.write_bytes(base64.b64decode(img_b64))
+        # 実体 MIME を見て拡張子を合わせる (他モデルとの互換のため)
+        out_path = save_image_bytes(base64.b64decode(img_b64), out_path)
     elif img_url:
-        urllib.request.urlretrieve(img_url, out_path)
+        with urllib.request.urlopen(img_url) as resp:  # noqa: S310 (信頼済 OpenAI URL)
+            raw = resp.read()
+        out_path = save_image_bytes(raw, out_path)
     else:
         print("[WARN] 画像データ (url/b64_json) が空でした。")
         finalize_run_logs(

@@ -40,6 +40,7 @@ from src.utils import (  # noqa: E402
     finalize_run_logs,
     find_character,
     initialize_run_logs,
+    save_image_bytes,
     write_run_meta,
 )
 
@@ -274,7 +275,8 @@ def generate_image(
             results.append({"index": i + 1, "file": str(out_path.name), "status": "failed"})
             errors.append({"index": i + 1, "messages": attempt_errors})
             continue
-        out_path.write_bytes(image_data)
+        # 実体 MIME を判定し、拡張子を実体に合わせて保存 (Gemini は JPEG を返すことがあるため)
+        out_path = save_image_bytes(image_data, out_path)
         print(f"[OK] 保存: {out_path}")
         saved.append(out_path)
         results.append({"index": i + 1, "file": str(out_path.name), "status": "ok"})

@@ -45,7 +45,11 @@ def build_run_output_dir(
 ) -> Path:
     """実行 1 回ぶんの保存先ディレクトリを作って返す。
 
-    形式: ``{base_dir}/{YYYYMMDD_HHMMSS}_{provider}_{form}_num{NNN}[_suffix]/``
+    形式: ``{base_dir}/{YYYYMMDD}/{YYYYMMDD_HH}/{YYYYMMDD_HHMMSS}_{provider}_{form}_num{NNN}[_suffix]/``
+
+    すなわち ``{作業日}/{バッチHH}/{実行}`` の 3 階層レイアウト。同日同時間帯の
+    実行が `{YYYYMMDD_HH}/` 配下にまとまるため、後から振り返りやクリーンアップが
+    しやすい。
 
     Parameters
     ----------
@@ -58,11 +62,14 @@ def build_run_output_dir(
     create:    True なら ``mkdir(parents=True, exist_ok=True)`` まで行う
     """
     base = Path(base_dir) if base_dir is not None else default_output_base()
-    ts = (timestamp or datetime.now()).strftime("%Y%m%d_%H%M%S")
+    ts_dt = timestamp or datetime.now()
+    date_str = ts_dt.strftime("%Y%m%d")
+    hour_str = ts_dt.strftime("%Y%m%d_%H")
+    ts = ts_dt.strftime("%Y%m%d_%H%M%S")
     parts = [ts, _sanitize_token(provider), _sanitize_token(form), f"num{int(num):03d}"]
     if suffix:
         parts.append(_sanitize_token(suffix))
-    folder = base / "_".join(parts)
+    folder = base / date_str / hour_str / "_".join(parts)
     if create:
         folder.mkdir(parents=True, exist_ok=True)
     return folder

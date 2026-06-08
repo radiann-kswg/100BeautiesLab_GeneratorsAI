@@ -12,6 +12,11 @@ from .dataset import (
     build_gemini_prompt,
     get_local_image_paths,
 )
+from .image_io import (
+    MIME_TO_EXTENSION,
+    detect_image_format,
+    save_image_bytes,
+)
 from .paths import build_run_output_dir, default_output_base
 from .run_log import (
     finalize_run_logs,
@@ -33,6 +38,9 @@ __all__ = [
     "get_local_image_paths",
     "build_run_output_dir",
     "default_output_base",
+    "MIME_TO_EXTENSION",
+    "detect_image_format",
+    "save_image_bytes",
     "initialize_run_logs",
     "finalize_run_logs",
     "write_prompt_file",
