@@ -36,6 +36,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 from src.utils import (  # noqa: E402
     build_gemini_prompt,
     build_run_output_dir,
+    collect_record_capabilities,
     finalize_run_logs,
     find_character,
     initialize_run_logs,
@@ -186,6 +187,7 @@ def generate_image(
             "reference_image_urls": ref_urls,
             "reference_local_paths": ref_locals,
             "scene": scene or "",
+            "record_capabilities": collect_record_capabilities(record, form=form),
         },
     )
     print(f"[INFO] ログ: {log_paths['meta']}")

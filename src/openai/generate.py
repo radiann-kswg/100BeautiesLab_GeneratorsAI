@@ -42,6 +42,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 from src.utils import (  # noqa: E402
     build_dalle_prompt,
     build_run_output_dir,
+    collect_record_capabilities,
     collect_reference_images,
     finalize_run_logs,
     find_character,
@@ -138,6 +139,7 @@ def generate_image_dalle(
             "reference_local_paths": references["local_paths"],
             "character_name": record["data"].get("Name", str(num)),
             "scene": scene or "",
+            "record_capabilities": collect_record_capabilities(record, form=form),
         },
     )
     print(f"[INFO] ログ: {log_paths['meta']}")

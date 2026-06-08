@@ -325,6 +325,81 @@ def collect_reference_images(
     }
 
 
+def collect_record_capabilities(
+    record: dict[str, Any],
+    form: str = "corefolder",
+    creations_db_base: str = "_creations-db",
+) -> dict[str, Any]:
+    """レコードが備える AI ヒント・DB 画像の充実度を辞書化する。
+
+    生成実行ログ (``run_meta.json``) に同梱して、後から
+    「どのキャラクターがどの程度サポートされていたか」を確認しやすくする。
+
+    返却例::
+
+        {
+            "has_ai_hints": True,
+            "has_common_hints": True,
+            "form_hints_available": ["corefolder", "humanoid"],
+            "current_form_hints_present": True,
+            "outfit_features_count": 3,
+            "outfit_features_after_filter": 0,
+            "reference_url_count": 1,
+            "reference_local_count": 3,
+            "db_image_present": {
+                "corefolder": True,
+                "humanoid": True,
+                "current_form": True
+            },
+            "manifest_ai_training_allowed": True,
+        }
+    """
+    hints = record.get("ai_hints") or {}
+    common = hints.get("common") or {}
+    forms = hints.get("forms") or {}
+    form_data = forms.get(form) or {}
+
+    outfit_raw = list(form_data.get("outfit_features", []) or [])
+    if form == "corefolder":
+        outfit_filtered = _filter_corefolder_outfit_features(list(outfit_raw))
+    else:
+        outfit_filtered = list(outfit_raw)
+
+    references = collect_reference_images(
+        record, form=form, creations_db_base=creations_db_base
+    )
+
+    # 各形態でローカル参照画像が拾えるかを「DBにその形態の画像が存在するか」の代理指標として記録する。
+    # record["images"] が空のレコードでも、ai_hints と DB ファイル走査の結果から検出できる。
+    db_image_presence: dict[str, bool] = {}
+    for target_form in ("corefolder", "humanoid"):
+        if target_form == form:
+            db_image_presence[target_form] = bool(references["local_paths"])
+            continue
+        other_refs = collect_reference_images(
+            record, form=target_form, creations_db_base=creations_db_base
+        )
+        db_image_presence[target_form] = bool(other_refs["local_paths"])
+    db_image_presence["current_form"] = db_image_presence.get(form, False)
+
+    return {
+        "has_ai_hints": bool(hints),
+        "has_common_hints": bool(common),
+        "form_hints_available": sorted(
+            [name for name, value in forms.items() if value]
+        ),
+        "current_form_hints_present": bool(form_data),
+        "outfit_features_count": len(outfit_raw),
+        "outfit_features_after_filter": len(outfit_filtered),
+        "reference_url_count": len(references["urls"]),
+        "reference_local_count": len(references["local_paths"]),
+        "db_image_present": db_image_presence,
+        "manifest_ai_training_allowed": bool(
+            (record.get("ai_training") or {}).get("allowed", True)
+        ),
+    }
+
+
 def load_manifest(manifest_path: str | None = None) -> list[dict[str, Any]]:
     """manifest-training.jsonl を読み込んでキャラクターレコードのリストを返す。
 

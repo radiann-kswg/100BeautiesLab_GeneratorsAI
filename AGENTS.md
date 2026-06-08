@@ -57,6 +57,11 @@ pip install -r requirements.txt
 python -m src.gemini.generate --num 57 --form corefolder
 python -m src.openai.generate --num 57 --form corefolder
 python -m src.openai.generate --num 57 --mode prompt-assist --scene "図書館で本を読んでいるシーン"
+
+# 複数キャラクター・形態を一括で試すバッチランチャー
+# 常に --dry-run を先に走らせて RUN/SKIP 予定と capability を確認してから課金を伴う本番実行へ進めること。
+python -m src.batch_generate --nums 15,22,49,57 --forms both --provider both --dry-run
+python -m src.batch_generate --nums 15,22,49,57 --forms both --provider gemini
 ```
 
 ### `_creations-ai/`
