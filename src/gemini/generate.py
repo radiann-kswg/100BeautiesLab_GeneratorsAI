@@ -112,6 +112,7 @@ def generate_image(
     work_key: str = "#Works_NumberTales",
     out_dir: str | None = None,
     count: int = 1,
+    scene: str = "",
 ) -> list[Path]:
     """Imagen 3 でキャラクター画像を生成して保存する。
 
@@ -158,7 +159,7 @@ def generate_image(
     if record is None:
         sys.exit(f"[ERROR] キャラクター #{num} ({work_key}) が見つかりません。")
 
-    data = build_gemini_prompt(record, form)
+    data = build_gemini_prompt(record, form, scene=scene)
     prompt_text = data["prompt"]
     ref_url = data["reference_image_url"]
     ref_urls = data.get("reference_image_urls") or []
@@ -184,6 +185,7 @@ def generate_image(
             "reference_image_url": ref_url,
             "reference_image_urls": ref_urls,
             "reference_local_paths": ref_locals,
+            "scene": scene or "",
         },
     )
     print(f"[INFO] ログ: {log_paths['meta']}")
@@ -312,6 +314,11 @@ def main() -> None:
         ),
     )
     parser.add_argument("--count", type=int, default=1, choices=range(1, 5), help="生成枚数 (1-4)")
+    parser.add_argument(
+        "--scene",
+        default="",
+        help="生成時に追加で指定するシーン/ポーズ説明 (例: 「図書館で本を読んでいるシーン」)",
+    )
     args = parser.parse_args()
 
     paths = generate_image(
@@ -320,6 +327,7 @@ def main() -> None:
         work_key=args.work,
         out_dir=args.out,
         count=args.count,
+        scene=args.scene,
     )
     if paths:
         print(f"\n[完了] {len(paths)} 枚の画像を生成しました。")

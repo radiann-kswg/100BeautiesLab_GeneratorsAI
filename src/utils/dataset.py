@@ -120,6 +120,67 @@ def _extract_work_dir_from_key(work_key: str) -> str:
     return work_key[1:] if work_key.startswith("#") else work_key
 
 
+# corefolder 形態では人型衣装語をプロンプトの「現在形態の重点要素」に載せないようフィルタする。
+# `_creations-ai` の outfit_features には humanoid 服飾語が混入している事例があり、
+# そのまま prompt に入れると生成モデルが人型装を描いてしまう。
+_HUMANOID_OUTFIT_KEYWORDS: tuple[str, ...] = (
+    "blazer", "shirt", "tshirt", "t-shirt", "shorts", "boots", "boot",
+    "dress", "robe", "jacket", "uniform", "skirt", "pants", "trousers",
+    "choker", "turtleneck", "sailor-collar", "sailor collar", "scarf",
+    "necktie", "tie ", "stocking", "tights", "leggings", "coat", "sweater",
+    "vest", "cardigan", "kimono", "hakama", "yukata", "gloves", "glove",
+    "sash", "waist", "collar", "sleeve",
+)
+
+
+def _filter_corefolder_outfit_features(features: list[str]) -> list[str]:
+    """corefolder 形態の outfit_features から humanoid 服飾語を除外して返す。
+
+    残すのは「番号 marking」「hood / shell / harness / core 系」を中心とした
+    コアフォルダ記号要素だけ。フィルタ結果が空ならその旨を呼び出し側で処理する。
+    """
+    if not features:
+        return []
+    kept: list[str] = []
+    for feature in features:
+        if not isinstance(feature, str):
+            continue
+        text = feature.strip()
+        if not text:
+            continue
+        lower = text.lower()
+        if any(keyword in lower for keyword in _HUMANOID_OUTFIT_KEYWORDS):
+            continue
+        kept.append(text)
+    return kept
+
+
+def _extract_face_features_for_corefolder(silhouette_features: list[str]) -> list[str]:
+    """corefolder 形態でも有効な「顔/瞳」要素を silhouette_features から抽出する。
+
+    corefolder は球体型で髪・耳・尻尾は持つが、blonde ponytail などの髪型指示は
+    球体コアと矛盾するため通常は除外している。一方「瞳の色」「耳の種類」「尻尾の数」は
+    顔パーツやアクセサリとして表現に効くため、それだけを再注入する。
+    """
+    if not silhouette_features:
+        return []
+    kept: list[str] = []
+    for feature in silhouette_features:
+        if not isinstance(feature, str):
+            continue
+        text = feature.strip()
+        if not text:
+            continue
+        lower = text.lower()
+        # 髪型・髪色のような hair/ponytail/braid を含む要素は corefolder に矛盾する。
+        if any(banned in lower for banned in ("hair", "ponytail", "braid", "bun")):
+            continue
+        # 瞳色・耳・尻尾は corefolder の顔/種別記号としても有効。
+        if any(keep in lower for keep in ("eye", "ears", "tail", "fang", "horn")):
+            kept.append(text)
+    return kept
+
+
 def _looks_like_target_character(path_text: str, num_value: Any) -> bool:
     if num_value is None:
         return False
@@ -130,7 +191,10 @@ def _looks_like_target_character(path_text: str, num_value: Any) -> bool:
 
     lower = path_text.replace("\\", "/").lower()
     if token.isdigit():
-        return bool(re.search(rf"(?<!\\d){re.escape(token)}(?!\\d)", lower))
+        # 前後が数字でない場所にだけマッチさせる。
+        # 例: token="22" のとき "/corefolder/22/" はマッチ、 "/corefolder/222/" はマッチさせない。
+        # 注: f-string でも raw 接頭辞 (rf"") があれば \d はリテラルの数字メタ文字として渡る。
+        return bool(re.search(rf"(?<!\d){re.escape(token)}(?!\d)", lower))
     return token in lower
 
 
@@ -142,10 +206,18 @@ def _is_path_compatible_with_form(path_text: str, form: str) -> bool:
         return False
 
     if form == "corefolder":
+        # humanoid 単独作品や humanoid アートは corefolder への作風誘導が強いため除外。
         if "/arts/humanoids/" in lower:
             return False
+        if "-humanoid" in lower or "_humanoid" in lower:
+            return False
     elif form == "humanoid":
+        # corefolder 単独画像や corefolder アートは humanoid への誘導が強いため除外。
         if "/corefolder/" in lower:
+            return False
+        if "/arts/corefolders/" in lower:
+            return False
+        if "-corefolder" in lower or "_corefolder" in lower:
             return False
 
     return True
@@ -187,17 +259,33 @@ def collect_reference_images(
     creations_db_base: str = "_creations-db",
     max_images: int = 6,
 ) -> dict[str, list[str]]:
-    """レコードから参照画像 URL とローカルパスを集約して返す。"""
+    """レコードから参照画像 URL とローカルパスを集約して返す。
+
+    フィルタ方針：
+      - 該当キャラクター本人の画像のみ (他キャラクターの装備・顔が混入しないよう ``_looks_like_target_character``)
+      - 形態互換性 (``_is_path_compatible_with_form``)
+      - カテゴリ优先順 (``_sort_paths_for_form``)
+    """
+    num_value = (record.get("data") or {}).get("Num")
+
+    def _allow_path(path: str) -> bool:
+        if not _is_path_compatible_with_form(path, form):
+            return False
+        # 該当キャラクター番号を含まないパスは他キャラクターの装備・顔が混入するため捨てる。
+        if num_value is not None and not _looks_like_target_character(path, num_value):
+            return False
+        return True
+
     hints = record.get("ai_hints") or {}
     common = hints.get("common") or {}
     form_data = (hints.get("forms") or {}).get(form) or {}
     url_values: list[str] = []
 
     for value in (form_data.get("reference_images") or {}).values():
-        if isinstance(value, str) and _is_path_compatible_with_form(value, form):
+        if isinstance(value, str) and _allow_path(value):
             _append_unique(url_values, value)
     for value in (common.get("reference_images") or {}).values():
-        if isinstance(value, str) and _is_path_compatible_with_form(value, form):
+        if isinstance(value, str) and _allow_path(value):
             _append_unique(url_values, value)
 
     local_values: list[str] = []
@@ -214,12 +302,13 @@ def collect_reference_images(
                 if not isinstance(rel, str):
                     continue
                 path = str(Path(creations_db_base) / rel)
-                if not _is_path_compatible_with_form(path, form):
+                if not _allow_path(path):
                     continue
                 _append_unique(local_candidates, path)
 
     for forced_path in _collect_forced_local_images(record, form, creations_db_base):
-        _append_unique(local_candidates, forced_path)
+        if _allow_path(forced_path):
+            _append_unique(local_candidates, forced_path)
 
     ranked_candidates = _sort_paths_for_form(local_candidates, form)
     for path in ranked_candidates:
@@ -407,6 +496,31 @@ def _load_form_common_dataset(work_key: str = "#Works_NumberTales") -> dict[str,
     return {}
 
 
+def _build_preferred_art_style_block(record: dict[str, Any] | None = None) -> str:
+    """共通形態データセットのトップレベル ``preferred_art_style`` を [作風指示] として整形。
+
+    値が存在しない場合は空文字を返す。``record["work_key"]`` から作品別 JSON を読み込み、
+    リスト or 文字列を許容する。Gemini/DALL-E どちらでも同じブロック表現を共有する。
+    """
+    work_key = "#Works_NumberTales"
+    if record and isinstance(record.get("work_key"), str) and record["work_key"]:
+        work_key = record["work_key"]
+    dataset = _load_form_common_dataset(work_key)
+    if not isinstance(dataset, dict):
+        return ""
+    raw = dataset.get("preferred_art_style")
+    if isinstance(raw, list):
+        items = [str(x).strip() for x in raw if str(x).strip()]
+    elif isinstance(raw, str) and raw.strip():
+        items = [raw.strip()]
+    else:
+        return ""
+    if not items:
+        return ""
+    body = "\n".join(f"- {item}" for item in items)
+    return f"\n[作風指示 (preferred art style)]\n{body}\n"
+
+
 def _build_form_common_dataset_block(
     form: str, record: dict[str, Any] | None = None
 ) -> str:
@@ -508,7 +622,11 @@ def build_novelai_prompt(record: dict[str, Any], form: str = "corefolder") -> di
     }
 
 
-def build_dalle_prompt(record: dict[str, Any], form: str = "corefolder") -> str:
+def build_dalle_prompt(
+    record: dict[str, Any],
+    form: str = "corefolder",
+    scene: str = "",
+) -> str:
     """DALL-E / ChatGPT 用の自然文プロンプトを返す。"""
     hints = record.get("ai_hints") or {}
     common = hints.get("common") or {}
@@ -557,8 +675,14 @@ def build_dalle_prompt(record: dict[str, Any], form: str = "corefolder") -> str:
             "- 尾は枝分かれを含めて·合計 7 本·を守る（定義以上も以下も描かない）"
         )
 
-    current_outfit_dalle = ", ".join(form_data.get("outfit_features", []))
-    silhouette_features = ", ".join(common.get("silhouette_features", []))
+    current_outfit_features = form_data.get("outfit_features", []) or []
+    if form == "corefolder":
+        current_outfit_features = _filter_corefolder_outfit_features(
+            list(current_outfit_features)
+        )
+    current_outfit_dalle = ", ".join(current_outfit_features)
+    silhouette_raw = common.get("silhouette_features", []) or []
+    silhouette_features = ", ".join(silhouette_raw)
     current_focus_lines: list[str] = []
     if current_outfit_dalle:
         current_focus_lines.append(f"- 衣装: {current_outfit_dalle}")
@@ -566,6 +690,13 @@ def build_dalle_prompt(record: dict[str, Any], form: str = "corefolder") -> str:
     # corefolder (球体型・髪なし) に「ポニーテールのブロンド髪」を指示すると矛盾するため出さない。
     if form == "humanoid" and silhouette_features:
         current_focus_lines.append(f"- シルエット (形態によらず固定): {silhouette_features}")
+    # corefolder でも 瞳色・耳・尾などの「顔/種別記号」は保持したいときだけ抽出して注入。
+    if form == "corefolder":
+        face_features = _extract_face_features_for_corefolder(list(silhouette_raw))
+        if face_features:
+            current_focus_lines.append(
+                f"- 顔/種別記号 (保持): {', '.join(face_features)}"
+            )
     current_focus_block = (
         "[現在形態の重点要素]\n" + "\n".join(current_focus_lines) + "\n\n"
         if current_focus_lines
@@ -578,6 +709,10 @@ def build_dalle_prompt(record: dict[str, Any], form: str = "corefolder") -> str:
         cross_form_block = "- humanoid 形態由来の衣装・人型体型・髪型を一切混入しない"
     else:
         cross_form_block = "- corefolder 形態由来の球体コア・ハーネス・フードを一切混入しない"
+
+    # シーン指定・作風ヒントを末尾に付け足す。
+    scene_block = f"\n\n[シーン・追加要望]\n{scene.strip()}" if scene and scene.strip() else ""
+    art_style_block = _build_preferred_art_style_block(record)
 
     return (
         "このキャラクターを描いてください。\n\n"
@@ -596,10 +731,16 @@ def build_dalle_prompt(record: dict[str, Any], form: str = "corefolder") -> str:
         f"{form_common_block}\n\n"
         f"[混入禁止 (別形態由来)]\n{cross_form_block}\n\n"
         f"[避けるべき要素]\n{negative_visuals}"
+        f"{art_style_block}"
+        f"{scene_block}"
     )
 
 
-def build_gemini_prompt(record: dict[str, Any], form: str = "corefolder") -> dict[str, Any]:
+def build_gemini_prompt(
+    record: dict[str, Any],
+    form: str = "corefolder",
+    scene: str = "",
+) -> dict[str, Any]:
     """Gemini / Imagen 用のプロンプトと参照画像 URL を返す。"""
     hints = record.get("ai_hints") or {}
     common = hints.get("common") or {}
@@ -609,7 +750,12 @@ def build_gemini_prompt(record: dict[str, Any], form: str = "corefolder") -> dic
     palette = common.get("palette_priority") or {}
     identity_tags = ", ".join(common.get("identity_tags", []))
     form_tags = ", ".join(form_data.get("form_tags", []))
-    current_outfit = ", ".join(form_data.get("outfit_features", []))
+    current_outfit_features = form_data.get("outfit_features", []) or []
+    if form == "corefolder":
+        current_outfit_features = _filter_corefolder_outfit_features(
+            list(current_outfit_features)
+        )
+    current_outfit = ", ".join(current_outfit_features)
     extra_negative_items: list[str] = []
     if form == "corefolder":
         extra_negative_items.extend(
@@ -651,15 +797,33 @@ def build_gemini_prompt(record: dict[str, Any], form: str = "corefolder") -> dic
         )
         cross_form_block = "- corefolder 形態由来の球体コア・ハーネス・フードを一切混入しない"
 
-    # corefolder では「[シルエット特徴]」「[現在形態の重点要素]」(共通silhouette由来) を出さない
-    # (球体型コアに blonde ponytail を強制すると矛盾するため)
+    # corefolder では「[シルエット特徴]」ブロック (共通 silhouette 由来の髪型・ポニーテール) を出さない。
+    # ただし瞳色・耳・尾など「顔/種別記号」は corefolder でも保持したいため、抽出して別ブロックに記載しわも衡とる。
+    silhouette_raw = common.get("silhouette_features", []) or []
     if form == "humanoid":
         silhouette_block = (
             "[シルエット特徴 (形態によらず固定)]\n"
-            f"- {', '.join(common.get('silhouette_features', [])) or '(なし)'}\n\n"
+            f"- {', '.join(silhouette_raw) or '(なし)'}\n\n"
         )
     else:
-        silhouette_block = ""
+        face_features = _extract_face_features_for_corefolder(list(silhouette_raw))
+        if face_features:
+            silhouette_block = (
+                "[顔/種別記号 (corefolder でも保持)]\n"
+                f"- {', '.join(face_features)}\n\n"
+            )
+        else:
+            silhouette_block = ""
+
+    # 現在形態の重点要素 ブロックは、フィルタ後の要素が有る場合のみ出す。
+    if current_outfit:
+        current_focus_block = f"[現在形態の重点要素]\n{current_outfit}\n\n"
+    else:
+        current_focus_block = ""
+
+    # シーン指定・作風ヒントを末尾に付け足す。
+    scene_block = f"\n[シーン・追加要望]\n{scene.strip()}\n" if scene and scene.strip() else ""
+    art_style_block = _build_preferred_art_style_block(record)
 
     prompt = (
         "以下の参照画像と同じキャラクターを、別のポーズで描いてください。\n\n"
@@ -670,12 +834,15 @@ def build_gemini_prompt(record: dict[str, Any], form: str = "corefolder") -> dic
         f"[形態固定ルール]\n{form_lock}\n\n"
         f"[識別記号 (必ず満たしてください)]\n"
         f"- {identity_tags}\n"
+        f"- 不変属性: {', '.join(common.get('immutable_traits', [])) or '(なし)'}\n"
         f"- {form_tags}\n\n"
         f"{silhouette_block}"
         f"{form_common_block}\n\n"
-        f"[現在形態の重点要素]\n{current_outfit}\n\n"
+        f"{current_focus_block}"
         f"[混入禁止 (別形態由来)]\n{cross_form_block}\n\n"
         f"[避けるべき要素]\n{current_negative}\n\n"
+        f"{art_style_block}"
+        f"{scene_block}"
         f"[パレット参考]\n"
         f"primary: {palette.get('primary', '')}\n"
         f"secondary: {palette.get('secondary', '')}\n"

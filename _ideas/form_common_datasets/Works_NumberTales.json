@@ -10,6 +10,13 @@
     "images_root": "_creations-db/data/Works_NumberTales/Images",
     "glossary_figures_root": "_creations-db/data/Works_NumberTales/Images/Ref_Glossary/concept-figure"
   },
+  "preferred_art_style": [
+    "soft cel-shaded 2D anime illustration",
+    "clean confident line art with subtle outline weight",
+    "flat color palette with gentle gradients",
+    "light watercolor / pastel coloring for soft mood",
+    "consistent character-design illustration style (not 3D render, not photo)"
+  ],
   "coverage": {
     "characters_total": 105,
     "characters_with_ai_hints": 92,
@@ -73,7 +80,27 @@
         "casual private outfit",
         "school-uniform humanoid styling",
         "long flowing dress on a humanoid torso",
-        "standing pose with two legs"
+        "standing pose with two legs",
+        "blazer",
+        "shirt",
+        "shorts",
+        "boots",
+        "jacket",
+        "skirt",
+        "trousers",
+        "dress",
+        "robe",
+        "sailor-collar uniform",
+        "turtleneck",
+        "choker",
+        "kimono",
+        "hakama",
+        "yukata",
+        "shrine maiden",
+        "miko",
+        "traditional Japanese clothing",
+        "wafuku",
+        "obi sash on a humanoid waist"
       ]
     },
     "humanoid": {
@@ -123,7 +150,11 @@
         "corefolder-only harness/hoodie",
         "huggable plush-like body",
         "extra arms",
-        "extra hands"
+        "extra hands",
+        "extra legs",
+        "more than two arms",
+        "spherical egg-shaped body",
+        "matte plush-like outer shell"
       ]
     }
   }

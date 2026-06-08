@@ -29,6 +29,7 @@ import os
 import sys
 import urllib.request
 from pathlib import Path
+from typing import Any
 
 from dotenv import load_dotenv
 
@@ -66,6 +67,7 @@ def generate_image_dalle(
     work_key: str = "#Works_NumberTales",
     out_dir: str | None = None,
     size: str = "1024x1024",
+    scene: str = "",
 ) -> Path | None:
     """DALL-E 3 でキャラクター画像を生成して保存する。
 
@@ -110,7 +112,7 @@ def generate_image_dalle(
     if record is None:
         sys.exit(f"[ERROR] キャラクター #{num} ({work_key}) が見つかりません。")
 
-    prompt_text = build_dalle_prompt(record, form)
+    prompt_text = build_dalle_prompt(record, form, scene=scene)
     references = collect_reference_images(record, form=form)
 
     print(f"[INFO] キャラクター: {record['data'].get('Name', num)} / 形態: {form}")
@@ -135,6 +137,7 @@ def generate_image_dalle(
             "reference_urls": references["urls"],
             "reference_local_paths": references["local_paths"],
             "character_name": record["data"].get("Name", str(num)),
+            "scene": scene or "",
         },
     )
     print(f"[INFO] ログ: {log_paths['meta']}")
@@ -147,24 +150,68 @@ def generate_image_dalle(
 
     out_path = output_dir / f"num{num:03d}_{form}_dalle.png"
 
+    # gpt-image-1 はマルチモーダル参照画像入力 (images.edit) に対応している。
+    # ローカル参照画像が1枚以上あり、かつモデルが gpt-image 系なら edit 経由を優先する。
+    use_image_edit = (
+        model.startswith("gpt-image")
+        and bool(references["local_paths"])
+    )
+    api_mode = "images.edit" if use_image_edit else "images.generate"
+    print(f"[INFO] OpenAI API: {api_mode}")
+
+    open_files: list[Any] = []
     try:
-        response = client.images.generate(
-            model=model,
-            prompt=prompt_text,
-            size=size,
-            quality=quality,
-            n=1,
-        )
-    except Exception as err:
-        print(f"[ERROR] OpenAI 画像生成 API に失敗: {err}")
-        finalize_run_logs(
-            output_dir,
-            status="failed",
-            results=[{"file": str(out_path.name), "status": "failed"}],
-            errors=[{"messages": [str(err)]}],
-            extra={"quality": quality},
-        )
-        return None
+        try:
+            if use_image_edit:
+                image_paths = [
+                    Path(p)
+                    for p in references["local_paths"]
+                    if Path(p).exists() and Path(p).is_file()
+                ][:4]  # gpt-image-1 の image パラメータ上限を超えないよう抑制
+                if not image_paths:
+                    use_image_edit = False
+                    api_mode = "images.generate"
+                    print("[INFO] 参照ローカル画像が無いため images.generate にフォールバック")
+
+            if use_image_edit:
+                open_files = [p.open("rb") for p in image_paths]
+                image_arg = open_files[0] if len(open_files) == 1 else open_files
+                print(
+                    f"[INFO] images.edit に参照画像 {len(open_files)} 件を投入: "
+                    + ", ".join(p.name for p in image_paths)
+                )
+                response = client.images.edit(
+                    model=model,
+                    image=image_arg,
+                    prompt=prompt_text,
+                    size=size,
+                    quality=quality,
+                    n=1,
+                )
+            else:
+                response = client.images.generate(
+                    model=model,
+                    prompt=prompt_text,
+                    size=size,
+                    quality=quality,
+                    n=1,
+                )
+        except Exception as err:
+            print(f"[ERROR] OpenAI 画像生成 API に失敗: {err}")
+            finalize_run_logs(
+                output_dir,
+                status="failed",
+                results=[{"file": str(out_path.name), "status": "failed"}],
+                errors=[{"messages": [str(err)]}],
+                extra={"quality": quality, "api_mode": api_mode},
+            )
+            return None
+    finally:
+        for f in open_files:
+            try:
+                f.close()
+            except Exception:
+                pass
 
     first = response.data[0]
     img_b64 = getattr(first, "b64_json", None)
@@ -181,7 +228,7 @@ def generate_image_dalle(
             status="failed",
             results=[{"file": str(out_path.name), "status": "failed"}],
             errors=[{"messages": ["画像データ (url/b64_json) が空"]}],
-            extra={"quality": quality},
+            extra={"quality": quality, "api_mode": api_mode},
         )
         return None
 
@@ -191,7 +238,7 @@ def generate_image_dalle(
         status="ok",
         results=[{"file": str(out_path.name), "status": "ok"}],
         errors=[],
-        extra={"quality": quality},
+        extra={"quality": quality, "api_mode": api_mode},
     )
     return out_path
 
@@ -391,7 +438,7 @@ def main() -> None:
         default="1024x1024",
         help="DALL-E 3 画像サイズ",
     )
-    parser.add_argument("--scene", default="", help="prompt-assist モード用の追加シーン説明")
+    parser.add_argument("--scene", default="", help="シーン/ポーズ説明。dalle モードでは生成プロンプト末尾に追加、prompt-assist モードでは改善提案の入力として使われる。")
     args = parser.parse_args()
 
     if args.mode == "dalle":
@@ -401,6 +448,7 @@ def main() -> None:
             work_key=args.work,
             out_dir=args.out,
             size=args.size,
+            scene=args.scene,
         )
         if path:
             print(f"\n[完了] 画像を生成しました: {path}")
