@@ -3,7 +3,7 @@
   "work_key": "#Works_NumberTales",
   "work_title_ja": "ナンバーテールズ",
   "work_title_en": "NumberTales",
-  "version": "2026-06-08.2",
+  "version": "2026-06-08.3",
   "source": {
     "glossary": "_creations-db/data/Works_NumberTales/References/ref_Glossary.json",
     "manifest": "_creations-ai/ai-dataset/manifest-training.jsonl",
@@ -47,7 +47,11 @@
       "texture_traits": [
         "cushion-like soft outer surface",
         "huggable plush-like feel",
-        "matte fabric or soft-shell appearance (not glossy mecha plating)"
+        "matte fabric or soft-shell appearance (not glossy mecha plating)",
+        "non-glossy soft toy fabric surface",
+        "resembles a plush mascot / stuffed toy, NOT armor and NOT a mechanical shell",
+        "soft pliable outer surface that gently deforms when held",
+        "no hard armor plating, no metal segments, no rigid panel lines"
       ],
       "function_traits": [
         "communication ability is retained even in this form",
@@ -62,9 +66,9 @@
       ],
       "observed_common_tags": [
         "corefolder form",
-        "with safety device harness",
         "compact mascot-like silhouette",
-        "non-humanoid body"
+        "non-humanoid body",
+        "plush-like soft surface"
       ],
       "required_shape_keywords": [
         "spherical",
@@ -119,7 +123,14 @@
         "obi sash on a humanoid waist",
         "bondage rope",
         "tied with rope",
-        "restrained by rope harness"
+        "restrained by rope harness",
+        "armor plating",
+        "hard armor shell",
+        "mecha plating",
+        "metallic body panels",
+        "rigid plate segments",
+        "glossy hard surface",
+        "robot armor"
       ]
     },
     "humanoid": {
