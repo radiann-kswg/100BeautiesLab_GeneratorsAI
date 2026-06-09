@@ -18,6 +18,11 @@ from .image_io import (
     save_image_bytes,
 )
 from .paths import build_run_output_dir, default_output_base
+from .iterate import (
+    next_iteration_label,
+    parse_revisions,
+    resolve_iterate_source,
+)
 from .run_log import (
     finalize_run_logs,
     initialize_run_logs,
@@ -46,4 +51,7 @@ __all__ = [
     "write_prompt_file",
     "write_run_meta",
     "write_notes_template",
+    "next_iteration_label",
+    "parse_revisions",
+    "resolve_iterate_source",
 ]

@@ -47,6 +47,9 @@ from src.utils import (  # noqa: E402
     finalize_run_logs,
     find_character,
     initialize_run_logs,
+    next_iteration_label,
+    parse_revisions,
+    resolve_iterate_source,
     save_image_bytes,
 )
 
@@ -70,6 +73,11 @@ def generate_image_dalle(
     out_dir: str | None = None,
     size: str = "1024x1024",
     scene: str = "",
+    style: str = "",
+    composition: str = "",
+    background: str = "",
+    iterate_from: str | None = None,
+    revisions: list[str] | None = None,
 ) -> Path | None:
     """DALL-E 3 でキャラクター画像を生成して保存する。
 
@@ -102,11 +110,33 @@ def generate_image_dalle(
 
     model = os.environ.get("DALLE_MODEL", "dall-e-3")
     requested_quality = os.environ.get("OPENAI_IMAGE_QUALITY", "standard")
+
+    # iterate-from を解決して suffix を決める。
+    iterate_source_path: Path | None = None
+    iterate_source_dir: Path | None = None
+    iter_label: str | None = None
+    revision_items: list[str] = []
+    if iterate_from:
+        try:
+            iterate_source_path, iterate_source_dir = resolve_iterate_source(iterate_from)
+        except (FileNotFoundError, ValueError) as err:
+            sys.exit(f"[ERROR] --iterate-from の解決に失敗: {err}")
+        iter_label = next_iteration_label(iterate_source_path)
+        if isinstance(revisions, str):
+            revision_items = parse_revisions(revisions)
+        else:
+            revision_items = list(revisions or [])
+        print(
+            f"[INFO] iterate-from: {iterate_source_path}"
+            f" -> 次ラベル: {iter_label} / 修正指示 {len(revision_items)} 件"
+        )
+
     output_dir = build_run_output_dir(
         provider="openai",
         num=num,
         form=form,
         base_dir=out_dir,
+        suffix=iter_label,
     )
     print(f"[INFO] 出力先: {output_dir}")
 
@@ -114,8 +144,25 @@ def generate_image_dalle(
     if record is None:
         sys.exit(f"[ERROR] キャラクター #{num} ({work_key}) が見つかりません。")
 
-    prompt_text = build_dalle_prompt(record, form, scene=scene)
+    prompt_text = build_dalle_prompt(
+        record,
+        form,
+        scene=scene,
+        style=style,
+        composition=composition,
+        background=background,
+        revisions=revision_items or None,
+    )
     references = collect_reference_images(record, form=form)
+
+    # iterate-from の起点画像を参照ローカルの先頭に差し込む。
+    if iterate_source_path is not None:
+        iterate_path_str = str(iterate_source_path)
+        local_list = list(references.get("local_paths") or [])
+        if iterate_path_str in local_list:
+            local_list.remove(iterate_path_str)
+        local_list.insert(0, iterate_path_str)
+        references["local_paths"] = local_list
 
     print(f"[INFO] キャラクター: {record['data'].get('Name', num)} / 形態: {form}")
     print(f"[INFO] モデル: {model} / サイズ: {size}")
@@ -140,6 +187,19 @@ def generate_image_dalle(
             "reference_local_paths": references["local_paths"],
             "character_name": record["data"].get("Name", str(num)),
             "scene": scene or "",
+            "style": style or "",
+            "composition": composition or "",
+            "background": background or "",
+            "iteration": (
+                {
+                    "label": iter_label,
+                    "source_image": str(iterate_source_path),
+                    "source_dir": str(iterate_source_dir) if iterate_source_dir else None,
+                    "revisions": revision_items,
+                }
+                if iterate_source_path is not None
+                else None
+            ),
             "record_capabilities": collect_record_capabilities(record, form=form),
         },
     )
@@ -445,6 +505,39 @@ def main() -> None:
         help="DALL-E 3 画像サイズ",
     )
     parser.add_argument("--scene", default="", help="シーン/ポーズ説明。dalle モードでは生成プロンプト末尾に追加、prompt-assist モードでは改善提案の入力として使われる。")
+    parser.add_argument(
+        "--style",
+        default="",
+        help="作風ヒント (例: 'watercolor' / 'pixel art' / 'official artwork')",
+    )
+    parser.add_argument(
+        "--composition",
+        default="",
+        help="構図ヒント (例: 'low angle, full body' / 'bust shot' / 'dynamic action')",
+    )
+    parser.add_argument(
+        "--background",
+        default="",
+        help="背景ヒント (例: 'sunset library' / 'white background')",
+    )
+    parser.add_argument(
+        "--iterate-from",
+        dest="iterate_from",
+        default=None,
+        help=(
+            "i2i 起点となる前回生成画像 (ファイル) または run ディレクトリ。"
+            " dalle モード (gpt-image-1) では images.edit の先頭参照に差し込み、"
+            " 出力サブフォルダ末尾に iterN ラベルを付与する。"
+        ),
+    )
+    parser.add_argument(
+        "--revisions",
+        default=None,
+        help=(
+            "iterate-from と併用する修正指示。';' または改行で複数項目に分割される。"
+            " 例: '尻尾は元のまま; 表情だけ笑顔にして'"
+        ),
+    )
     args = parser.parse_args()
 
     if args.mode == "dalle":
@@ -455,6 +548,11 @@ def main() -> None:
             out_dir=args.out,
             size=args.size,
             scene=args.scene,
+            style=args.style,
+            composition=args.composition,
+            background=args.background,
+            iterate_from=args.iterate_from,
+            revisions=parse_revisions(args.revisions),
         )
         if path:
             print(f"\n[完了] 画像を生成しました: {path}")

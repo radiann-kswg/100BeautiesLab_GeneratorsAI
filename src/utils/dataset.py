@@ -852,6 +852,213 @@ def _load_form_common_dataset(work_key: str = "#Works_NumberTales") -> dict[str,
     return {}
 
 
+# 番号印字に関する語彙。identity_tags / immutable_traits / attached_items から
+# 番号関連エントリだけを抽出するために使う。
+# 2026-06-09: 番号印字の再現性向上のため [番号印字仕様] ブロックに集約する目的で追加。
+_NUMBER_PRINT_KEYWORDS: tuple[str, ...] = (
+    "number",
+    "emblem",
+    "marking",
+    "marked",
+    "printed",
+    "embroider",  # embroidery / embroidered も拾う
+    "badge",
+    "logo",
+    "patch",
+    "engrav",  # engraved / engraving
+    "stamped",
+    "decal",
+    "insignia",
+    "numeral",
+    "digit",
+)
+
+
+def _looks_like_number_related(text: str, num_token: str | None) -> bool:
+    """テキストが番号印字に関連するかを判定する。"""
+    if not text:
+        return False
+    lower = text.lower()
+    if any(kw in lower for kw in _NUMBER_PRINT_KEYWORDS):
+        return True
+    if num_token:
+        # `'2'` `"57"` `#73` のような表記を拾う。
+        token = num_token.strip()
+        if token and (
+            f"'{token}'" in lower
+            or f'"{token}"' in lower
+            or f"#{token}" in lower
+            or f" {token} " in f" {lower} "
+        ):
+            return True
+    return False
+
+
+def _extract_number_print_spec(record: dict[str, Any], form: str) -> list[str]:
+    """番号印字に関する仕様行を集めて返す。
+
+    `ai_hints.common.identity_tags` / `immutable_traits` /
+    `ai_hints.forms.{form}.silhouette_notes.attached_items` / `outfit_features`
+    から、番号関連のエントリだけを抽出する。重複排除済み。
+    """
+    hints = record.get("ai_hints") or {}
+    common = hints.get("common") or {}
+    form_data = (hints.get("forms") or {}).get(form) or {}
+
+    data = record.get("data") or {}
+    num_value = data.get("Num")
+    num_token: str | None = None
+    if num_value is not None:
+        candidate = str(num_value).strip()
+        if candidate:
+            num_token = candidate
+
+    candidates: list[str] = []
+    for source in (
+        common.get("identity_tags") or [],
+        common.get("immutable_traits") or [],
+        form_data.get("outfit_features") or [],
+    ):
+        for item in source:
+            if isinstance(item, str):
+                candidates.append(item.strip())
+
+    silhouette_notes = form_data.get("silhouette_notes")
+    if isinstance(silhouette_notes, dict):
+        for item in silhouette_notes.get("attached_items") or []:
+            if isinstance(item, str):
+                candidates.append(item.strip())
+        for item in silhouette_notes.get("body_description") or []:
+            if isinstance(item, str):
+                candidates.append(item.strip())
+    elif isinstance(silhouette_notes, list):
+        for item in silhouette_notes:
+            if isinstance(item, str):
+                candidates.append(item.strip())
+
+    spec_lines: list[str] = []
+    seen: set[str] = set()
+    for text in candidates:
+        if not text:
+            continue
+        if not _looks_like_number_related(text, num_token):
+            continue
+        key = text.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        spec_lines.append(text)
+
+    return spec_lines
+
+
+def _build_number_print_block(record: dict[str, Any], form: str) -> str:
+    """`[番号印字仕様]` プロンプトブロックを生成する。
+
+    キャラクターの ``Num`` を最優先で明示し、続けて identity_tags /
+    immutable_traits / silhouette_notes.attached_items から拾った
+    番号関連行を箇条書きで列挙する。
+    """
+    data = record.get("data") or {}
+    num_value = data.get("Num")
+    num_token: str | None = None
+    if num_value is not None:
+        candidate = str(num_value).strip()
+        if candidate:
+            num_token = candidate
+
+    spec_lines = _extract_number_print_spec(record, form)
+    if not num_token and not spec_lines:
+        return ""
+
+    lines: list[str] = ["[番号印字仕様 (必須・最優先)]"]
+    if num_token:
+        lines.append(
+            f"- このキャラクターの番号は厳密に \"{num_token}\" です。"
+            f" 描画する数字は必ず \"{num_token}\" の文字そのものを刻印・刺繍・印字として表現し、"
+            f"記号化・装飾化・別の数字への置換を行わないこと。"
+        )
+        lines.append(
+            f"- The character number is exactly \"{num_token}\"."
+            f" Render the digits literally as printed / embroidered text matching \"{num_token}\","
+            f" not as stylized shapes, decorative glyphs, or any other number."
+        )
+        if form == "corefolder":
+            lines.append(
+                "- corefolder では、番号は球体本体の前面中央付近、"
+                "またはハーネス/フードの正面パーツに 1 か所のみ表示する"
+                "（複数箇所への重複表示は禁止）。"
+            )
+        else:
+            lines.append(
+                "- humanoid では、番号は原典指定の固定箇所"
+                "（首飾り / スカーフの垂れ端 / 衣装パッチ等）に 1 か所のみ表示する。"
+            )
+    if spec_lines:
+        lines.append("- 番号関連の原典指定（位置・装着方法・装飾形式）:")
+        for entry in spec_lines:
+            lines.append(f"  - {entry}")
+
+    return "\n".join(lines)
+
+
+def _build_variation_block(
+    scene: str = "",
+    style: str = "",
+    composition: str = "",
+    background: str = "",
+) -> str:
+    """シーン/作風/構図/背景指定の追加要望ブロックを返す。
+
+    いずれかの値が指定されていれば `[シーン・追加要望]` ブロックを 1 つだけ作る。
+    すべて空なら空文字を返す。プロンプト末尾に挿入する想定で、識別記号などの
+    不変則ブロックより後ろに置くこと。
+    """
+    items: list[tuple[str, str]] = []
+    for label, value in (
+        ("シーン", scene),
+        ("作風 (style)", style),
+        ("構図 (composition)", composition),
+        ("背景 (background)", background),
+    ):
+        if isinstance(value, str) and value.strip():
+            items.append((label, value.strip()))
+    if not items:
+        return ""
+    lines = ["[シーン・追加要望]"]
+    for label, value in items:
+        lines.append(f"- {label}: {value}")
+    return "\n".join(lines)
+
+
+def _build_revision_block(revisions: list[str] | tuple[str, ...] | None) -> str:
+    """`--iterate-from` で渡される修正指示ブロックを生成する。
+
+    プロンプト先頭付近に差し込み、添付された前回生成画像を起点に「ここを直して」
+    と最高優先で伝える目的で使う。空なら空文字を返す。
+    """
+    if not revisions:
+        return ""
+    cleaned: list[str] = []
+    for item in revisions:
+        if not isinstance(item, str):
+            continue
+        text = item.strip()
+        if text:
+            cleaned.append(text)
+    if not cleaned:
+        return ""
+    lines = [
+        "[修正指示 (添付された前回生成画像を起点に・最優先で適用)]",
+        "- 添付の参照画像のうち先頭の 1 枚は『直前 run の生成結果』です。",
+        "- そのキャラクター個性 (シルエット / ポーズ / 配色) は可能な限り維持し、以下の修正項目だけを適用してください。",
+    ]
+    for entry in cleaned:
+        lines.append(f"- 修正: {entry}")
+    return "\n".join(lines)
+
+
+
 def _build_preferred_art_style_block(record: dict[str, Any] | None = None) -> str:
     """共通形態データセットのトップレベル ``preferred_art_style`` を [作風指示] として整形。
 
@@ -982,6 +1189,10 @@ def build_dalle_prompt(
     record: dict[str, Any],
     form: str = "corefolder",
     scene: str = "",
+    style: str = "",
+    composition: str = "",
+    background: str = "",
+    revisions: list[str] | tuple[str, ...] | None = None,
 ) -> str:
     """DALL-E / ChatGPT 用の自然文プロンプトを返す。"""
     hints = record.get("ai_hints") or {}
@@ -1097,17 +1308,26 @@ def build_dalle_prompt(
         cross_form_block = "- corefolder 形態由来の球体コア・ハーネス・フードを一切混入しない"
 
     # シーン指定・作風ヒントを末尾に付け足す。
-    scene_block = f"\n\n[シーン・追加要望]\n{scene.strip()}" if scene and scene.strip() else ""
+    variation_block_text = _build_variation_block(
+        scene=scene, style=style, composition=composition, background=background
+    )
+    scene_block = ("\n\n" + variation_block_text) if variation_block_text else ""
     art_style_block = _build_preferred_art_style_block(record)
+    number_print_block = _build_number_print_block(record, form)
+    number_print_section = (number_print_block + "\n\n") if number_print_block else ""
+    revision_block_text = _build_revision_block(revisions)
+    revision_section = (revision_block_text + "\n\n") if revision_block_text else ""
 
     return (
         "このキャラクターを描いてください。\n\n"
+        f"{revision_section}"
         "[参照画像]\n"
         f"- 可能であれば以下の既存画像も参照してください。\n"
         f"- URL: {ref_urls or '(なし)'}\n"
         "- ローカル画像は添付される前提です。\n\n"
         f"[素体特徴]\n{_sanitize_natural_language_description(common.get('natural_language_description', ''))}\n\n"
         f"[今回の姿]\n{current_form_description}\n\n"
+        f"{number_print_section}"
         f"[形態固定ルール]\n{form_lock}\n\n"
         f"[識別記号 (必ず満たしてください)]\n"
         f"- {identity_tags}\n"
@@ -1126,6 +1346,10 @@ def build_gemini_prompt(
     record: dict[str, Any],
     form: str = "corefolder",
     scene: str = "",
+    style: str = "",
+    composition: str = "",
+    background: str = "",
+    revisions: list[str] | tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     """Gemini / Imagen 用のプロンプトと参照画像 URL を返す。"""
     hints = record.get("ai_hints") or {}
@@ -1245,15 +1469,24 @@ def build_gemini_prompt(
         current_focus_block = ""
 
     # シーン指定・作風ヒントを末尾に付け足す。
-    scene_block = f"\n[シーン・追加要望]\n{scene.strip()}\n" if scene and scene.strip() else ""
+    variation_block_text = _build_variation_block(
+        scene=scene, style=style, composition=composition, background=background
+    )
+    scene_block = ("\n" + variation_block_text + "\n") if variation_block_text else ""
     art_style_block = _build_preferred_art_style_block(record)
+    number_print_block = _build_number_print_block(record, form)
+    number_print_section = (number_print_block + "\n\n") if number_print_block else ""
+    revision_block_text = _build_revision_block(revisions)
+    revision_section = (revision_block_text + "\n\n") if revision_block_text else ""
 
     prompt = (
         "以下の参照画像と同じキャラクターを、別のポーズで描いてください。\n\n"
+        f"{revision_section}"
         f"[参照画像URL]\n{ref_urls or '- (なし)'}\n\n"
         "[参照画像ローカル]\n- ローカル画像はAPIリクエスト時に添付されます。\n\n"
         f"[素体特徴]\n{_sanitize_natural_language_description(common.get('natural_language_description', ''))}\n\n"
         f"[今回の姿]\n{current_form_description}\n\n"
+        f"{number_print_section}"
         f"[形態固定ルール]\n{form_lock}\n\n"
         f"[識別記号 (必ず満たしてください)]\n"
         f"- {identity_tags}\n"

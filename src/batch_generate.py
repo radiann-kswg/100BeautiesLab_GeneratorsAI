@@ -85,6 +85,9 @@ def _run_one(
     count: int,
     scene: str,
     size: str,
+    style: str = "",
+    composition: str = "",
+    background: str = "",
 ) -> BatchResult:
     """1キャラクター・1形態・1プロバイダを実行する。"""
     if provider == "gemini":
@@ -98,6 +101,9 @@ def _run_one(
                 out_dir=out_dir,
                 count=count,
                 scene=scene,
+                style=style,
+                composition=composition,
+                background=background,
             )
         except SystemExit as e:
             return BatchResult(num, form, provider, "failed", f"SystemExit: {e}")
@@ -121,6 +127,9 @@ def _run_one(
                 out_dir=out_dir,
                 size=size,
                 scene=scene,
+                style=style,
+                composition=composition,
+                background=background,
             )
         except SystemExit as e:
             return BatchResult(num, form, provider, "failed", f"SystemExit: {e}")
@@ -146,6 +155,9 @@ def run_batch(
     skip_no_hints: bool = True,
     sleep_between: float = 0.0,
     dry_run: bool = False,
+    style: str = "",
+    composition: str = "",
+    background: str = "",
 ) -> list[BatchResult]:
     """指定された組み合わせを順に実行し、結果リストを返す。
 
@@ -211,6 +223,9 @@ def run_batch(
                     count=count,
                     scene=scene,
                     size=size,
+                    style=style,
+                    composition=composition,
+                    background=background,
                 )
                 print(f"[BATCH {idx}/{total}] -> {res.status} {res.detail}")
                 results.append(res)
@@ -279,6 +294,21 @@ def main() -> None:
         help="全実行に共通で差し込むシーン/ポーズ説明",
     )
     parser.add_argument(
+        "--style",
+        default="",
+        help="全実行に共通で差し込む作風ヒント (例: 'watercolor')",
+    )
+    parser.add_argument(
+        "--composition",
+        default="",
+        help="全実行に共通で差し込む構図ヒント (例: 'bust shot')",
+    )
+    parser.add_argument(
+        "--background",
+        default="",
+        help="全実行に共通で差し込む背景ヒント (例: 'white background')",
+    )
+    parser.add_argument(
         "--size",
         choices=["1024x1024", "1792x1024", "1024x1792"],
         default="1024x1024",
@@ -318,6 +348,9 @@ def main() -> None:
         skip_no_hints=not args.no_skip_no_hints,
         sleep_between=args.sleep,
         dry_run=args.dry_run,
+        style=args.style,
+        composition=args.composition,
+        background=args.background,
     )
     _print_summary(results)
 

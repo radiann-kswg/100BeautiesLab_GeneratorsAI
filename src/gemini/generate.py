@@ -40,6 +40,9 @@ from src.utils import (  # noqa: E402
     finalize_run_logs,
     find_character,
     initialize_run_logs,
+    next_iteration_label,
+    parse_revisions,
+    resolve_iterate_source,
     save_image_bytes,
     write_run_meta,
 )
@@ -115,6 +118,11 @@ def generate_image(
     out_dir: str | None = None,
     count: int = 1,
     scene: str = "",
+    style: str = "",
+    composition: str = "",
+    background: str = "",
+    iterate_from: str | None = None,
+    revisions: list[str] | None = None,
 ) -> list[Path]:
     """Imagen 3 でキャラクター画像を生成して保存する。
 
@@ -148,11 +156,33 @@ def generate_image(
 
     model = os.environ.get("IMAGEN_MODEL", "imagen-3.0-generate-001")
     reference_model = os.environ.get("GEMINI_REFERENCE_MODEL", "models/gemini-3.1-flash-image")
+
+    # iterate-from が指定されている場合、起点画像と次の iter ラベルを解決する。
+    iterate_source_path: Path | None = None
+    iterate_source_dir: Path | None = None
+    iter_label: str | None = None
+    revision_items: list[str] = []
+    if iterate_from:
+        try:
+            iterate_source_path, iterate_source_dir = resolve_iterate_source(iterate_from)
+        except (FileNotFoundError, ValueError) as err:
+            sys.exit(f"[ERROR] --iterate-from の解決に失敗: {err}")
+        iter_label = next_iteration_label(iterate_source_path)
+        if isinstance(revisions, str):
+            revision_items = parse_revisions(revisions)
+        else:
+            revision_items = list(revisions or [])
+        print(
+            f"[INFO] iterate-from: {iterate_source_path}"
+            f" -> 次ラベル: {iter_label} / 修正指示 {len(revision_items)} 件"
+        )
+
     output_dir = build_run_output_dir(
         provider="gemini",
         num=num,
         form=form,
         base_dir=out_dir,
+        suffix=iter_label,
     )
     print(f"[INFO] 出力先: {output_dir}")
 
@@ -161,11 +191,26 @@ def generate_image(
     if record is None:
         sys.exit(f"[ERROR] キャラクター #{num} ({work_key}) が見つかりません。")
 
-    data = build_gemini_prompt(record, form, scene=scene)
+    data = build_gemini_prompt(
+        record,
+        form,
+        scene=scene,
+        style=style,
+        composition=composition,
+        background=background,
+        revisions=revision_items or None,
+    )
     prompt_text = data["prompt"]
     ref_url = data["reference_image_url"]
     ref_urls = data.get("reference_image_urls") or []
     ref_locals = data.get("reference_local_paths") or []
+
+    # iterate-from の起点画像を参照ローカルの先頭へ差し込む (最高優先で添付)。
+    if iterate_source_path is not None:
+        iterate_path_str = str(iterate_source_path)
+        if iterate_path_str in ref_locals:
+            ref_locals.remove(iterate_path_str)
+        ref_locals.insert(0, iterate_path_str)
 
     print(f"[INFO] キャラクター: {record['data'].get('Name', num)} / 形態: {form}")
     print(f"[INFO] 参照画像: {ref_url or '(なし)'}")
@@ -188,6 +233,19 @@ def generate_image(
             "reference_image_urls": ref_urls,
             "reference_local_paths": ref_locals,
             "scene": scene or "",
+            "style": style or "",
+            "composition": composition or "",
+            "background": background or "",
+            "iteration": (
+                {
+                    "label": iter_label,
+                    "source_image": str(iterate_source_path),
+                    "source_dir": str(iterate_source_dir) if iterate_source_dir else None,
+                    "revisions": revision_items,
+                }
+                if iterate_source_path is not None
+                else None
+            ),
             "record_capabilities": collect_record_capabilities(record, form=form),
         },
     )
@@ -323,6 +381,38 @@ def main() -> None:
         default="",
         help="生成時に追加で指定するシーン/ポーズ説明 (例: 「図書館で本を読んでいるシーン」)",
     )
+    parser.add_argument(
+        "--style",
+        default="",
+        help="作風ヒント (例: 'watercolor' / 'pixel art' / 'official artwork')",
+    )
+    parser.add_argument(
+        "--composition",
+        default="",
+        help="構図ヒント (例: 'low angle, full body' / 'bust shot' / 'dynamic action')",
+    )
+    parser.add_argument(
+        "--background",
+        default="",
+        help="背景ヒント (例: 'sunset library' / 'white background')",
+    )
+    parser.add_argument(
+        "--iterate-from",
+        dest="iterate_from",
+        default=None,
+        help=(
+            "i2i 起点となる前回生成画像 (ファイル) または run ディレクトリ。"
+            " 指定すると先頭参照に差し込み、出力先サブフォルダ名末尾に iterN ラベルを付与する。"
+        ),
+    )
+    parser.add_argument(
+        "--revisions",
+        default=None,
+        help=(
+            "iterate-from と併用する修正指示。';' または改行で複数項目に分割される。"
+            " 例: '尻尾は元のまま; 表情だけ笑顔にして'"
+        ),
+    )
     args = parser.parse_args()
 
     paths = generate_image(
@@ -332,6 +422,11 @@ def main() -> None:
         out_dir=args.out,
         count=args.count,
         scene=args.scene,
+        style=args.style,
+        composition=args.composition,
+        background=args.background,
+        iterate_from=args.iterate_from,
+        revisions=parse_revisions(args.revisions),
     )
     if paths:
         print(f"\n[完了] {len(paths)} 枚の画像を生成しました。")
