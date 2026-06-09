@@ -193,6 +193,7 @@ def _filter_corefolder_silhouette_notes(notes: list[str]) -> list[str]:
 
     silhouette_notes は "; " 区切りの文を持ちうるので、セグメント単位で判定し、
     残ったセグメントだけを再結合する。空になった note 自体は捨てる。
+    主に新スキーマの `body_description` 側に適用する想定（強めのフィルタ）。
     """
     if not notes:
         return []
@@ -217,6 +218,91 @@ def _filter_corefolder_silhouette_notes(notes: list[str]) -> list[str]:
             continue
         kept_notes.append("; ".join(kept_segments))
     return kept_notes
+
+
+# attached_items (新スキーマの装着アクセサリ) に対するゆるめのフィルタ。
+# キャラ固有のティアラ・マスク・ネックレス・ホログラム輪などは「設定上の装飾」として残し、
+# 明確な humanoid 衣装語（pants / dress / shoes / bodysuit など）だけを除外する。
+# 2026-06-09 (A5): _creations-db addon-ai-tag の silhouette_notes object 化に対応。
+_ATTACHED_ITEM_HUMANOID_KEYWORDS: tuple[str, ...] = (
+    "pants", "trousers", "shorts", "skirt", "dress", "robe",
+    "blazer", "shirt", "blouse", "jacket", "coat", "sweater",
+    "vest", "cardigan", "uniform", "hoodie",
+    "bodysuit", "body suit", "leotard",
+    "shoes", "boots", "sneakers", "loafers", "high heels",
+    "socks", "stockings", "tights", "leggings",
+    "kimono", "hakama", "yukata",
+    "human arms", "human legs", "human torso",
+    "arm warmers", "leg warmers",
+    "metallic leg", "armored leg",
+)
+
+
+def _filter_corefolder_attached_items(items: list[str]) -> list[str]:
+    """corefolder の attached_items から明確な humanoid 衣装語のみ除外する。
+
+    body_description より弱いフィルタ。キャラ固有装飾（tiara / crown / mask / necklace /
+    hologram ring / hair accessory 等）はそのまま残す。
+    """
+    if not items:
+        return []
+    kept_items: list[str] = []
+    for item in items:
+        if not isinstance(item, str):
+            continue
+        text = item.strip()
+        if not text:
+            continue
+        segments = re.split(r"[;；]", text)
+        kept_segments: list[str] = []
+        for seg in segments:
+            seg_text = seg.strip()
+            if not seg_text:
+                continue
+            lower = seg_text.lower()
+            if any(kw in lower for kw in _ATTACHED_ITEM_HUMANOID_KEYWORDS):
+                continue
+            kept_segments.append(seg_text)
+        if not kept_segments:
+            continue
+        kept_items.append("; ".join(kept_segments))
+    return kept_items
+
+
+def _extract_silhouette_notes_for_prompt(
+    form_data: dict[str, Any],
+    form: str,
+) -> tuple[list[str], list[str]]:
+    """silhouette_notes を新旧両スキーマから (body, attached) のペアで取り出す。
+
+    新スキーマ (`{body_description: [...], attached_items: [...]}`) と
+    旧スキーマ (flat `[...]`) の両方に対応。corefolder の場合は
+    `body_description` には強フィルタを、`attached_items` には弱フィルタを掛ける。
+    """
+    raw = form_data.get("silhouette_notes")
+    body: list[str] = []
+    attached: list[str] = []
+
+    if isinstance(raw, dict):
+        body = [
+            str(x).strip()
+            for x in (raw.get("body_description") or [])
+            if str(x).strip()
+        ]
+        attached = [
+            str(x).strip()
+            for x in (raw.get("attached_items") or [])
+            if str(x).strip()
+        ]
+    elif isinstance(raw, list):
+        # 旧 array 形式は body_description として扱う（attached なし）。
+        body = [str(x).strip() for x in raw if str(x).strip()]
+
+    if form == "corefolder":
+        body = _filter_corefolder_silhouette_notes(body)
+        attached = _filter_corefolder_attached_items(attached)
+
+    return body, attached
 
 
 def _sanitize_corefolder_form_description(text: Any) -> str:
@@ -906,11 +992,9 @@ def build_dalle_prompt(
     identity_tags = ", ".join(common.get("identity_tags", []))
     immutable_traits = ", ".join(common.get("immutable_traits", []))
     form_tags = ", ".join(form_data.get("form_tags", []))
-    form_silhouette_notes = [
-        str(x).strip() for x in (form_data.get("silhouette_notes") or []) if str(x).strip()
-    ]
-    if form == "corefolder":
-        form_silhouette_notes = _filter_corefolder_silhouette_notes(form_silhouette_notes)
+    form_silhouette_body, form_silhouette_attached = _extract_silhouette_notes_for_prompt(
+        form_data, form
+    )
     form_immutable_constraints = [
         str(x).strip() for x in (form_data.get("immutable_constraints") or []) if str(x).strip()
     ]
@@ -991,9 +1075,13 @@ def build_dalle_prompt(
             current_focus_lines.append(
                 f"- 顔/種別記号 (保持): {', '.join(face_features)}"
             )
-    if form_silhouette_notes:
+    if form_silhouette_body:
         current_focus_lines.append(
-            "- 形状補足 (form silhouette notes): " + "; ".join(form_silhouette_notes)
+            "- 形状補足 (body): " + "; ".join(form_silhouette_body)
+        )
+    if form_silhouette_attached:
+        current_focus_lines.append(
+            "- 装着アクセサリ (attached): " + "; ".join(form_silhouette_attached)
         )
     current_focus_block = (
         "[現在形態の重点要素]\n" + "\n".join(current_focus_lines) + "\n\n"
@@ -1048,11 +1136,9 @@ def build_gemini_prompt(
     palette = common.get("palette_priority") or {}
     identity_tags = ", ".join(common.get("identity_tags", []))
     form_tags = ", ".join(form_data.get("form_tags", []))
-    form_silhouette_notes = [
-        str(x).strip() for x in (form_data.get("silhouette_notes") or []) if str(x).strip()
-    ]
-    if form == "corefolder":
-        form_silhouette_notes = _filter_corefolder_silhouette_notes(form_silhouette_notes)
+    form_silhouette_body, form_silhouette_attached = _extract_silhouette_notes_for_prompt(
+        form_data, form
+    )
     form_immutable_constraints = [
         str(x).strip() for x in (form_data.get("immutable_constraints") or []) if str(x).strip()
     ]
@@ -1143,9 +1229,13 @@ def build_gemini_prompt(
     focus_lines: list[str] = []
     if current_outfit:
         focus_lines.append(current_outfit)
-    if form_silhouette_notes:
+    if form_silhouette_body:
         focus_lines.append(
-            "形状補足 (form silhouette notes): " + "; ".join(form_silhouette_notes)
+            "形状補足 (body): " + "; ".join(form_silhouette_body)
+        )
+    if form_silhouette_attached:
+        focus_lines.append(
+            "装着アクセサリ (attached): " + "; ".join(form_silhouette_attached)
         )
     if focus_lines:
         current_focus_block = "[現在形態の重点要素]\n" + "\n".join(
