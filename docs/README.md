@@ -1,0 +1,74 @@
+# 100BeautiesLab_GeneratorsAI — docs index
+
+百花繚乱研究所 (ナンバーテールズ) 向け AI 画像生成ワークスペースの実務ドキュメント集です。
+このフォルダは「使い方」を一通り辿るためのハブで、各ページは独立して読めるようになっています。
+
+> 仕様変更があった場合は **必ずこのフォルダのドキュメントも同時に更新してね。**
+> 詳しい運用ルールは [`AGENTS.md`](../AGENTS.md) と [`.github/copilot-instructions.md`](../.github/copilot-instructions.md) を参照。
+
+---
+
+## 目次
+
+| ドキュメント                                 | 内容                                                                                        |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| [`setup.md`](setup.md)                       | 依存パッケージ、`.env`、サブモジュール、API キー準備、PowerShell での注意点                 |
+| [`usage-generation.md`](usage-generation.md) | `src.gemini.generate` / `src.openai.generate` / `src.batch_generate` の基本コマンドとフラグ |
+| [`usage-iterate.md`](usage-iterate.md)       | `--iterate-from` / `--revisions` による i2i (前回画像をベースに改稿) のワークフロー         |
+| [`output-and-logs.md`](output-and-logs.md)   | `output/` の3階層レイアウト、`prompt.txt` / `run_meta.json` / `notes.md` の役割と書式       |
+| [`tools.md`](tools.md)                       | 画像 MIME チェック、output レイアウト移行、形態共通データセットの管理                       |
+
+---
+
+## クイックリファレンス (1 行コマンド)
+
+```powershell
+# 単発生成 (Gemini)
+python -m src.gemini.generate --num 57 --form corefolder
+
+# 単発生成 (OpenAI / gpt-image-1)
+python -m src.openai.generate --num 57 --form corefolder
+
+# シーン・作風・構図・背景を指定
+python -m src.gemini.generate --num 57 --form humanoid `
+  --scene "図書館で本を読んでいるシーン" `
+  --style "watercolor" --composition "bust shot" --background "wooden veranda"
+
+# i2i 改稿 (前回 run dir を起点に、修正指示だけ当て直す)
+python -m src.gemini.generate --num 57 --form corefolder `
+  --iterate-from "output/20260609/20260609_15/20260609_150049_gemini_corefolder_num057" `
+  --revisions "尻尾は元のまま; 表情だけ笑顔にして"
+
+# 複数キャラ/形態/プロバイダのバッチ実行 (本実行前は必ず --dry-run)
+python -m src.batch_generate --nums 15,22,49,57 --forms both --provider both --dry-run
+python -m src.batch_generate --nums 15,22,49,57 --forms both --provider both
+
+# プロンプト改善提案 (GPT-4o)
+python -m src.openai.generate --num 57 --mode prompt-assist --scene "縁側で日向ぼっこ"
+
+# 画像 MIME 不一致チェック
+python -m src.tools.check_image_mime --strict
+```
+
+---
+
+## ドキュメントを直すべきタイミング
+
+次のような変更を加えるときは、 **必ず関連する `docs/*.md` も同じ PR / コミットで更新する** こと。
+古いドキュメントが残るとフィードバックループが壊れるよ。
+
+| 変更内容                                                        | 更新先候補                                              |
+| --------------------------------------------------------------- | ------------------------------------------------------- |
+| 新しい CLI フラグ追加・既存フラグの動作変更                     | `usage-generation.md` / `usage-iterate.md`              |
+| 出力ディレクトリ階層・ログファイル仕様変更                      | `output-and-logs.md` / `AGENTS.md` の出力規則セクション |
+| 新しい `src/tools/` スクリプト追加                              | `tools.md`                                              |
+| 形態共通データセット (`Works_*.json`) のスキーマ変更            | `tools.md` の形態共通データセットセクション             |
+| 新しい環境変数 (`.env`) を導入                                  | `setup.md`                                              |
+| プロンプトビルダー側で重要なブロック追加 (例: `[番号印字仕様]`) | `usage-generation.md` のプロンプト構造説明              |
+
+---
+
+## ライセンス
+
+本リポジトリのドキュメント・スクリプト: [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/)
+非商用目的に限り利用可。商用利用・再配布には著作権者の許諾が必要です。

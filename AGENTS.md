@@ -143,11 +143,43 @@ git submodule update --remote _creations-db
 ## 参照優先ドキュメント
 
 - リポジトリ概要: [`README.md`](README.md)
+- 使い方ドキュメント (このリポジトリ): [`docs/README.md`](docs/README.md)
+  - 環境準備: [`docs/setup.md`](docs/setup.md)
+  - 生成コマンド: [`docs/usage-generation.md`](docs/usage-generation.md)
+  - i2i (--iterate-from): [`docs/usage-iterate.md`](docs/usage-iterate.md)
+  - 出力レイアウト / 実行ログ: [`docs/output-and-logs.md`](docs/output-and-logs.md)
+  - 補助ツール / 形態共通データセット: [`docs/tools.md`](docs/tools.md)
 - ロールプレイ設定: [`_roleplay-datas/roleplay-prompt.md`](_roleplay-datas/roleplay-prompt.md)
 - AI データセット仕様: [`_creations-ai/README.md`](_creations-ai/README.md)
 - API/サービス運用ガイド: [`_creations-ai/docs/usage-gemini-chatgpt-novelai.md`](_creations-ai/docs/usage-gemini-chatgpt-novelai.md)
 - テスト方針（DB 側）: [`_creations-db/README.test.md`](_creations-db/README.test.md)
 - キャラクター DB 実データ: [`_creations-db/data/Works_NumberTales/`](_creations-db/data/Works_NumberTales/)
+
+---
+
+## docs と指示書の同期ルール
+
+使い方ドキュメントの **正本は [`docs/`](docs/README.md)** に置く。エージェントは仕様変更を入れた瞬間に、
+同じ PR / コミットの中で関連 `docs/*.md` を必ず更新すること。古いコマンド例が残るとフィードバックループが壊れる。
+
+### 更新対応表
+
+| 変更内容                                                                                | 必須更新先                                                                                                      |
+| --------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| CLI フラグの追加・既存フラグの動作変更                                                  | [`docs/usage-generation.md`](docs/usage-generation.md) または [`docs/usage-iterate.md`](docs/usage-iterate.md)  |
+| 出力ディレクトリ階層・ログファイル仕様 (`prompt.txt`/`run_meta.json`/`notes.md`) の変更 | [`docs/output-and-logs.md`](docs/output-and-logs.md) と AGENTS.md の出力規則セクション                          |
+| `src/tools/` への新スクリプト追加                                                       | [`docs/tools.md`](docs/tools.md) に節を追加 + AGENTS.md / copilot-instructions.md のクイックリファレンスに 1 行 |
+| 形態共通データセット (`Works_*.json`) のスキーマ変更                                    | [`docs/tools.md`](docs/tools.md) の該当節 + Works\_\*.json の `version` を上げる                                |
+| 新しい環境変数 (`.env`) の導入                                                          | [`docs/setup.md`](docs/setup.md) の `.env` セクション                                                           |
+| プロンプトビルダー側で重要なブロック追加 (例: `[番号印字仕様]`)                         | [`docs/usage-generation.md`](docs/usage-generation.md) のプロンプト構造表                                       |
+| サブモジュール (`_creations-db` / `_creations-ai`) の利用方針変更                       | AGENTS.md と [`docs/setup.md`](docs/setup.md) のサブモジュール節                                                |
+
+### 追加の規約
+
+- 実装変更後は `grep` で旧フラグ名・旧パス・旧階層が `docs/` 配下に残っていないか確認する。
+- 新しい `docs/*.md` を追加した場合は [`docs/README.md`](docs/README.md) の目次に必ず追記する。
+- セッション内で固まった運用ルールは、再利用前提なら `docs/` と AGENTS.md / `.github/copilot-instructions.md` の **両方** に反映する。
+- ドキュメント更新は実装と同じ粒度のレビュー対象とする (PR description でも言及する)。
 
 ---
 

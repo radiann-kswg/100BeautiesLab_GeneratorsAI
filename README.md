@@ -44,9 +44,21 @@ git clone --recurse-submodules <このリポジトリのURL>
 ├── _creations-db/          # キャラクター DB（サブモジュール・読み取り専用）
 ├── _roleplay-datas/        # Copilot ロールプレイ設定
 ├── _ideas/                 # プロンプト草案・アイデア
-├── docs/                   # ドキュメント
+├── docs/                   # 使い方ドキュメント (docs/README.md が入口)
 └── src/                    # 生成スクリプト
 ```
+
+---
+
+## 使い方ドキュメント
+
+セットアップやコマンドの詳細は [`docs/README.md`](docs/README.md) を参照してください。
+
+- 環境準備: [`docs/setup.md`](docs/setup.md)
+- 生成コマンド: [`docs/usage-generation.md`](docs/usage-generation.md)
+- i2i 改稿 (`--iterate-from`): [`docs/usage-iterate.md`](docs/usage-iterate.md)
+- 出力レイアウト / 実行ログ: [`docs/output-and-logs.md`](docs/output-and-logs.md)
+- 補助ツール / 形態共通データセット: [`docs/tools.md`](docs/tools.md)
 
 ---
 
