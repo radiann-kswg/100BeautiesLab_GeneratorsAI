@@ -123,13 +123,46 @@ def _extract_work_dir_from_key(work_key: str) -> str:
 # corefolder 形態では人型衣装語をプロンプトの「現在形態の重点要素」に載せないようフィルタする。
 # `_creations-ai` の outfit_features には humanoid 服飾語が混入している事例があり、
 # そのまま prompt に入れると生成モデルが人型装を描いてしまう。
+# 2026-06-09: 追加 (A2) — arm warmer / sock / shoe / high heel / bodysuit / armored /
+# metallic leg / tunic / belt / cap / beret / hat / mask / hair ornament 系を捕捉し、
+# 18 時バッチで観察された corefolder への humanoid 衣装混入を減らす。
 _HUMANOID_OUTFIT_KEYWORDS: tuple[str, ...] = (
+    # 既存（衣服・装飾の humanoid 専用語）
     "blazer", "shirt", "tshirt", "t-shirt", "shorts", "boots", "boot",
     "dress", "robe", "jacket", "uniform", "skirt", "pants", "trousers",
     "choker", "turtleneck", "sailor-collar", "sailor collar", "scarf",
     "necktie", "tie ", "stocking", "tights", "leggings", "coat", "sweater",
     "vest", "cardigan", "kimono", "hakama", "yukata", "gloves", "glove",
     "sash", "waist", "collar", "sleeve",
+    # 追加 (2026-06-09 A2): 足回り・装甲・帽子・髪飾り・マスク
+    "arm warmer", "leg warmer",
+    "sock", "sneaker", "shoe", "high heel", "heels",
+    "bodysuit", "body suit",
+    "armored", "armor", "metallic leg", "leg element",
+    "tunic", "belt",
+    "cap ", "cap,", " cap", "beret", "messenger cap", "baseball cap",
+    "hat ", " hat", "hat,",
+    "mask",
+    "hair ornament", "hair pin", "hairpin", "hair ribbon", "hair tie",
+)
+
+# silhouette_notes 内の各セグメントを判定する語彙。outfit_features より厳しく具体化し、
+# 球体本体や色味の説明（"warmer coloring"等）を誤って削らないようにする。
+_SILHOUETTE_HUMANOID_KEYWORDS: tuple[str, ...] = (
+    "arm warmer", "leg warmer",
+    "sock", "socks", "sneaker", "sneakers", "shoes", "shoe,",
+    "high heel", "heels",
+    "metallic leg", "leg element", "angular metallic",
+    "armor plating", "armored bodysuit", "bodysuit", "body suit",
+    "tunic",
+    "human arm", "human leg", "human torso", "humanoid torso",
+    "bare leg", "bare-leg", "bare legs",
+    "thigh-high", "knee-high",
+    "boots", "stocking", "tights",
+    # 2026-06-09 (A3 追記): ヘアアクセ / ホログラム輪 など蛇足要素も silhouette_notes から外す。
+    # 22(フジ) の "two small ornamental hair pins" / "circular halo-like hologram ring" を抑制。
+    "hair pin", "hairpin", "hair ornament", "hair ribbon", "hair tie",
+    "hologram ring", "halo-like hologram", "holographic ring",
 )
 
 
@@ -153,6 +186,84 @@ def _filter_corefolder_outfit_features(features: list[str]) -> list[str]:
             continue
         kept.append(text)
     return kept
+
+
+def _filter_corefolder_silhouette_notes(notes: list[str]) -> list[str]:
+    """corefolder の silhouette_notes から humanoid 衣装・四肢の節を除外する。
+
+    silhouette_notes は "; " 区切りの文を持ちうるので、セグメント単位で判定し、
+    残ったセグメントだけを再結合する。空になった note 自体は捨てる。
+    """
+    if not notes:
+        return []
+    kept_notes: list[str] = []
+    for note in notes:
+        if not isinstance(note, str):
+            continue
+        text = note.strip()
+        if not text:
+            continue
+        segments = re.split(r"[;；]", text)
+        kept_segments: list[str] = []
+        for seg in segments:
+            seg_text = seg.strip()
+            if not seg_text:
+                continue
+            lower = seg_text.lower()
+            if any(kw in lower for kw in _SILHOUETTE_HUMANOID_KEYWORDS):
+                continue
+            kept_segments.append(seg_text)
+        if not kept_segments:
+            continue
+        kept_notes.append("; ".join(kept_segments))
+    return kept_notes
+
+
+def _sanitize_corefolder_form_description(text: Any) -> str:
+    """corefolder の natural_language_description から humanoid 衣装節を除去する。
+
+    `_sanitize_natural_language_description` の上位互換。
+    "Corefolder form: oversized coat over wide-leg pants, with the number '7' marked"
+    のような文章を `,` `;` で分割し、humanoid 衣装語を含むセグメントだけ除外する。
+    "Corefolder form:" のような形態プレフィックスは保持する。
+    全セグメント除去された場合は球体型の汎用記述で補填し、空文字を返さない。
+    """
+    cleaned = _sanitize_natural_language_description(text)
+    if not cleaned:
+        return ""
+    prefix_match = re.match(
+        r"^(\s*corefolder form\s*[:：]?\s*)", cleaned, flags=re.IGNORECASE
+    )
+    if prefix_match:
+        prefix = prefix_match.group(1)
+        body = cleaned[prefix_match.end():]
+    else:
+        prefix = ""
+        body = cleaned
+    segments = re.split(r"[,，;；]", body)
+    kept_segments: list[str] = []
+    removed_any = False
+    for seg in segments:
+        seg_text = seg.strip().rstrip(".")
+        if not seg_text:
+            continue
+        lower = seg_text.lower()
+        if any(kw in lower for kw in _HUMANOID_OUTFIT_KEYWORDS):
+            removed_any = True
+            continue
+        kept_segments.append(seg_text)
+    if not removed_any:
+        return cleaned
+    if not kept_segments:
+        fallback = (
+            "a spherical cushion-like compact body in the character's signature color,"
+            " with the number marking on the harness or front of the sphere"
+        )
+        return ((prefix or "Corefolder form: ") + fallback + ".").strip()
+    rebuilt = ", ".join(kept_segments).strip()
+    if not rebuilt.endswith("."):
+        rebuilt += "."
+    return ((prefix or "") + rebuilt).strip()
 
 
 def _extract_face_features_for_corefolder(silhouette_features: list[str]) -> list[str]:
@@ -253,6 +364,36 @@ def _collect_forced_local_images(
     return found
 
 
+# 公開URL → ローカルパス変換に使用する URL prefix。
+# `_creations-db/` 配下に同じ相対パスでファイルが存在することを期待する。
+# 2026-06-09 (A4): work_common.reference_images.{form}_reference[] は URL のみで保存されている
+# ことが多いため、URL を見つけたらローカルパスにも変換を試みて Gemini に実バイトで渡せるようにする。
+_URL_TO_LOCAL_PREFIXES: tuple[str, ...] = (
+    "https://database.numbertales-radiann.net/",
+    "http://database.numbertales-radiann.net/",
+)
+
+
+def _try_resolve_url_to_local_path(url: str, creations_db_base: str) -> str | None:
+    """公開URLが既知の prefix なら、`_creations-db/` 配下の同名ファイルパスを返す。
+
+    対応する prefix に該当しない URL や、ローカルにファイルが存在しない場合は ``None``。
+    """
+    for prefix in _URL_TO_LOCAL_PREFIXES:
+        if url.startswith(prefix):
+            rel = url[len(prefix):].lstrip("/")
+            if not rel:
+                return None
+            candidate = Path(creations_db_base) / rel
+            try:
+                if candidate.exists():
+                    return str(candidate)
+            except OSError:
+                return None
+            return None
+    return None
+
+
 def _collect_work_common_reference_images(
     record: dict[str, Any],
     form: str,
@@ -263,6 +404,8 @@ def _collect_work_common_reference_images(
     作品共通の設計図 (`Ref_Glossary/concept-figure/cnsp-fg_*CoreFolder.png` 等) を想定する。
     キャラクター番号フィルタは通さない (作品共通リソースのため)。
     ローカル相対パスは ``_creations-db/`` 配下と仮定して絶対化する。
+    2026-06-09 (A4): URL しか格納されていない場合でも、対応するローカルファイルが
+    ``_creations-db/`` 配下に存在すれば ``locals_`` にも追加する。
     """
     hints = record.get("ai_hints") or {}
     work_common = hints.get("work_common") or {}
@@ -281,8 +424,13 @@ def _collect_work_common_reference_images(
         if not text:
             continue
         if text.startswith(("http://", "https://")):
-            if _is_path_compatible_with_form(text, form):
-                _append_unique(urls, text)
+            if not _is_path_compatible_with_form(text, form):
+                continue
+            _append_unique(urls, text)
+            # 同名のローカルファイルを併設できる場合はローカル添付対象にも追加する。
+            local_candidate = _try_resolve_url_to_local_path(text, creations_db_base)
+            if local_candidate and _is_path_compatible_with_form(local_candidate, form):
+                _append_unique(locals_, local_candidate)
         else:
             path = str(Path(creations_db_base) / text)
             if _is_path_compatible_with_form(path, form):
@@ -761,6 +909,8 @@ def build_dalle_prompt(
     form_silhouette_notes = [
         str(x).strip() for x in (form_data.get("silhouette_notes") or []) if str(x).strip()
     ]
+    if form == "corefolder":
+        form_silhouette_notes = _filter_corefolder_silhouette_notes(form_silhouette_notes)
     form_immutable_constraints = [
         str(x).strip() for x in (form_data.get("immutable_constraints") or []) if str(x).strip()
     ]
@@ -785,9 +935,14 @@ def build_dalle_prompt(
     ]
     negative_visuals = ", ".join(negative_parts)
     ref_urls = ", ".join(references["urls"])
-    current_form_description = _sanitize_natural_language_description(
-        form_data.get("natural_language_description", "")
-    )
+    if form == "corefolder":
+        current_form_description = _sanitize_corefolder_form_description(
+            form_data.get("natural_language_description", "")
+        )
+    else:
+        current_form_description = _sanitize_natural_language_description(
+            form_data.get("natural_language_description", "")
+        )
     if form == "corefolder":
         current_form_description += (
             " Keep a compact spherical corefolder silhouette,"
@@ -896,6 +1051,8 @@ def build_gemini_prompt(
     form_silhouette_notes = [
         str(x).strip() for x in (form_data.get("silhouette_notes") or []) if str(x).strip()
     ]
+    if form == "corefolder":
+        form_silhouette_notes = _filter_corefolder_silhouette_notes(form_silhouette_notes)
     form_immutable_constraints = [
         str(x).strip() for x in (form_data.get("immutable_constraints") or []) if str(x).strip()
     ]
@@ -927,9 +1084,14 @@ def build_gemini_prompt(
         ]
     )
     ref_urls = "\n".join(f"- {u}" for u in references["urls"])
-    current_form_description = _sanitize_natural_language_description(
-        form_data.get("natural_language_description", "")
-    )
+    if form == "corefolder":
+        current_form_description = _sanitize_corefolder_form_description(
+            form_data.get("natural_language_description", "")
+        )
+    else:
+        current_form_description = _sanitize_natural_language_description(
+            form_data.get("natural_language_description", "")
+        )
     if form == "corefolder":
         current_form_description += (
             " Keep a compact spherical corefolder silhouette,"
