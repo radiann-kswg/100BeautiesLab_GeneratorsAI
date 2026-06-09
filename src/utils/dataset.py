@@ -989,9 +989,9 @@ def build_dalle_prompt(
     form_data = (hints.get("forms") or {}).get(form) or {}
     references = collect_reference_images(record, form=form)
 
-    identity_tags = ", ".join(common.get("identity_tags", []))
-    immutable_traits = ", ".join(common.get("immutable_traits", []))
-    form_tags = ", ".join(form_data.get("form_tags", []))
+    identity_tags = ", ".join(common.get("identity_tags") or [])
+    immutable_traits = ", ".join(common.get("immutable_traits") or [])
+    form_tags = ", ".join(form_data.get("form_tags") or [])
     form_silhouette_body, form_silhouette_attached = _extract_silhouette_notes_for_prompt(
         form_data, form
     )
@@ -1013,7 +1013,7 @@ def build_dalle_prompt(
     else:
         extra_negative_items.extend(["extra arms", "extra hands", "more than two arms"])
     negative_parts = [
-        *form_data.get("negative_visuals", []),
+        *(form_data.get("negative_visuals") or []),
         *form_negative_keywords,
         *extra_negative_items,
     ]
@@ -1134,8 +1134,8 @@ def build_gemini_prompt(
     references = collect_reference_images(record, form=form)
 
     palette = common.get("palette_priority") or {}
-    identity_tags = ", ".join(common.get("identity_tags", []))
-    form_tags = ", ".join(form_data.get("form_tags", []))
+    identity_tags = ", ".join(common.get("identity_tags") or [])
+    form_tags = ", ".join(form_data.get("form_tags") or [])
     form_silhouette_body, form_silhouette_attached = _extract_silhouette_notes_for_prompt(
         form_data, form
     )
@@ -1145,7 +1145,7 @@ def build_gemini_prompt(
     form_negative_keywords = [
         str(x).strip() for x in (form_data.get("negative_keywords") or []) if str(x).strip()
     ]
-    current_outfit_features = form_data.get("outfit_features", []) or []
+    current_outfit_features = form_data.get("outfit_features") or []
     if form == "corefolder":
         current_outfit_features = _filter_corefolder_outfit_features(
             list(current_outfit_features)
@@ -1164,7 +1164,7 @@ def build_gemini_prompt(
         extra_negative_items.extend(["extra arms", "extra hands", "more than two arms"])
     current_negative = ", ".join(
         [
-            *form_data.get("negative_visuals", []),
+            *(form_data.get("negative_visuals") or []),
             *form_negative_keywords,
             *extra_negative_items,
         ]
@@ -1257,7 +1257,7 @@ def build_gemini_prompt(
         f"[形態固定ルール]\n{form_lock}\n\n"
         f"[識別記号 (必ず満たしてください)]\n"
         f"- {identity_tags}\n"
-        f"- 不変属性: {', '.join(common.get('immutable_traits', [])) or '(なし)'}\n"
+        f"- 不変属性: {', '.join(common.get('immutable_traits') or []) or '(なし)'}\n"
         f"- {form_tags}\n\n"
         f"{silhouette_block}"
         f"{form_common_block}\n\n"
