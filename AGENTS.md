@@ -9,7 +9,7 @@ License: [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/)
 ## このドキュメントについて
 
 - 目的: 本リポジトリで AI 生成補助ツールを安全かつ一貫した手順で開発すること。
-- 適用範囲: リポジトリ全体（ルート、`src/`、`_ideas/`、`_roleplay-datas/`、サブモジュール参照）。
+- 適用範囲: リポジトリ全体（ルート、`src/`、`_ideas/`、`.github/_roleplay-datas/`、サブモジュール参照）。
 - 詳細仕様は重複記述せず、既存ドキュメントへリンクします。
 
 ---
@@ -18,9 +18,10 @@ License: [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/)
 
 - 回答言語は日本語。
 - Copilot は 57(イズナ) のロールプレイ設定に従う。
-  - 参照: [`_roleplay-datas/roleplay-prompt.md`](_roleplay-datas/roleplay-prompt.md)
-  - ロールプレイの正本（Single Source of Truth）は [`_roleplay-datas/roleplay-prompt.md`](_roleplay-datas/roleplay-prompt.md) とし、口調・呼称・話題選好に解釈差が出た場合はこのファイルを最優先してください。
-- 毎セッション開始時、最初の回答前に必ず `_roleplay-datas/roleplay-prompt.md` を再確認し、全回答で「私(わたし) / 君 / 先輩」の呼称と明るい口調を維持する。
+  - 参照: [`.github/_roleplay-datas/roleplay-prompt.md`](.github/_roleplay-datas/roleplay-prompt.md)
+  - ロールプレイの正本（Single Source of Truth）は [`.github/_roleplay-datas/roleplay-prompt.md`](.github/_roleplay-datas/roleplay-prompt.md) とし、口調・呼称・話題選好に解釈差が出た場合はこのファイルを最優先してください。
+  - VS Code Copilot は [`.github/instructions/roleplay-izuna.instructions.md`](.github/instructions/roleplay-izuna.instructions.md) を `applyTo: '**'` で自動ロードします (口調・呼称・禁止事項のコア要点)。
+- 毎セッション開始時、最初の回答前に必ず `.github/_roleplay-datas/roleplay-prompt.md` を再確認し、全回答で「私(わたし) / 君 / 先輩」の呼称と明るい口調を維持する。
 - 本リポジトリは創作補助用途（非商用前提）であり、ライセンスは CC BY-NC 4.0 に従う。
 - 反社会的・性的コンテンツの生成支援は行わない。
 
@@ -149,7 +150,8 @@ git submodule update --remote _creations-db
   - i2i (--iterate-from): [`docs/usage-iterate.md`](docs/usage-iterate.md)
   - 出力レイアウト / 実行ログ: [`docs/output-and-logs.md`](docs/output-and-logs.md)
   - 補助ツール / 形態共通データセット: [`docs/tools.md`](docs/tools.md)
-- ロールプレイ設定: [`_roleplay-datas/roleplay-prompt.md`](_roleplay-datas/roleplay-prompt.md)
+- ロールプレイ設定（正本）: [`.github/_roleplay-datas/roleplay-prompt.md`](.github/_roleplay-datas/roleplay-prompt.md)
+- ロールプレイ常時適用ルール: [`.github/instructions/roleplay-izuna.instructions.md`](.github/instructions/roleplay-izuna.instructions.md)
 - AI データセット仕様: [`_creations-ai/README.md`](_creations-ai/README.md)
 - API/サービス運用ガイド: [`_creations-ai/docs/usage-gemini-chatgpt-novelai.md`](_creations-ai/docs/usage-gemini-chatgpt-novelai.md)
 - テスト方針（DB 側）: [`_creations-db/README.test.md`](_creations-db/README.test.md)

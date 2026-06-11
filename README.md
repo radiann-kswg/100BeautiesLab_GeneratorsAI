@@ -40,9 +40,12 @@ git clone --recurse-submodules <このリポジトリのURL>
 
 ```
 ├── AGENTS.md               # Copilot エージェント指示
+├── .github/
+│   ├── copilot-instructions.md      # Copilot 全体指示
+│   ├── instructions/                # applyTo 付き自動ロード指示
+│   └── _roleplay-datas/             # Copilot ロールプレイ設定 (正本)
 ├── _creations-ai/          # AI 学習データ（サブモジュール）
 ├── _creations-db/          # キャラクター DB（サブモジュール・読み取り専用）
-├── _roleplay-datas/        # Copilot ロールプレイ設定
 ├── _ideas/                 # プロンプト草案・アイデア
 ├── docs/                   # 使い方ドキュメント (docs/README.md が入口)
 └── src/                    # 生成スクリプト
