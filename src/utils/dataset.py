@@ -952,6 +952,36 @@ def _extract_number_print_spec(record: dict[str, Any], form: str) -> list[str]:
     return spec_lines
 
 
+def _extract_identity_motif_en(record: dict[str, Any], form: str) -> list[str]:
+    """record.data または db_record から指定 form の IdentityMotif.Motif_EN を返す。
+
+    フォームラベル自体 ("corefolder form" / "humanoid form") は除外。
+    corefolder 形態では outfit_features フィルタを適用して humanoid 衣装語を除去する。
+    """
+    data = record.get("data") or {}
+    identity_motif = data.get("IdentityMotif")
+    if not identity_motif:
+        db_record = record.get("db_record") or {}
+        identity_motif = db_record.get("IdentityMotif")
+    if not isinstance(identity_motif, list):
+        return []
+    form_label = f"{form} form"
+    for entry in identity_motif:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("Formation") != form:
+            continue
+        motif_en = (entry.get("Motif") or {}).get("Motif_EN") or []
+        if not isinstance(motif_en, list):
+            return []
+        tags = [str(t).strip() for t in motif_en if str(t).strip().lower() != form_label]
+        tags = [t for t in tags if t]
+        if form == "corefolder":
+            tags = _filter_corefolder_outfit_features(tags)
+        return tags
+    return []
+
+
 def _build_number_print_block(record: dict[str, Any], form: str) -> str:
     """`[番号印字仕様]` プロンプトブロックを生成する。
 
@@ -1120,17 +1150,25 @@ def _build_form_common_dataset_block(
     function_traits = ", ".join(profile.get("function_traits") or [])
 
     db_lines: list[str] = []
-    # 原典 DB 詳細は humanoid 形態でのみ有効。
-    # corefolder に TailsUnit の「上2束5本+下1束2本」等を注入すると、
-    # 球体型のコアフォルダに分裂シッポを誘発するため出力しない。
+    # IdentityMotif.Motif_EN は両形態で有効（DB 側で形態別に設計済み）。
+    if isinstance(record, dict):
+        motif_en_tags = _extract_identity_motif_en(record, form)
+        if motif_en_tags:
+            db_lines.append(f"- DB原典/識別モチーフ(en): {', '.join(motif_en_tags)}")
+
+    # TailsUnit / RaceType / FormalName は humanoid 形態でのみ注入する。
+    # corefolder に TailsUnit（尾の本数・構造）を注入すると球体型への枝分かれシッポを誘発するため出力しない。
     if form == "humanoid" and isinstance(record, dict):
         db_record = record.get("db_record")
         if isinstance(db_record, dict):
+            tails_unit_en = str(db_record.get("TailsUnit_EN") or "").strip()
             tails_unit = str(db_record.get("TailsUnit") or "").strip()
             race_type = str(db_record.get("RaceType") or "").strip()
             formal_name = str(db_record.get("FormalName") or "").strip()
             formal_name_en = str(db_record.get("FormalName_EN") or "").strip()
-            if tails_unit:
+            if tails_unit_en:
+                db_lines.append(f"- DB原典/尾の構造(en): {tails_unit_en}")
+            elif tails_unit:
                 db_lines.append(f"- DB原典/尾の構造: {tails_unit}")
             if race_type:
                 db_lines.append(f"- DB原典/種別: {race_type}")
