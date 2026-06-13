@@ -187,7 +187,7 @@ git submodule update --remote _creations-db
 
 ## エージェント実務ルール
 
-- プロンプト提案時は `_creations-ai/ai-dataset/manifest-training.jsonl` を優先し、`ai_training.allowed` 前提を守る。
+- プロンプト提案時は `_creations-ai/ai-dataset/manifest.jsonl` を使用し、`has_ai_hints=True` のレコードのみを対象とする。`AI_Optout` は学習制限フラグであり画像生成用途には適用しない（生成可否は `AI_Output` フラグが将来的に担う）。
 - 新規の提案テキストや作業メモは `_ideas/` に集約する。
 - API キーやシークレットはコードに直接埋め込まず `.env` を使用する。
 - 仕様が曖昧な場合は、推測実装より先に関連ドキュメントへのリンクを示して確認する。

@@ -1,5 +1,5 @@
 """
-utils/dataset.py — manifest-training.jsonl からキャラクターデータを読み込むユーティリティ
+utils/dataset.py — manifest.jsonl からキャラクターデータを読み込むユーティリティ
 Copyright © RadianN_kswg — CC BY-NC 4.0
 """
 
@@ -682,14 +682,16 @@ def collect_record_capabilities(
 
 
 def load_manifest(manifest_path: str | None = None) -> list[dict[str, Any]]:
-    """manifest-training.jsonl を読み込んでキャラクターレコードのリストを返す。
+    """manifest.jsonl を読み込んでキャラクターレコードのリストを返す。
 
-    manifest-training.jsonl は AI 学習許可済みレコードのみを含む。
-    (manifest.jsonl の ai_training.allowed=true のサブセット)
+    生成用途では manifest.jsonl（全レコード）を使用する。
+    AI_Optout は学習データへの利用制限フラグであり、画像生成（AI_Output）用途には適用しない。
+    manifest-training.jsonl は学習許可済みサブセットで、生成では使用しない。
+    パスは環境変数 MANIFEST_PATH で上書き可能。
     """
     path = manifest_path or os.environ.get(
         "MANIFEST_PATH",
-        "_creations-ai/ai-dataset/manifest-training.jsonl",
+        "_creations-ai/ai-dataset/manifest.jsonl",
     )
     records: list[dict[str, Any]] = []
     with open(path, encoding="utf-8") as f:
@@ -702,7 +704,11 @@ def load_manifest(manifest_path: str | None = None) -> list[dict[str, Any]]:
 
 
 def get_characters(manifest_path: str | None = None) -> list[dict[str, Any]]:
-    """AI 学習許可済みのキャラクターレコードのみを返す。"""
+    """ai_hints を持つキャラクターレコードを返す（画像生成用）。
+
+    AI_Optout は学習制限フラグであり生成用途には適用しない。
+    ai_hints が存在する（has_ai_hints=True）レコードのみを対象とする。
+    """
     return [
         r for r in load_manifest(manifest_path)
         if r.get("_type") == "character" and r.get("has_ai_hints")
@@ -1159,23 +1165,24 @@ def _build_form_common_dataset_block(
     # TailsUnit / RaceType / FormalName は humanoid 形態でのみ注入する。
     # corefolder に TailsUnit（尾の本数・構造）を注入すると球体型への枝分かれシッポを誘発するため出力しない。
     if form == "humanoid" and isinstance(record, dict):
-        db_record = record.get("db_record")
-        if isinstance(db_record, dict):
-            tails_unit_en = str(db_record.get("TailsUnit_EN") or "").strip()
-            tails_unit = str(db_record.get("TailsUnit") or "").strip()
-            race_type = str(db_record.get("RaceType") or "").strip()
-            formal_name = str(db_record.get("FormalName") or "").strip()
-            formal_name_en = str(db_record.get("FormalName_EN") or "").strip()
-            if tails_unit_en:
-                db_lines.append(f"- DB原典/尾の構造(en): {tails_unit_en}")
-            elif tails_unit:
-                db_lines.append(f"- DB原典/尾の構造: {tails_unit}")
-            if race_type:
-                db_lines.append(f"- DB原典/種別: {race_type}")
-            if formal_name:
-                db_lines.append(f"- DB原典/正式名: {formal_name}")
-            if formal_name_en:
-                db_lines.append(f"- DB原典/正式名(en): {formal_name_en}")
+        # record["data"]（manifest 由来）を優先し、なければ db_record（CreationsDBClient 由来）を使う。
+        _data_src = record.get("data") or {}
+        _db_src = record.get("db_record") or {}
+        tails_unit_en = str(_data_src.get("TailsUnit_EN") or _db_src.get("TailsUnit_EN") or "").strip()
+        tails_unit = str(_data_src.get("TailsUnit") or _db_src.get("TailsUnit") or "").strip()
+        race_type = str(_data_src.get("RaceType") or _db_src.get("RaceType") or "").strip()
+        formal_name = str(_data_src.get("FormalName") or _db_src.get("FormalName") or "").strip()
+        formal_name_en = str(_data_src.get("FormalName_EN") or _db_src.get("FormalName_EN") or "").strip()
+        if tails_unit_en:
+            db_lines.append(f"- DB原典/尾の構造(en): {tails_unit_en}")
+        elif tails_unit:
+            db_lines.append(f"- DB原典/尾の構造: {tails_unit}")
+        if race_type:
+            db_lines.append(f"- DB原典/種別: {race_type}")
+        if formal_name:
+            db_lines.append(f"- DB原典/正式名: {formal_name}")
+        if formal_name_en:
+            db_lines.append(f"- DB原典/正式名(en): {formal_name_en}")
 
     db_block = ("\n" + "\n".join(db_lines)) if db_lines else ""
 
