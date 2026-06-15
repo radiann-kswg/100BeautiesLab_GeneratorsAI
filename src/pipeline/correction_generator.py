@@ -186,6 +186,9 @@ def _apply_correction_gemini(
             count=1,
             iterate_from=iterate_path,
             prompt_override=correction_prompt,
+            # i2i 修正時は DB 参照画像を渡さない。
+            # DB 画像があると Gemini が参照画像に引っ張られて余計な要素を追加する。
+            skip_db_refs=(iterate_path is not None),
         )
     except SystemExit as err:
         print(f"[WARN] Stage4 Gemini 修正 (rough_{index:02d}): {err}")
