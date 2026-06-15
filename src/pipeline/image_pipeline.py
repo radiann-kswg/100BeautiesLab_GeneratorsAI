@@ -430,6 +430,8 @@ def run_combined_pipeline(
     background: str = "",
     skip_canva: bool = False,
     correction_mode: str = "t2i",
+    iterate_from: str | None = None,
+    revisions: "str | list[str] | None" = None,
 ) -> MultiCharPipelineResult:
     """複数キャラクターを 1 枚に合同生成するパイプライン (Stage 1→2→3→4→5)。
 
@@ -529,6 +531,12 @@ def run_combined_pipeline(
         "char_count": len(records),
         "char_names": [r["data"].get("Name", "") for r in records],
     }
+    if iterate_from:
+        result.stage1_prompts["iterate_from"] = iterate_from
+        result.stage1_prompts["revisions"] = (
+            revisions if isinstance(revisions, list)
+            else [r for r in (revisions or "").replace(";", "\n").splitlines() if r.strip()]
+        )
     stage1_dir = pipeline_dir / "stage1_prompt"
     stage1_dir.mkdir(parents=True, exist_ok=True)
     for rec in records:
@@ -539,10 +547,22 @@ def run_combined_pipeline(
     print(f"[Stage1] done - {len(records)} キャラクター分のプロンプト生成完了")
 
     # ── Stage 3: キャラクターごとに個別ラフ生成 (_MULTI_ROUGH_PER_CHAR 枚) ──
+    stage3_mode = f"i2i ({iterate_from})" if iterate_from else "T2I"
     print(
         f"\n[=] Stage 3: キャラクターごとに個別ラフ生成"
-        f" ({_MULTI_ROUGH_PER_CHAR} 枚/キャラ, 計 {len(nums) * _MULTI_ROUGH_PER_CHAR} 枚)"
+        f" ({_MULTI_ROUGH_PER_CHAR} 枚/キャラ, 計 {len(nums) * _MULTI_ROUGH_PER_CHAR} 枚"
+        f", mode={stage3_mode})"
     )
+    # revision block は per-char の base_prompt 先頭に共通で差し込む
+    _rev_block: str = ""
+    if iterate_from and revisions:
+        from src.utils.iterate import parse_revisions
+        from src.utils.dataset import _build_revision_block
+        _rev_items = (
+            parse_revisions(revisions) if isinstance(revisions, str) else list(revisions)
+        )
+        _rev_block = _build_revision_block(_rev_items)
+
     per_char_roughs: dict[int, list[Path]] = {}
     inter_char_sleep = float(os.environ.get("GEMINI_IMAGE_SLEEP", "6"))
 
@@ -557,6 +577,8 @@ def run_combined_pipeline(
         rough_dir.mkdir(parents=True, exist_ok=True)
         base_prompt = (per_char_prompts[n].get("base_gemini", "")
                        or per_char_prompts[n].get("gemini", ""))
+        if _rev_block and base_prompt:
+            base_prompt = _rev_block + "\n\n" + base_prompt
         print(f"  [Stage3] #{n:03d} ラフ {_MULTI_ROUGH_PER_CHAR} 枚生成中...")
         try:
             paths = generate_image(
@@ -565,6 +587,7 @@ def run_combined_pipeline(
                 count=_MULTI_ROUGH_PER_CHAR,
                 prompt_override=base_prompt,
                 skip_ref_urls=True,  # DB URL を Gemini サーバーが取得できないケースを回避
+                iterate_from=iterate_from,  # 指定時は前回合成画像を参照先頭に差し込む
             )
         except (SystemExit, Exception) as err:
             paths = []
@@ -962,6 +985,8 @@ def main() -> None:
             background=char_params[0].get("background", args.background),
             skip_canva=args.skip_canva,
             correction_mode=args.correction_mode,
+            iterate_from=args.iterate_from,
+            revisions=args.revisions,
         )
         nums_label = "+".join(f"#{n:03d}" for n in res.nums)
         scene_preview = (res.scene_used[:24] + "...") if len(res.scene_used) > 24 else res.scene_used
