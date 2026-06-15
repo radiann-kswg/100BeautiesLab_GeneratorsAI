@@ -125,8 +125,16 @@ def _call_firefly_generate(
         },
         method="POST",
     )
-    with urllib.request.urlopen(req) as resp:  # noqa: S310 (信頼済 Adobe Firefly)
-        result = json.loads(resp.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(req) as resp:  # noqa: S310 (信頼済 Adobe Firefly)
+            result = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        raise RuntimeError(
+            f"Firefly API HTTP {e.code}: {body[:400]}\n"
+            "ヒント: Adobe Developer Console でプロジェクトに "
+            "「Firefly - Creative Cloud Automation API」サービスが追加されているか確認してください。"
+        ) from e
 
     urls: list[str] = []
     for out in result.get("outputs", []) or []:
@@ -150,6 +158,7 @@ def generate_image_firefly(
     iterate_from: str | None = None,
     revisions: list[str] | None = None,
     dry_run: bool = False,
+    prompt_override: str | None = None,
 ) -> list[Path]:
     """Adobe Firefly でキャラクター画像を生成して保存する。
 
@@ -193,7 +202,7 @@ def generate_image_firefly(
     if record is None:
         sys.exit(f"[ERROR] キャラクター #{num} ({work_key}) が見つかりません。")
 
-    prompt_text = build_dalle_prompt(
+    prompt_text = prompt_override or build_dalle_prompt(
         record,
         form,
         scene=scene,

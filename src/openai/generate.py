@@ -78,6 +78,7 @@ def generate_image_dalle(
     background: str = "",
     iterate_from: str | None = None,
     revisions: list[str] | None = None,
+    prompt_override: str | None = None,
 ) -> Path | None:
     """DALL-E 3 でキャラクター画像を生成して保存する。
 
@@ -144,7 +145,7 @@ def generate_image_dalle(
     if record is None:
         sys.exit(f"[ERROR] キャラクター #{num} ({work_key}) が見つかりません。")
 
-    prompt_text = build_dalle_prompt(
+    prompt_text = prompt_override or build_dalle_prompt(
         record,
         form,
         scene=scene,

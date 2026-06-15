@@ -61,6 +61,20 @@
 # 依存関係インストール
 pip install -r requirements.txt
 
+# ── マルチ LLM パイプライン (推奨) ────────────────────────────────
+# 画像生成パイプライン (Stage1: プロンプト加工 → Stage2: ラフ → Stage3: 本生成)
+python -m src.pipeline.image_pipeline --num 57 --form corefolder
+python -m src.pipeline.image_pipeline --num 57 --form corefolder \
+    --scene "図書館で本を読んでいるシーン" --count 2 --skip-canva
+
+# テキスト生成パイプライン (GPT-4o 生成 → Gemini クロスレビュー)
+python -m src.pipeline.text_pipeline --num 57 --mode scene \
+    --prompt "図書館で先輩と本を読んでいるシーン"
+python -m src.pipeline.text_pipeline --num 57 --mode description
+python -m src.pipeline.text_pipeline --num 57 --mode caption \
+    --prompt "夕暮れの研究所テラスで一人たたずむシーン"
+
+# ── 単体プロバイダ生成 ─────────────────────────────────────────────
 # 画像生成
 python -m src.gemini.generate --num 57 --form corefolder
 python -m src.openai.generate --num 57 --form corefolder

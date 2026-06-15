@@ -1,0 +1,193 @@
+"""
+pipeline/prompt_refiner.py — Stage 1: デュアル LLM プロンプト加工
+Copyright © RadianN_kswg — CC BY-NC 4.0
+
+OpenAI (GPT-4o) と Gemini (Flash) の両方でキャラデータベースに基づきプロンプトを加工する。
+各モデルの強みを活かし、Stage 2 の各プロバイダに最適化されたプロンプトを生成する:
+  - OpenAI 加工結果 → Stage 2 Adobe Firefly 用
+  - Gemini 加工結果  → Stage 2 Gemini Imagen 用
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+from pathlib import Path
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_PROJECT_ROOT))
+
+from src.utils import build_dalle_prompt, build_gemini_prompt  # noqa: E402
+
+
+def _system_instruction(char_name: str, form: str) -> str:
+    return (
+        f"You are an expert image generation prompt engineer for the NumberTales series character "
+        f"'{char_name}' in {form} form. "
+        "Optimize the given base prompt for high-quality character image generation. "
+        "CRITICAL: preserve all immutable traits — ear type, tail count, hair color, eye color. "
+        "Return ONLY the refined English prompt. No explanations, no markdown, prompt text only."
+    )
+
+
+def _user_message(base_prompt: str, scene: str, style: str,
+                  composition: str, background: str) -> str:
+    lines = ["Refine this image generation prompt for maximum quality:\n", base_prompt]
+    extras: list[str] = []
+    if scene:
+        extras.append(f"Scene/pose: {scene}")
+    if style:
+        extras.append(f"Art style: {style}")
+    if composition:
+        extras.append(f"Composition: {composition}")
+    if background:
+        extras.append(f"Background: {background}")
+    if extras:
+        lines.append("\nAdditional requirements to incorporate:\n" + "\n".join(extras))
+    lines.append("\nReturn only the refined prompt:")
+    return "\n".join(lines)
+
+
+def refine_with_openai(
+    record: dict,
+    form: str,
+    scene: str = "",
+    style: str = "",
+    composition: str = "",
+    background: str = "",
+) -> str:
+    """GPT-4o でプロンプトを加工して返す。失敗時はベースプロンプト (DALL-E 形式) を返す。"""
+    try:
+        from openai import OpenAI
+    except ImportError:
+        print("[WARN] openai パッケージが見つかりません。OpenAI プロンプト加工をスキップします。")
+        return ""
+
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        print("[WARN] OPENAI_API_KEY が未設定です。OpenAI プロンプト加工をスキップします。")
+        return ""
+
+    gpt_model = os.environ.get("GPT_MODEL", "gpt-4o")
+    char_name = record["data"].get("Name", "Unknown")
+    base_prompt = build_dalle_prompt(
+        record, form, scene=scene, style=style,
+        composition=composition, background=background,
+    )
+
+    client = OpenAI(api_key=api_key)
+    try:
+        response = client.chat.completions.create(
+            model=gpt_model,
+            messages=[
+                {"role": "system", "content": _system_instruction(char_name, form)},
+                {"role": "user", "content": _user_message(
+                    base_prompt, scene, style, composition, background)},
+            ],
+            max_tokens=600,
+        )
+        result = (response.choices[0].message.content or "").strip()
+        return result if result else base_prompt
+    except Exception as err:
+        print(f"[WARN] OpenAI プロンプト加工に失敗: {err}")
+        return base_prompt
+
+
+def refine_with_gemini(
+    record: dict,
+    form: str,
+    scene: str = "",
+    style: str = "",
+    composition: str = "",
+    background: str = "",
+) -> str:
+    """Gemini テキストモデルでプロンプトを加工して返す。失敗時はベースプロンプト (Gemini 形式) を返す。"""
+    try:
+        from google import genai
+        from google.genai import types as genai_types
+    except ImportError:
+        print("[WARN] google-genai パッケージが見つかりません。Gemini プロンプト加工をスキップします。")
+        return ""
+
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        print("[WARN] GEMINI_API_KEY が未設定です。Gemini プロンプト加工をスキップします。")
+        return ""
+
+    text_model = os.environ.get("GEMINI_TEXT_MODEL", "gemini-2.5-flash")
+    char_name = record["data"].get("Name", "Unknown")
+    data = build_gemini_prompt(
+        record, form, scene=scene, style=style,
+        composition=composition, background=background,
+    )
+    base_prompt = data["prompt"]
+
+    client = genai.Client(api_key=api_key)
+    try:
+        response = client.models.generate_content(
+            model=text_model,
+            contents=_user_message(base_prompt, scene, style, composition, background),
+            config=genai_types.GenerateContentConfig(
+                system_instruction=_system_instruction(char_name, form),
+                max_output_tokens=600,
+            ),
+        )
+        result = (response.text or "").strip()
+        return result if result else base_prompt
+    except Exception as err:
+        print(f"[WARN] Gemini プロンプト加工に失敗: {err}")
+        return base_prompt
+
+
+def refine_prompt_dual(
+    record: dict,
+    form: str,
+    scene: str = "",
+    style: str = "",
+    composition: str = "",
+    background: str = "",
+) -> dict[str, str | list]:
+    """OpenAI + Gemini の両方でプロンプトを加工し、各結果を返す。
+
+    Returns
+    -------
+    {
+        "openai":      str — Adobe Firefly 用 (OpenAI 加工)
+        "gemini":      str — Gemini Imagen 用 (Gemini 加工)
+        "base_dalle":  str — DALL-E ベースプロンプト (加工前)
+        "base_gemini": str — Gemini ベースプロンプト (加工前)
+        "ref_urls":    list[str] — DB 参照画像 URL
+        "ref_locals":  list[str] — DB 参照画像ローカルパス
+    }
+    """
+    base_dalle = build_dalle_prompt(
+        record, form, scene=scene, style=style,
+        composition=composition, background=background,
+    )
+    base_gemini_data = build_gemini_prompt(
+        record, form, scene=scene, style=style,
+        composition=composition, background=background,
+    )
+    base_gemini = base_gemini_data["prompt"]
+
+    print("[Stage1] OpenAI (GPT-4o) でプロンプトを加工中...")
+    openai_prompt = refine_with_openai(
+        record, form, scene=scene, style=style,
+        composition=composition, background=background,
+    )
+
+    print("[Stage1] Gemini でプロンプトを加工中...")
+    gemini_prompt = refine_with_gemini(
+        record, form, scene=scene, style=style,
+        composition=composition, background=background,
+    )
+
+    return {
+        "openai": openai_prompt or base_dalle,
+        "gemini": gemini_prompt or base_gemini,
+        "base_dalle": base_dalle,
+        "base_gemini": base_gemini,
+        "ref_urls": base_gemini_data.get("reference_image_urls") or [],
+        "ref_locals": base_gemini_data.get("reference_local_paths") or [],
+    }

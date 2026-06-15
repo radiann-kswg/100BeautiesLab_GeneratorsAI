@@ -1,9 +1,82 @@
 # usage-generation.md — 基本生成コマンドの使い方
 
-`src.gemini.generate` / `src.openai.generate` / `src.batch_generate` の使い方をまとめたページ。
+`src.gemini.generate` / `src.openai.generate` / `src.batch_generate` および
+マルチ LLM パイプライン (`src.pipeline.*`) の使い方をまとめたページ。
 i2i (前回画像をベースに改稿) は [`usage-iterate.md`](usage-iterate.md) を参照。
+MCP (Adobe / Canva) との連携は [`usage-mcp-canva-adobe.md`](usage-mcp-canva-adobe.md) を参照。
 
 > 関連: [`docs/README.md`](README.md) / [`AGENTS.md`](../AGENTS.md) / [`output-and-logs.md`](output-and-logs.md)
+
+---
+
+## 0. マルチ LLM パイプライン (`src.pipeline`) — 推奨
+
+複数のプロバイダ・LLM を連携させた 3 ステージ画像生成ワークフロー。
+
+### 0-1. 画像生成パイプライン
+
+| ステージ | 処理 | 使用モデル |
+|---|---|---|
+| Stage 1 | プロンプト加工 | OpenAI GPT-4o + Gemini Flash |
+| Stage 2 | ラフ画像生成 | Gemini Imagen + Adobe Firefly |
+| Stage 3 | 本生成・仕上げ | Gemini i2i + Canva Connect API |
+
+```bash
+# 基本実行
+python -m src.pipeline.image_pipeline --num 57 --form corefolder
+
+# シーン・作風指定
+python -m src.pipeline.image_pipeline --num 57 --form corefolder \
+    --scene "図書館で本を読んでいるシーン" --style "watercolor" --count 2
+
+# Canva フィニッシングをスキップ（CANVA_ACCESS_TOKEN 不要）
+python -m src.pipeline.image_pipeline --num 57 --form corefolder --skip-canva
+```
+
+| フラグ | 既定値 | 説明 |
+|---|---|---|
+| `--num` | 必須 | キャラクター番号 |
+| `--form` | corefolder | 形態 |
+| `--scene` / `--style` / `--composition` / `--background` | `""` | 生成オプション |
+| `--count` | 1 | 各プロバイダの生成枚数 (1-4) |
+| `--skip-canva` | false | Stage 3 の Canva をスキップ |
+
+**出力構成:**
+```
+{OUTPUT_BASE_DIR}/{YYYYMMDD}/{YYYYMMDD_HH}/{ts}_pipeline_{form}_num{NNN}/
+  stage1_prompt/   — 加工済みプロンプト (openai/gemini/base テキスト)
+  stage2_rough/    — Gemini Imagen + Adobe Firefly ラフ画像
+  stage3_final/    — Gemini i2i 精錬 + Canva 書き出し
+  pipeline_summary.json
+```
+
+### 0-2. テキスト生成パイプライン
+
+GPT-4o でプライマリ生成 → Gemini でクロスレビュー・改善。
+
+```bash
+# シーン文章 (創作向け)
+python -m src.pipeline.text_pipeline --num 57 --mode scene \
+    --prompt "図書館で先輩と本を読んでいるシーン"
+
+# キャラクター紹介・外見描写 (Wiki/DB 向け)
+python -m src.pipeline.text_pipeline --num 57 --mode description
+
+# イラストキャプション (100文字以内)
+python -m src.pipeline.text_pipeline --num 57 --mode caption \
+    --prompt "夕暮れの研究所テラスでたたずむシーン"
+```
+
+必要な環境変数 (`.env`):
+
+| 変数 | 用途 |
+|---|---|
+| `GEMINI_API_KEY` | Gemini Imagen + Gemini テキスト |
+| `OPENAI_API_KEY` | GPT-4o (プロンプト加工 + テキスト生成) |
+| `FIREFLY_CLIENT_ID` / `FIREFLY_CLIENT_SECRET` | Adobe Firefly (Stage 2) |
+| `CANVA_ACCESS_TOKEN` | Canva フィニッシング (Stage 3、`--skip-canva` で不要) |
+| `GEMINI_TEXT_MODEL` | Gemini テキストモデル (デフォルト: `gemini-2.0-flash-001`) |
+| `GPT_MODEL` | OpenAI テキストモデル (デフォルト: `gpt-4o`) |
 
 ---
 

@@ -123,6 +123,7 @@ def generate_image(
     background: str = "",
     iterate_from: str | None = None,
     revisions: list[str] | None = None,
+    prompt_override: str | None = None,
 ) -> list[Path]:
     """Imagen 3 でキャラクター画像を生成して保存する。
 
@@ -200,7 +201,7 @@ def generate_image(
         background=background,
         revisions=revision_items or None,
     )
-    prompt_text = data["prompt"]
+    prompt_text = prompt_override if prompt_override else data["prompt"]
     ref_url = data["reference_image_url"]
     ref_urls = data.get("reference_image_urls") or []
     ref_locals = data.get("reference_local_paths") or []
