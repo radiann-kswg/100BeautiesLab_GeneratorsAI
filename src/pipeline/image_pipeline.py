@@ -52,7 +52,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -72,7 +74,8 @@ from src.pipeline.rough_generator import generate_rough_images, retry_rough_imag
 from src.pipeline.correction_generator import correct_rough_images  # noqa: E402
 from src.pipeline.final_generator import generate_final_images  # noqa: E402
 
-_ROUGH_COUNT = 5  # Stage 3: ラフ生成枚数 (固定)
+_ROUGH_COUNT = 5             # Stage 3 (単体): ラフ生成枚数
+_MULTI_ROUGH_PER_CHAR = 3   # Stage 3 (合同): キャラクターごとのラフ枚数
 
 
 @dataclass
@@ -312,43 +315,39 @@ def run_image_pipeline(
     return result
 
 
-def _build_multi_char_prompt(records: list[dict], form: str, scene: str = "") -> str:
-    """複数キャラクターを1枚に描くための統合 Gemini プロンプトを生成する。"""
-    lines = [
-        "[マルチキャラクター描画]",
-        "以下のキャラクターを全員、1 枚の画像の中に描いてください。",
-        "各キャラクターの識別要素・番号を明確に保つこと。",
-        "",
-    ]
-    for i, record in enumerate(records, 1):
-        data = record.get("data") or {}
-        num = data.get("Num", "?")
-        name = data.get("Name", f"#{num}")
-        hints = record.get("ai_hints") or {}
-        common = hints.get("common") or {}
-        form_hints = hints.get(form) or {}
-        identity = list(dict.fromkeys(
-            (common.get("identity_tags") or [])[:5]
-            + (common.get("immutable_traits") or [])[:3]
-            + (form_hints.get("face_symbol_tags") or [])[:3]
-        ))[:8]
-        outfit = (form_hints.get("outfit_features") or [])[:3]
-        lines.append(f"[キャラクター {i}: {name}]")
-        if identity:
-            lines.append(f"- 固有特徴: {', '.join(identity)}")
-        if outfit:
-            lines.append(f"- 衣装/アクセサリ: {', '.join(outfit)}")
-        lines.append(f"- 番号: 球体前面に「{num}」の刻印を必ず描くこと")
-        lines.append("")
+def _build_multi_char_composition_prompt(
+    records: list[dict],
+    form: str,
+    scene: str,
+) -> str:
+    """Stage 5 合成用: キャラクター単体レンダーをもとに1枚に合成するプロンプトを生成する。
+    skip_db_refs=True と組み合わせて使用し、実際のキャラクターレンダーのみを参照させる。
+    """
+    def _char_label(r: dict) -> str:
+        d = r.get("data") or {}
+        name = d.get("Name") or f"#{int(d.get('Num', 0)):03d}"
+        return name
 
-    lines += [
-        "[共通ルール]",
-        f"- 全員を {form} 形態（球体クッション型シルエット、頭部だけが球体上部に突き出る形）で描く",
-        "- 人型の腕・手・脚・足を一切描かない",
-        "- 各キャラクターを構図内にバランスよく配置する",
-        "- humanoid 由来の衣装・体型を一切混入しない",
+    char_list = "\n".join(
+        f"- 参照{i + 1}: {_char_label(r)} の完成イラスト"
+        for i, r in enumerate(records)
+    )
+    lines = [
+        "[マルチキャラクター合成 — 添付レンダーをもとに全員を 1 枚に]",
+        "添付の参照画像（各キャラクターの完成イラスト）を参考に、",
+        "全員が同じシーンに自然に配置された 1 枚の画像を生成してください。",
         "",
-        "[作風]",
+        "[添付参照画像の内訳]",
+        char_list,
+        "",
+        "[合成指示]",
+        "- 全員を 1 枚の構図に自然に収める",
+        "- 各キャラクターの形態・番号・識別要素を添付参照に忠実に維持する",
+        "- 作風・線画・塗りスタイルは添付参照画像に揃えること",
+        f"- {form} 形態（球体クッション型シルエット）を維持する",
+        "- 人型の腕・手・脚・足を描かない",
+        "",
+        "[共通作風]",
         "Cute, Deformed, Chibi, Thick lines, Pastel colors, Cel shading, Simple background",
         "",
     ]
@@ -361,6 +360,51 @@ def _build_multi_char_prompt(records: list[dict], form: str, scene: str = "") ->
     return "\n".join(lines)
 
 
+def _compose_multi_char(
+    base_record: dict,
+    form: str,
+    char_renders: list[Path],
+    composition_prompt: str,
+    synth_dir: Path,
+    work_key: str,
+    count: int = 3,
+) -> list[Path]:
+    """Stage 5: 各キャラクターの単体完成レンダーを Gemini マルチ参照で 1 枚に合成する。
+
+    skip_db_refs=True でDB参照を除外し、char_renders のみを参照させることで
+    スタイルのブレを防ぐ。
+    """
+    from src.gemini.generate import generate_image
+
+    synth_dir.mkdir(parents=True, exist_ok=True)
+    render_strs = [str(p) for p in char_renders if p.exists()]
+    inter_sleep = float(os.environ.get("GEMINI_IMAGE_SLEEP", "6"))
+
+    results: list[Path] = []
+    for i in range(count):
+        if i > 0:
+            print(f"[Stage5-Compose] レートリミット対策: {inter_sleep:.0f}秒待機 ({i + 1}/{count})...")
+            time.sleep(inter_sleep)
+        print(f"[Stage5-Compose] ({i + 1}/{count}) キャラクターレンダー {len(render_strs)} 枚から合成中...")
+        try:
+            paths = generate_image(
+                num=base_record["data"]["Num"],
+                form=form,
+                work_key=work_key,
+                out_dir=str(synth_dir),
+                count=1,
+                prompt_override=composition_prompt,
+                extra_ref_locals=render_strs,
+                skip_db_refs=True,  # キャラレンダーが参照なので DB 画像は不要
+            )
+            results.extend(paths)
+        except SystemExit as err:
+            print(f"[WARN] Stage5-Compose ({i + 1}): {err}")
+        except Exception as err:
+            print(f"[WARN] Stage5-Compose ({i + 1}): {type(err).__name__}: {err}")
+    return results
+
+
 def run_combined_pipeline(
     nums: list[int],
     form: str = "corefolder",
@@ -371,27 +415,37 @@ def run_combined_pipeline(
     composition: str = "",
     background: str = "",
     skip_canva: bool = False,
+    correction_mode: str = "t2i",
 ) -> MultiCharPipelineResult:
-    """複数キャラクターを 1 枚に合同生成するパイプライン (Stage 1→2→3→5)。
+    """複数キャラクターを 1 枚に合同生成するパイプライン (Stage 1→2→3→4→5)。
 
-    Stage 4 の違反修正はマルチキャラクター対応が困難なためスキップし、
-    Stage 3 ラフ全枚を Stage 5 合成に直接渡す。
+    Stage 3-4 はキャラクターごとに個別生成・違反修正を行い、
+    Stage 5 で各キャラクターの完成レンダーを Gemini マルチ参照で 1 枚に合成する。
 
     Parameters
     ----------
-    nums:       キャラクター番号リスト (2 件以上)
-    form:       形態
-    work_key:   作品キー
-    out_dir:    出力ベースディレクトリ
-    scene:      シーン (空の場合は先頭キャラから自動生成)
-    skip_canva: True なら Stage 5 Canva をスキップ
+    nums:            キャラクター番号リスト (2 件以上)
+    form:            形態
+    work_key:        作品キー
+    out_dir:         出力ベースディレクトリ
+    scene:           シーン (空の場合は先頭キャラから自動生成)
+    skip_canva:      True なら Stage 5 Canva をスキップ
+    correction_mode: Stage 4 重度違反時の対処モード ("t2i" | "stage3")
+
+    出力ディレクトリ構成
+    --------------------
+    pipeline_dir/
+      stage1_prompt/           — 統合プロンプト
+      char_NNN/stage3_rough/   — キャラクターごとのラフ (各 _MULTI_ROUGH_PER_CHAR 枚)
+      char_NNN/stage2_db/      — キャラクターごとの DB サマリー
+      char_NNN/stage4_correct/ — キャラクターごとの違反修正結果
+      stage5_final/            — 全キャラ合成完成画像 3 枚
 
     Returns
     -------
     MultiCharPipelineResult
     """
     from src.utils import find_character
-    from src.utils.dataset import build_gemini_prompt
     from src.gemini.generate import generate_image
 
     start_time = datetime.now()
@@ -405,16 +459,17 @@ def run_combined_pipeline(
     )
     nums_label = "+".join(f"#{n:03d}" for n in nums)
     print(f"\n[CombinedPipeline] start - {nums_label} {form} → 1 枚合同生成 / out: {pipeline_dir}")
-    print(f"[CombinedPipeline] skip_canva={skip_canva}")
+    print(f"[CombinedPipeline] skip_canva={skip_canva} / correction_mode={correction_mode}")
 
     result = MultiCharPipelineResult(
         nums=nums, form=form, work_key=work_key,
         pipeline_dir=str(pipeline_dir),
     )
 
-    # ── Stage 2: 全キャラクターのレコード収集 ──
-    print(f"\n[=] Stage 2: {len(nums)} キャラクターのレコード収集")
+    # ── Stage 2: 全キャラクターのレコード + スペック収集 ──
+    print(f"\n[=] Stage 2: {len(nums)} キャラクターのレコード + DB データ収集")
     records: list[dict] = []
+    char_data_map: dict[int, dict] = {}
     for n in nums:
         rec = find_character(n, work_key)
         if rec is None:
@@ -423,97 +478,150 @@ def run_combined_pipeline(
             _save_summary(pipeline_dir, result, start_time)
             return result
         records.append(rec)
+        char_dir = pipeline_dir / f"char_{n:03d}"
+        char_data = collect_character_data(n, form, char_dir, work_key)
+        if char_data is None:
+            result.status = "failed"
+            result.errors.append(f"Stage 2: #{n} DB データ取得に失敗しました。")
+            _save_summary(pipeline_dir, result, start_time)
+            return result
+        char_data_map[n] = char_data
         print(f"  [Stage2] #{n:03d} {rec['data'].get('Name', '')} — OK")
+
     result.stage2_summary = {
         "char_names": [r["data"].get("Name", "") for r in records],
         "num_chars": len(records),
     }
 
-    # ── Stage 1: シーン補完 + 統合プロンプト生成 ──
-    print("\n[=] Stage 1: 統合プロンプト生成")
+    # ── Stage 1: シーン補完 + キャラクターごとのプロンプト生成 ──
+    print("\n[=] Stage 1: シーン補完 + キャラクターごとのプロンプト生成")
     if not scene:
-        from src.pipeline.prompt_refiner import generate_random_scene
         scene = generate_random_scene(records[0], form) or ""
         if scene:
             print(f"[Stage1] シーン: {scene} (先頭キャラから自動生成)")
-    multi_prompt = _build_multi_char_prompt(records, form, scene=scene)
+
+    per_char_prompts: dict[int, dict] = {}
+    for rec in records:
+        n = rec["data"]["Num"]
+        prompts = refine_prompt_dual(
+            rec, form, scene=scene, style=style,
+            composition=composition, background=background,
+        )
+        per_char_prompts[n] = prompts
+
     result.scene_used = scene
-    result.stage1_prompts = {"multi_gemini": multi_prompt, "char_count": len(records)}
+    result.stage1_prompts = {
+        "scene": scene,
+        "char_count": len(records),
+        "char_names": [r["data"].get("Name", "") for r in records],
+    }
     stage1_dir = pipeline_dir / "stage1_prompt"
     stage1_dir.mkdir(parents=True, exist_ok=True)
-    (stage1_dir / "prompt_multi_gemini.txt").write_text(multi_prompt, encoding="utf-8")
-    print(f"[Stage1] done - 統合プロンプト: {len(multi_prompt)} chars")
+    for rec in records:
+        n = rec["data"]["Num"]
+        _save_stage1(stage1_dir / f"char_{n:03d}", per_char_prompts[n])
+    print(f"[Stage1] done - {len(records)} キャラクター分のプロンプト生成完了")
 
-    # ── Stage 3: 全キャラ合同ラフ 5 枚生成 ──
-    # 先頭キャラの DB 参照 (num[0]) を base に、残キャラの DB 一次画像を extra_ref_locals で追加。
-    print(f"\n[=] Stage 3: {nums_label} 合同ラフ {_ROUGH_COUNT} 枚生成 (Gemini Imagen)")
-    extra_ref_locals: list[str] = []
-    for rec in records[1:]:
-        prompt_data = build_gemini_prompt(rec, form)
-        locals_ = prompt_data.get("reference_local_paths") or []
-        if locals_:
-            extra_ref_locals.append(locals_[0])
+    # ── Stage 3: キャラクターごとに個別ラフ生成 (_MULTI_ROUGH_PER_CHAR 枚) ──
+    print(
+        f"\n[=] Stage 3: キャラクターごとに個別ラフ生成"
+        f" ({_MULTI_ROUGH_PER_CHAR} 枚/キャラ, 計 {len(nums) * _MULTI_ROUGH_PER_CHAR} 枚)"
+    )
+    per_char_roughs: dict[int, list[Path]] = {}
+    for rec in records:
+        n = rec["data"]["Num"]
+        rough_dir = pipeline_dir / f"char_{n:03d}" / "stage3_rough"
+        rough_dir.mkdir(parents=True, exist_ok=True)
+        base_prompt = (per_char_prompts[n].get("base_gemini", "")
+                       or per_char_prompts[n].get("gemini", ""))
+        print(f"  [Stage3] #{n:03d} ラフ {_MULTI_ROUGH_PER_CHAR} 枚生成中...")
+        try:
+            paths = generate_image(
+                num=n, form=form, work_key=work_key,
+                out_dir=str(rough_dir),
+                count=_MULTI_ROUGH_PER_CHAR,
+                prompt_override=base_prompt,
+            )
+        except (SystemExit, Exception) as err:
+            paths = []
+            result.errors.append(f"Stage 3 char#{n}: {err}")
+        per_char_roughs[n] = paths
+        print(f"  [Stage3] #{n:03d} — {len(paths)} 枚生成完了")
 
-    rough_dir = pipeline_dir / "stage3_rough"
-    rough_dir.mkdir(parents=True, exist_ok=True)
-    try:
-        gemini_paths = generate_image(
-            num=nums[0],
-            form=form,
-            work_key=work_key,
-            out_dir=str(rough_dir),
-            count=_ROUGH_COUNT,
-            prompt_override=multi_prompt,
-            extra_ref_locals=extra_ref_locals if extra_ref_locals else None,
-        )
-    except SystemExit as err:
-        gemini_paths = []
-        result.errors.append(f"Stage 3 Gemini: {err}")
-    except Exception as err:
-        gemini_paths = []
-        result.errors.append(f"Stage 3 Gemini: {type(err).__name__}: {err}")
-
+    all_stage3 = [p for paths in per_char_roughs.values() for p in paths]
     result.stage3_paths = {
-        "gemini": [str(p) for p in gemini_paths],
-        "all": [str(p) for p in gemini_paths],
+        f"char_{n:03d}": [str(p) for p in per_char_roughs.get(n, [])] for n in nums
     }
-    print(f"[Stage3] done - Gemini ラフ: {len(gemini_paths)} 枚")
+    result.stage3_paths["all"] = [str(p) for p in all_stage3]
+    print(f"[Stage3] done - 合計 {len(all_stage3)} 枚")
 
-    if not gemini_paths:
-        result.errors.append("Stage 3: ラフ画像が 1 枚も生成できませんでした。")
+    if not all_stage3:
+        result.errors.append("Stage 3: 全キャラクターのラフ生成に失敗しました。")
         result.status = "partial"
         _save_summary(pipeline_dir, result, start_time)
         return result
 
-    # ── Stage 4: マルチキャラクターシーンは違反修正スキップ ──
-    print("\n[=] Stage 4: マルチキャラクターシーンのため違反修正をスキップ (pass-through)")
-    corrected_results = {
-        "corrected": [],
-        "passed": gemini_paths,
-        "needs_regen": [],
-        "all": gemini_paths,
-    }
-    result.stage4_paths = {
-        "passed": [str(p) for p in gemini_paths],
-        "all": [str(p) for p in gemini_paths],
-    }
+    # ── Stage 4: キャラクターごとに個別違反修正 ──
+    print(f"\n[=] Stage 4: キャラクターごとに違反修正 (OpenAI Vision + Gemini i2i/T2I)")
+    per_char_best: list[Path] = []  # Stage 5 に渡す各キャラのベスト 1 枚
+    all_stage4_paths: dict[str, list[str]] = {}
 
-    # ── Stage 5: Gemini 合成 + Canva 仕上げ ──
-    print("\n[=] Stage 5: 全ラフ俯瞰合成 + Canva 仕上げ (3 枚固定)")
-    prompts_for_stage5 = {"base_gemini": multi_prompt, "gemini": multi_prompt}
-    final_results = generate_final_images(
+    for rec in records:
+        n = rec["data"]["Num"]
+        rough_paths = per_char_roughs.get(n) or []
+        if not rough_paths:
+            print(f"  [Stage4] #{n:03d}: ラフなしのためスキップ")
+            continue
+
+        char_dir = pipeline_dir / f"char_{n:03d}"
+        rough_results = {"gemini": rough_paths, "adobe_guide": [], "all": rough_paths}
+        corrected = correct_rough_images(
+            rec, form,
+            rough_results=rough_results,
+            char_spec=char_data_map[n]["spec"],
+            prompts=per_char_prompts[n],
+            pipeline_dir=char_dir,
+            work_key=work_key,
+            correction_mode=correction_mode,
+        )
+        all_stage4_paths[f"char_{n:03d}"] = [str(p) for p in corrected.get("all") or []]
+
+        # ベスト 1 枚: 違反なし通過画像を優先、なければ修正済みの先頭
+        best = (corrected.get("passed") or [])[:1] or (corrected.get("corrected") or [])[:1]
+        if best:
+            per_char_best.extend(best)
+            print(f"  [Stage4] #{n:03d}: ベスト 1 枚選定 → {best[0].name}")
+        else:
+            # 修正も通過もなければ元ラフの先頭をフォールバック
+            per_char_best.extend(rough_paths[:1])
+            print(f"  [Stage4] #{n:03d}: フォールバック → {rough_paths[0].name}")
+
+    result.stage4_paths = all_stage4_paths
+    result.stage4_paths["best_per_char"] = [str(p) for p in per_char_best]
+    print(f"[Stage4] done - 合成用ベスト: {len(per_char_best)} 枚 ({', '.join(p.name for p in per_char_best)})")
+
+    # ── Stage 5: ベストレンダーを Gemini マルチ参照で 1 枚に合成 ──
+    print(f"\n[=] Stage 5: キャラクター完成レンダー {len(per_char_best)} 枚を合成 (3 枚固定)")
+    composition_prompt = _build_multi_char_composition_prompt(records, form, scene)
+    stage5_dir = pipeline_dir / "stage5_final"
+    synth_images = _compose_multi_char(
         records[0], form,
-        corrected_results=corrected_results,
-        pipeline_dir=pipeline_dir,
+        char_renders=per_char_best,
+        composition_prompt=composition_prompt,
+        synth_dir=stage5_dir / "synth",
         work_key=work_key,
-        skip_canva=skip_canva,
-        prompts=prompts_for_stage5,
+        count=3,
     )
-    result.stage5_paths = {k: [str(p) for p in v] for k, v in final_results.items()}
+    print(f"[Stage5] done - {len(synth_images)} 枚合成完了")
 
+    result.stage5_paths = {
+        "synth": [str(p) for p in synth_images],
+        "canva": [],
+        "all": [str(p) for p in synth_images],
+    }
     result.status = (
-        "ok" if final_results["all"]
-        else "partial" if gemini_paths
+        "ok" if synth_images
+        else "partial" if all_stage3
         else "failed"
     )
     _save_summary(pipeline_dir, result, start_time)
@@ -800,6 +908,7 @@ def main() -> None:
             composition=char_params[0].get("composition", args.composition),
             background=char_params[0].get("background", args.background),
             skip_canva=args.skip_canva,
+            correction_mode=args.correction_mode,
         )
         nums_label = "+".join(f"#{n:03d}" for n in res.nums)
         scene_preview = (res.scene_used[:24] + "...") if len(res.scene_used) > 24 else res.scene_used
