@@ -68,7 +68,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 from src.utils import build_run_output_dir  # noqa: E402
 from src.pipeline.prompt_refiner import refine_prompt_dual, generate_random_scene  # noqa: E402
 from src.pipeline.db_collector import collect_character_data  # noqa: E402
-from src.pipeline.rough_generator import generate_rough_images  # noqa: E402
+from src.pipeline.rough_generator import generate_rough_images, retry_rough_images  # noqa: E402
 from src.pipeline.correction_generator import correct_rough_images  # noqa: E402
 from src.pipeline.final_generator import generate_final_images  # noqa: E402
 
@@ -102,20 +102,24 @@ def run_image_pipeline(
     composition: str = "",
     background: str = "",
     skip_canva: bool = False,
+    correction_mode: str = "t2i",
 ) -> PipelineResult:
     """画像生成パイプライン全体 (Stage 1→2→3→4→5) を実行する。
 
     Parameters
     ----------
-    num:         キャラクター番号
-    form:        形態 ("corefolder" / "humanoid")
-    work_key:    作品キー
-    out_dir:     出力ベースディレクトリ (None で環境変数 OUTPUT_BASE_DIR)
-    scene:       シーン・ポーズ説明 (空の場合はランダム生成)
-    style:       作風ヒント
-    composition: 構図ヒント
-    background:  背景ヒント
-    skip_canva:  True なら Stage 5 の Canva フィニッシングをスキップ
+    num:             キャラクター番号
+    form:            形態 ("corefolder" / "humanoid")
+    work_key:        作品キー
+    out_dir:         出力ベースディレクトリ (None で環境変数 OUTPUT_BASE_DIR)
+    scene:           シーン・ポーズ説明 (空の場合はランダム生成)
+    style:           作風ヒント
+    composition:     構図ヒント
+    background:      背景ヒント
+    skip_canva:      True なら Stage 5 の Canva フィニッシングをスキップ
+    correction_mode: 重度違反時の対処モード ("t2i" | "stage3")
+                     "t2i"    — Stage 4 内で T2I フル再生成 (デフォルト)
+                     "stage3" — Stage 3 に差し戻してラフを再生成
 
     Returns
     -------
@@ -137,6 +141,7 @@ def run_image_pipeline(
         num=num, form=form, work_key=work_key,
         pipeline_dir=str(pipeline_dir),
     )
+    print(f"[Pipeline] correction_mode={correction_mode}")
 
     # ──────────────────────────────────────
     # Stage 1: コマンド解析 + プロンプト生成
@@ -217,7 +222,7 @@ def run_image_pipeline(
     # ──────────────────────────────────────
     # Stage 4: 違反特徴の除去 + 構図修正
     # ──────────────────────────────────────
-    print("\n[=] Stage 4: 違反特徴の除去 + 構図修正 (OpenAI Vision + Gemini i2i)")
+    print("\n[=] Stage 4: 違反特徴の除去 + 構図修正 (OpenAI Vision + Gemini i2i/T2I)")
     corrected_results = correct_rough_images(
         record, form,
         rough_results=rough_results,
@@ -225,8 +230,39 @@ def run_image_pipeline(
         prompts=prompts,
         pipeline_dir=pipeline_dir,
         work_key=work_key,
+        correction_mode=correction_mode,
     )
-    result.stage4_paths = {k: [str(p) for p in v] for k, v in corrected_results.items()}
+
+    # Stage 3 差し戻し処理 (correction_mode == "stage3" の場合)
+    needs_regen = corrected_results.get("needs_regen") or []
+    if correction_mode == "stage3" and needs_regen:
+        print(f"\n[=] Stage 3-Regen: {len(needs_regen)} 枚の差し戻し再生成")
+        regen_paths = retry_rough_images(
+            record, form,
+            prompts=prompts,
+            pipeline_dir=pipeline_dir,
+            count=len(needs_regen),
+            work_key=work_key,
+        )
+        if regen_paths:
+            corrected_results["corrected"].extend(regen_paths)
+            corrected_results["all"] = (
+                corrected_results["corrected"] + corrected_results["passed"]
+            )
+            corrected_results["regenerated"] = regen_paths
+            result.stage3_paths["regen"] = [str(p) for p in regen_paths]
+        else:
+            print("[WARN] Stage3-Regen: 再生成失敗。元ラフを pass-through に切り替え。")
+            corrected_results["passed"].extend(needs_regen)
+            corrected_results["all"] = (
+                corrected_results["corrected"] + corrected_results["passed"]
+            )
+
+    result.stage4_paths = {
+        k: [str(p) for p in v]
+        for k, v in corrected_results.items()
+        if isinstance(v, list)
+    }
 
     if not corrected_results["all"]:
         result.errors.append("Stage 4: 修正済み画像が 0 枚でした。Stage 5 をスキップします。")
@@ -260,14 +296,16 @@ def run_multi_pipeline(
     char_params: list[dict],
     out_dir: str | None = None,
     skip_canva: bool = False,
+    correction_mode: str = "t2i",
 ) -> list[PipelineResult]:
     """複数キャラクターのパイプラインをキャラクターごとに順番に実行する。
 
     Parameters
     ----------
-    char_params: [{"num":int, "form":str, "scene":str, ...}, ...]
-    out_dir:     出力ベースディレクトリ
-    skip_canva:  True なら Stage 5 Canva をスキップ
+    char_params:     [{"num":int, "form":str, "scene":str, ...}, ...]
+    out_dir:         出力ベースディレクトリ
+    skip_canva:      True なら Stage 5 Canva をスキップ
+    correction_mode: 重度違反時の対処モード ("t2i" | "stage3")
 
     Returns
     -------
@@ -290,6 +328,7 @@ def run_multi_pipeline(
             composition=cp.get("composition", ""),
             background=cp.get("background", ""),
             skip_canva=skip_canva,
+            correction_mode=correction_mode,
         )
         results.append(result)
 
@@ -399,6 +438,15 @@ def main() -> None:
         help="Stage 5 の Canva フィニッシングをスキップ (CANVA_ACCESS_TOKEN 不要)",
     )
     parser.add_argument(
+        "--correction-mode", choices=["t2i", "stage3"], default="t2i",
+        dest="correction_mode",
+        help=(
+            "Stage 4 での重度違反時の対処モード (デフォルト: t2i)\n"
+            "  t2i:    Stage 4 内で T2I フル再生成\n"
+            "  stage3: Stage 3 に差し戻してラフを再生成"
+        ),
+    )
+    parser.add_argument(
         "--prefer-gemini-parse", action="store_true",
         help="--natural / --story のパース時に Gemini を OpenAI より優先する",
     )
@@ -488,6 +536,7 @@ def main() -> None:
             composition=cp.get("composition", ""),
             background=cp.get("background", ""),
             skip_canva=args.skip_canva,
+            correction_mode=args.correction_mode,
         )
         print(f"\n[完了] ステータス: {result.status}")
         if result.scene_used:
@@ -510,6 +559,7 @@ def main() -> None:
             char_params=char_params,
             out_dir=args.out,
             skip_canva=args.skip_canva,
+            correction_mode=args.correction_mode,
         )
         for res in results:
             status_mark = "OK" if res.status == "ok" else "NG"

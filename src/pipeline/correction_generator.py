@@ -25,6 +25,11 @@ import os
 import sys
 from pathlib import Path
 
+# 違反件数がこの値以上なら i2i ではなく T2I（フル再生成）に切り替える。
+# i2i は元画像の構造を維持するため、全身humanoidのような根本的な形態誤りを
+# 1回では修正しきれない。T2I にすることで形態をリセットする。
+_SEVERE_VIOLATION_THRESHOLD = 3
+
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
@@ -121,24 +126,39 @@ def _apply_correction_gemini(
     stage_dir: Path,
     work_key: str,
     index: int,
+    use_t2i: bool = False,
 ) -> list[Path]:
-    """違反分析結果を基に Gemini i2i で修正を適用する。"""
+    """違反分析結果を基に Gemini で修正を適用する。
+
+    use_t2i=True の場合は i2i をスキップして T2I（フル再生成）を行う。
+    違反が重篤（_SEVERE_VIOLATION_THRESHOLD 以上）な場合に使用する。
+    """
     from src.gemini.generate import generate_image
 
     violations = analysis.get("violations") or []
     comp_issues = analysis.get("composition_issues") or []
-    spec_instruction = (
-        "[形態修正指示]\n"
-        + "\n".join(f"- {v} を除去または修正してください" for v in violations)
-        + ("\n[構図修正]\n" + "\n".join(f"- {c}" for c in comp_issues) if comp_issues else "")
-    )
-
     base_prompt = prompts.get("gemini", "")
-    correction_prompt = (
-        f"{spec_instruction}\n\n[ベースプロンプト (維持すること)]\n{base_prompt}"
-        if base_prompt
-        else spec_instruction
-    )
+
+    if use_t2i:
+        avoid_note = ""
+        if violations:
+            avoid_items = "; ".join(violations[:4])
+            avoid_note = f"\n\n[特に避けること (前回生成で検出された違反)]\n- {avoid_items}"
+        correction_prompt = base_prompt + avoid_note
+        iterate_path = None
+        print(f"[Stage4] rough_{index:02d}: 違反 {len(violations)} 件 → T2I (フル再生成)")
+    else:
+        spec_instruction = (
+            "[形態修正指示]\n"
+            + "\n".join(f"- {v} を除去または修正してください" for v in violations)
+            + ("\n[構図修正]\n" + "\n".join(f"- {c}" for c in comp_issues) if comp_issues else "")
+        )
+        correction_prompt = (
+            f"{spec_instruction}\n\n[ベースプロンプト (維持すること)]\n{base_prompt}"
+            if base_prompt
+            else spec_instruction
+        )
+        iterate_path = str(rough_path)
 
     correct_subdir = stage_dir / f"rough_{index:02d}_corrected"
     correct_subdir.mkdir(parents=True, exist_ok=True)
@@ -150,7 +170,7 @@ def _apply_correction_gemini(
             work_key=work_key,
             out_dir=str(correct_subdir),
             count=1,
-            iterate_from=str(rough_path),
+            iterate_from=iterate_path,
             prompt_override=correction_prompt,
         )
     except SystemExit as err:
@@ -173,25 +193,30 @@ def correct_rough_images(
     prompts: dict,
     pipeline_dir: Path,
     work_key: str = "#Works_NumberTales",
+    correction_mode: str = "t2i",
 ) -> dict[str, list[Path]]:
     """Stage 4: ラフ画像の違反特徴を修正し、形態として違和感のない状態にする。
 
     Parameters
     ----------
-    record:       キャラクターレコード
-    form:         形態
-    rough_results: Stage 3 の結果 (generate_rough_images の返却値)
-    char_spec:    Stage 2 で構築したキャラクタースペック
-    prompts:      Stage 1 の精錬プロンプト dict
-    pipeline_dir: パイプライン出力ルートディレクトリ
-    work_key:     作品キー
+    record:          キャラクターレコード
+    form:            形態
+    rough_results:   Stage 3 の結果 (generate_rough_images の返却値)
+    char_spec:       Stage 2 で構築したキャラクタースペック
+    prompts:         Stage 1 の精錬プロンプト dict
+    pipeline_dir:    パイプライン出力ルートディレクトリ
+    work_key:        作品キー
+    correction_mode: 重度違反時の対処モード
+                     "t2i"    — Stage 4 内で T2I フル再生成 (デフォルト)
+                     "stage3" — Stage 3 に差し戻し (image_pipeline が再生成)
 
     Returns
     -------
     {
-        "corrected": list[Path]  — 修正が適用された画像
-        "passed":    list[Path]  — 違反なし/スキップで通過した画像
-        "all":       list[Path]  — corrected + passed (Stage 5 への入力)
+        "corrected":   list[Path]  — 修正が適用された画像
+        "passed":      list[Path]  — 違反なし/スキップで通過した画像
+        "needs_regen": list[Path]  — Stage 3 差し戻し対象 (stage3 モード時のみ)
+        "all":         list[Path]  — corrected + passed (Stage 5 への入力)
     }
     """
     stage_dir = pipeline_dir / "stage4_correct"
@@ -200,10 +225,11 @@ def correct_rough_images(
     rough_paths: list[Path] = rough_results.get("gemini") or []
     if not rough_paths:
         print("[Stage4] ラフ画像がありません。Stage 4 をスキップします。")
-        return {"corrected": [], "passed": [], "all": []}
+        return {"corrected": [], "passed": [], "needs_regen": [], "all": []}
 
     corrected: list[Path] = []
     passed: list[Path] = []
+    needs_regen: list[Path] = []
     analysis_log: list[dict] = []
 
     for i, rough_path in enumerate(rough_paths, 1):
@@ -218,6 +244,8 @@ def correct_rough_images(
         comp_issues = analysis.get("composition_issues") or []
         overall_ok = analysis.get("overall_ok", True)
         skipped = analysis.get("skipped", False)
+        corrected_paths: list[Path] = []
+        is_stage3_regen = False
 
         if skipped:
             print(f"[Stage4] rough_{i:02d}: 分析スキップ (API未設定) → pass-through")
@@ -227,24 +255,40 @@ def correct_rough_images(
             passed.append(rough_path)
         else:
             issues = violations + comp_issues
-            print(f"[Stage4] rough_{i:02d}: 違反 {len(violations)}件・構図問題 {len(comp_issues)}件 → Gemini で修正")
-            for issue in issues[:5]:
-                print(f"           - {issue}")
+            is_severe = len(violations) >= _SEVERE_VIOLATION_THRESHOLD
+            is_stage3_regen = is_severe and correction_mode == "stage3"
+            use_t2i = is_severe and correction_mode == "t2i"
 
-            corrected_paths = _apply_correction_gemini(
-                record, form,
-                rough_path=rough_path,
-                analysis=analysis,
-                prompts=prompts,
-                stage_dir=stage_dir,
-                work_key=work_key,
-                index=i,
-            )
-            if corrected_paths:
-                corrected.extend(corrected_paths)
+            if is_stage3_regen:
+                print(
+                    f"[Stage4] rough_{i:02d}: 違反 {len(violations)} 件"
+                    f" → Stage 3 差し戻し予約 (correction_mode=stage3)"
+                )
+                needs_regen.append(rough_path)
             else:
-                print(f"[WARN] Stage4 rough_{i:02d}: 修正失敗 → 元ラフを pass-through")
-                passed.append(rough_path)
+                mode_label = "T2I (形態リセット)" if use_t2i else "i2i (部分修正)"
+                print(
+                    f"[Stage4] rough_{i:02d}: 違反 {len(violations)}件・構図問題 {len(comp_issues)}件"
+                    f" → {mode_label}"
+                )
+                for issue in issues[:5]:
+                    print(f"           - {issue}")
+
+                corrected_paths = _apply_correction_gemini(
+                    record, form,
+                    rough_path=rough_path,
+                    analysis=analysis,
+                    prompts=prompts,
+                    stage_dir=stage_dir,
+                    work_key=work_key,
+                    index=i,
+                    use_t2i=use_t2i,
+                )
+                if corrected_paths:
+                    corrected.extend(corrected_paths)
+                else:
+                    print(f"[WARN] Stage4 rough_{i:02d}: 修正失敗 → 元ラフを pass-through")
+                    passed.append(rough_path)
 
         analysis_log.append({
             "rough_index": i,
@@ -253,18 +297,23 @@ def correct_rough_images(
             "composition_issues": comp_issues,
             "overall_ok": overall_ok,
             "skipped": skipped,
-            "corrected": bool(corrected_paths if not (skipped or overall_ok) else False),
+            "corrected": bool(corrected_paths),
+            "stage3_regen": is_stage3_regen,
         })
 
     _save_analysis_log(stage_dir, analysis_log)
 
     all_paths = corrected + passed
+    regen_count = len(needs_regen)
     print(
-        f"[Stage4] done - 修正: {len(corrected)} / 通過: {len(passed)} / total: {len(all_paths)}"
+        f"[Stage4] done - 修正: {len(corrected)} / 通過: {len(passed)}"
+        + (f" / Stage3差し戻し: {regen_count}" if regen_count else "")
+        + f" / total: {len(all_paths)}"
     )
     return {
         "corrected": corrected,
         "passed": passed,
+        "needs_regen": needs_regen,
         "all": all_paths,
     }
 

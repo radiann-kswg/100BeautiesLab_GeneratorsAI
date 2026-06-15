@@ -1283,6 +1283,14 @@ def build_dalle_prompt(
         current_form_description = _sanitize_natural_language_description(
             form_data.get("natural_language_description", "")
         )
+    if "TODO:" in current_form_description:
+        _num_val = (record.get("data") or {}).get("Num")
+        _num_tok = str(_num_val).strip() if _num_val is not None else ""
+        _num_clause = f" with the number '{_num_tok}' marked" if _num_tok else ""
+        if form == "corefolder":
+            current_form_description = f"Corefolder form: a spherical cushion-like body{_num_clause}."
+        else:
+            current_form_description = f"Humanoid form: a humanoid character{_num_clause}."
     if form == "corefolder":
         current_form_description += (
             " Keep a compact spherical corefolder silhouette,"
@@ -1454,6 +1462,14 @@ def build_gemini_prompt(
         current_form_description = _sanitize_natural_language_description(
             form_data.get("natural_language_description", "")
         )
+    if "TODO:" in current_form_description:
+        _num_val = (record.get("data") or {}).get("Num")
+        _num_tok = str(_num_val).strip() if _num_val is not None else ""
+        _num_clause = f" with the number '{_num_tok}' marked" if _num_tok else ""
+        if form == "corefolder":
+            current_form_description = f"Corefolder form: a spherical cushion-like body{_num_clause}."
+        else:
+            current_form_description = f"Humanoid form: a humanoid character{_num_clause}."
     if form == "corefolder":
         current_form_description += (
             " Keep a compact spherical corefolder silhouette,"
@@ -1464,7 +1480,7 @@ def build_gemini_prompt(
     if form == "corefolder":
         form_lock = (
             "- 必ず corefolder 形態として描くこと\n"
-            "- safety device harness / hoodie / corefolder要素を明確に残すこと\n"
+            "- 球体シルエットと識別要素（番号マーキング・固有アクセサリ）を明確に保持すること\n"
             "- humanoid 形態由来の要素に一切寄せないこと\n"
             "- 人型の腕・手・脚・足を描かないこと（非人型シルエットを維持）"
         )

@@ -87,6 +87,32 @@ def _generate_adobe_composition_guide(
         return []
 
 
+def retry_rough_images(
+    record: dict,
+    form: str,
+    prompts: dict,
+    pipeline_dir: Path,
+    count: int,
+    work_key: str = "#Works_NumberTales",
+) -> list[Path]:
+    """Stage 3 差し戻し: 重度違反ラフの代替を再生成する (stage3_rough/regen/ に保存)。
+
+    i2i なしのフル再生成。correction_mode="stage3" 時に image_pipeline から呼ばれる。
+    """
+    regen_dir = pipeline_dir / "stage3_rough" / "regen"
+    regen_dir.mkdir(parents=True, exist_ok=True)
+    print(f"[Stage3-Regen] フル再生成 {count} 枚 → {regen_dir}")
+    paths = _generate_gemini_rough(
+        record, form,
+        prompt_override=prompts.get("gemini", ""),
+        stage_dir=regen_dir,
+        count=count,
+        work_key=work_key,
+    )
+    print(f"[Stage3-Regen] done - {len(paths)} 枚")
+    return paths
+
+
 def generate_rough_images(
     record: dict,
     form: str,

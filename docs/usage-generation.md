@@ -56,6 +56,7 @@ python -m src.pipeline.image_pipeline --num 57 --form corefolder --skip-canva
 | `--scene` | `""` | シーン説明。**省略時は Stage 1 でキャラクターに合ったシーンを自動生成** |
 | `--style` / `--composition` / `--background` | `""` | 作風・構図・背景ヒント |
 | `--skip-canva` | false | Stage 5 の Canva をスキップ |
+| `--correction-mode` | `t2i` | Stage 4 重度違反時の対処モード。`t2i`: Stage 4 内で T2I 再生成 / `stage3`: Stage 3 に差し戻してラフを再生成 |
 | `--prefer-gemini-parse` | false | `--natural` / `--story` のパース時に Gemini を OpenAI より優先 |
 
 **出力構成:**
@@ -64,6 +65,7 @@ python -m src.pipeline.image_pipeline --num 57 --form corefolder --skip-canva
   stage1_prompt/     — 生成済みプロンプト (openai/gemini/base テキスト) + stage1_meta.json
   stage2_db/         — DB サマリー + キャラクタースペック (violation_features 等)
   stage3_rough/      — Adobe 構図ガイド画像 + Gemini Imagen ラフ 5 案
+                       └── regen/  — Stage 3 差し戻し再生成分 (--correction-mode stage3 時のみ)
   stage4_correct/    — 違反分析ログ (analysis_log.json) + 修正済み画像
   stage5_final/      — Canva 仕上げ完成画像 3 枚
   pipeline_summary.json
