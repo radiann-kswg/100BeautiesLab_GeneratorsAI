@@ -20,7 +20,7 @@ MCP (Adobe / Canva) との連携は [`usage-mcp-canva-adobe.md`](usage-mcp-canva
 | Stage 1 | コマンド解析 + ベースプロンプト生成 (シーン未指定時はキャラクターに合ったシーンを自動生成) | OpenAI GPT-4o + Gemini Flash |
 | Stage 2 | キャラクター選定 + 創作 DB から原典画像・特徴を取得 | manifest.jsonl + 参照画像索引 |
 | Stage 3 | ラフ **5 案**生成 | Adobe 非 Firefly (構図ガイド) + Gemini Imagen |
-| Stage 4 | 違反特徴の除去 + 構図修正 | OpenAI Vision (違反分析) + Gemini i2i (修正適用) |
+| Stage 4 | 違反特徴の除去 + 構図修正 (単体生成のみ) | OpenAI Vision (違反分析) + Gemini i2i (修正適用) |
 | Stage 5 | 全ラフを俯瞰して **合成 3 枚**生成 → Canva 仕上げ | Gemini (マルチ参照合成) + Canva Connect API |
 
 ```bash
@@ -38,9 +38,11 @@ python -m src.pipeline.image_pipeline \
 # ★ 短編ストーリーファイルから指定
 python -m src.pipeline.image_pipeline --story "_ideas/my_scene.txt"
 
-# ★ 複数キャラクターを一括生成
-python -m src.pipeline.image_pipeline --nums 25,57 --form corefolder \
-    --scene "研究所のラボで並んでいるシーン"
+# ★ 複数キャラクターを 1 枚に合同生成 (マルチキャラクターシーン)
+# --nums に 2 件以上指定すると全員を 1 枚の画像に収めた合同パイプラインが走る。
+# Stage 4 違反修正はスキップし、Stage 5 で全ラフを俯瞰して 3 枚合成する。
+python -m src.pipeline.image_pipeline --nums 25,52 --form corefolder \
+    --scene "研究所のラボで並んでいるシーン" --skip-canva
 
 # Stage 5 Canva フィニッシングをスキップ（CANVA_ACCESS_TOKEN 不要）
 python -m src.pipeline.image_pipeline --num 57 --form corefolder --skip-canva
@@ -48,8 +50,8 @@ python -m src.pipeline.image_pipeline --num 57 --form corefolder --skip-canva
 
 | フラグ | 既定値 | 説明 |
 |---|---|---|
-| `--num` | (いずれか必須) | キャラクター番号 |
-| `--nums` | — | 複数キャラクター番号 カンマ区切り (例: `25,57,15`) |
+| `--num` | (いずれか必須) | キャラクター番号 (単体生成) |
+| `--nums` | — | 複数キャラクター番号 カンマ区切り (例: `25,52`) — **2 件以上で全員を 1 枚に合同生成** |
 | `--natural TEXT` | — | 自然文からパラメータを LLM 抽出 |
 | `--story FILE` | — | テキストファイルから LLM 抽出 |
 | `--form` | corefolder | 形態 (`--natural` 時は LLM 判定を優先) |

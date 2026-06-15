@@ -42,6 +42,7 @@ def build_run_output_dir(
     timestamp: datetime | None = None,
     suffix: str | None = None,
     create: bool = True,
+    nums: list[int] | None = None,
 ) -> Path:
     """実行 1 回ぶんの保存先ディレクトリを作って返す。
 
@@ -66,7 +67,11 @@ def build_run_output_dir(
     date_str = ts_dt.strftime("%Y%m%d")
     hour_str = ts_dt.strftime("%Y%m%d_%H")
     ts = ts_dt.strftime("%Y%m%d_%H%M%S")
-    parts = [ts, _sanitize_token(provider), _sanitize_token(form), f"num{int(num):03d}"]
+    if nums and len(nums) > 1:
+        num_part = "nums" + "_".join(f"{n:03d}" for n in nums)
+    else:
+        num_part = f"num{int(num):03d}"
+    parts = [ts, _sanitize_token(provider), _sanitize_token(form), num_part]
     if suffix:
         parts.append(_sanitize_token(suffix))
     folder = base / date_str / hour_str / "_".join(parts)
