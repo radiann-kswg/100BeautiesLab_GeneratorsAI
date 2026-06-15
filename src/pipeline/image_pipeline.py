@@ -530,8 +530,15 @@ def run_combined_pipeline(
         f" ({_MULTI_ROUGH_PER_CHAR} 枚/キャラ, 計 {len(nums) * _MULTI_ROUGH_PER_CHAR} 枚)"
     )
     per_char_roughs: dict[int, list[Path]] = {}
-    for rec in records:
+    inter_char_sleep = float(os.environ.get("GEMINI_IMAGE_SLEEP", "6"))
+
+    for i, rec in enumerate(records):
         n = rec["data"]["Num"]
+        if i > 0:
+            # 直前キャラクターの生成直後にスタートするとレートリミットで失敗するため待機する
+            print(f"  [Stage3] キャラクター切り替え待機: {inter_char_sleep:.0f}秒...")
+            time.sleep(inter_char_sleep)
+
         rough_dir = pipeline_dir / f"char_{n:03d}" / "stage3_rough"
         rough_dir.mkdir(parents=True, exist_ok=True)
         base_prompt = (per_char_prompts[n].get("base_gemini", "")
@@ -548,6 +555,10 @@ def run_combined_pipeline(
             paths = []
             result.errors.append(f"Stage 3 char#{n}: {err}")
         per_char_roughs[n] = paths
+        if not paths:
+            result.errors.append(
+                f"Stage 3 char#{n}: ラフ 0 枚 — API エラーまたはレートリミットの可能性"
+            )
         print(f"  [Stage3] #{n:03d} — {len(paths)} 枚生成完了")
 
     all_stage3 = [p for paths in per_char_roughs.values() for p in paths]
@@ -557,8 +568,14 @@ def run_combined_pipeline(
     result.stage3_paths["all"] = [str(p) for p in all_stage3]
     print(f"[Stage3] done - 合計 {len(all_stage3)} 枚")
 
-    if not all_stage3:
-        result.errors.append("Stage 3: 全キャラクターのラフ生成に失敗しました。")
+    # マルチキャラ合成には全キャラのラフが必要。1 人でも欠けたら中断する。
+    failed_chars = [n for n in nums if not per_char_roughs.get(n)]
+    if failed_chars:
+        failed_label = " / ".join(f"#{n:03d}" for n in failed_chars)
+        result.errors.append(
+            f"Stage 3: {failed_label} のラフ生成に失敗しました。"
+            " 全キャラクターのラフが揃わないと合同合成ができません。"
+        )
         result.status = "partial"
         _save_summary(pipeline_dir, result, start_time)
         return result
