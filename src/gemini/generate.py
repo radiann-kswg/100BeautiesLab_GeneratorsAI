@@ -207,6 +207,7 @@ def generate_image(
     iterate_from: str | None = None,
     revisions: list[str] | None = None,
     prompt_override: str | None = None,
+    extra_ref_locals: list[str] | None = None,
 ) -> list[Path]:
     """Imagen 3 でキャラクター画像を生成して保存する。
 
@@ -304,6 +305,16 @@ def generate_image(
             ref_locals.remove(iterate_path_str)
         ref_locals.insert(0, iterate_path_str)
 
+    # extra_ref_locals (Stage 5 合成ラフ等) を iterate_from の直後に差し込む。
+    # limit を 1 増やして合成参照が確実に含まれるようにする。
+    ref_limit = 4
+    if extra_ref_locals:
+        for ep in reversed(extra_ref_locals):
+            ep_str = str(ep)
+            if ep_str not in ref_locals:
+                ref_locals.insert(0 if iterate_source_path is None else 1, ep_str)
+        ref_limit = 5
+
     print(f"[INFO] キャラクター: {record['data'].get('Name', num)} / 形態: {form}")
     print(f"[INFO] 参照画像: {ref_url or '(なし)'}")
     print(f"[INFO] 参照画像候補: URL {len(ref_urls)}件 / ローカル {len(ref_locals)}件")
@@ -344,7 +355,7 @@ def generate_image(
     print(f"[INFO] ログ: {log_paths['meta']}")
 
     client = genai.Client(api_key=api_key)
-    ref_parts = _build_reference_parts(types, ref_urls, ref_locals, limit=4)
+    ref_parts = _build_reference_parts(types, ref_urls, ref_locals, limit=ref_limit)
     use_reference_input = bool(ref_parts)
     multimodal_model = model
     if use_reference_input and model.startswith("imagen"):

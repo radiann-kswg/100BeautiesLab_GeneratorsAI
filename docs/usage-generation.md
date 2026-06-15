@@ -21,7 +21,7 @@ MCP (Adobe / Canva) との連携は [`usage-mcp-canva-adobe.md`](usage-mcp-canva
 | Stage 2 | キャラクター選定 + 創作 DB から原典画像・特徴を取得 | manifest.jsonl + 参照画像索引 |
 | Stage 3 | ラフ **5 案**生成 | Adobe 非 Firefly (構図ガイド) + Gemini Imagen |
 | Stage 4 | 違反特徴の除去 + 構図修正 | OpenAI Vision (違反分析) + Gemini i2i (修正適用) |
-| Stage 5 | 作風調整・仕上げ → 完成画像 **3 枚**固定生成 | Canva Connect API |
+| Stage 5 | 全ラフを俯瞰して **合成 3 枚**生成 → Canva 仕上げ | Gemini (マルチ参照合成) + Canva Connect API |
 
 ```bash
 # 基本実行（キャラクター番号直接指定・シーンは自動生成）
@@ -68,6 +68,7 @@ python -m src.pipeline.image_pipeline --num 57 --form corefolder --skip-canva
                        └── regen/  — Stage 3 差し戻し再生成分 (--correction-mode stage3 時のみ)
   stage4_correct/    — 違反分析ログ (analysis_log.json) + 修正済み画像
   stage5_final/      — Canva 仕上げ完成画像 3 枚
+                       └── synth/  — Gemini マルチ参照合成の中間出力 (Canva 前)
   pipeline_summary.json
 ```
 

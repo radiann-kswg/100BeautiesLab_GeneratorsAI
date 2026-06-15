@@ -281,6 +281,7 @@ def run_image_pipeline(
         pipeline_dir=pipeline_dir,
         work_key=work_key,
         skip_canva=skip_canva,
+        prompts=prompts,
     )
     result.stage5_paths = {k: [str(p) for p in v] for k, v in final_results.items()}
 
