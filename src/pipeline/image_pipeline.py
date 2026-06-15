@@ -550,6 +550,7 @@ def run_combined_pipeline(
                 out_dir=str(rough_dir),
                 count=_MULTI_ROUGH_PER_CHAR,
                 prompt_override=base_prompt,
+                skip_ref_urls=True,  # DB URL を Gemini サーバーが取得できないケースを回避
             )
         except (SystemExit, Exception) as err:
             paths = []

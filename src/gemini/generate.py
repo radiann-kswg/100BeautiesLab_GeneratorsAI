@@ -209,6 +209,7 @@ def generate_image(
     prompt_override: str | None = None,
     extra_ref_locals: list[str] | None = None,
     skip_db_refs: bool = False,
+    skip_ref_urls: bool = False,
 ) -> list[Path]:
     """Imagen 3 でキャラクター画像を生成して保存する。
 
@@ -303,6 +304,11 @@ def generate_image(
     # 「DB に合わせてほしい」と解釈して余計な要素を追加することがあるため。
     if skip_db_refs:
         ref_locals = []
+        ref_urls = []
+    elif skip_ref_urls:
+        # DB サーバーの URL が Gemini のデータセンターからフェッチできず
+        # 400 INVALID_ARGUMENT になるケースがあるため URL のみ除外する。
+        # ローカルキャッシュ済みの参照画像は引き続き使用する。
         ref_urls = []
 
     # iterate-from の起点画像を参照ローカルの先頭へ差し込む (最高優先で添付)。
