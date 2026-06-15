@@ -124,6 +124,8 @@ def run_image_pipeline(
     background: str = "",
     skip_canva: bool = False,
     correction_mode: str = "t2i",
+    iterate_from: str | None = None,
+    revisions: "str | list[str] | None" = None,
 ) -> PipelineResult:
     """画像生成パイプライン全体 (Stage 1→2→3→4→5) を実行する。
 
@@ -141,6 +143,9 @@ def run_image_pipeline(
     correction_mode: 重度違反時の対処モード ("t2i" | "stage3")
                      "t2i"    — Stage 4 内で T2I フル再生成 (デフォルト)
                      "stage3" — Stage 3 に差し戻してラフを再生成
+    iterate_from:    前回生成画像のパス (ファイルまたはrun-dir)。
+                     指定時は Stage 3 が i2i モードになる。Stage 4/5 は通常通り実行。
+    revisions:       修正指示 (";"/改行区切り文字列 or list)。iterate_from と組み合わせて使用。
 
     Returns
     -------
@@ -197,10 +202,17 @@ def run_image_pipeline(
         for k, v in prompts.items()
         if k not in ("ref_urls", "ref_locals")
     }
+    if iterate_from:
+        result.stage1_prompts["iterate_from"] = iterate_from
+        result.stage1_prompts["revisions"] = (
+            revisions if isinstance(revisions, list)
+            else [r for r in (revisions or "").replace(";", "\n").splitlines() if r.strip()]
+        )
     _save_stage1(stage1_dir, prompts)
+    i2i_label = f" [i2i: {iterate_from}]" if iterate_from else ""
     print(
         f"[Stage1] done - OpenAI: {len(prompts['openai'])}chars / "
-        f"Gemini: {len(prompts['gemini'])}chars"
+        f"Gemini: {len(prompts['gemini'])}chars{i2i_label}"
     )
 
     # ──────────────────────────────────────
@@ -226,11 +238,13 @@ def run_image_pipeline(
     # ──────────────────────────────────────
     # Stage 3: ラフ 5 案生成 (Adobe + Gemini)
     # ──────────────────────────────────────
-    print(f"\n[=] Stage 3: ラフ {_ROUGH_COUNT} 案生成 (Adobe 非Firefly 構図ガイド + Gemini Imagen)")
+    stage3_mode = f"i2i ({iterate_from})" if iterate_from else "T2I"
+    print(f"\n[=] Stage 3: ラフ {_ROUGH_COUNT} 案生成 (mode={stage3_mode})")
     rough_results = generate_rough_images(
         record, form, prompts=prompts,
         pipeline_dir=pipeline_dir, count=_ROUGH_COUNT, work_key=work_key,
         scene=scene, background=background, style=style,
+        iterate_from=iterate_from, revisions=revisions,
     )
     result.stage3_paths = {k: [str(p) for p in v] for k, v in rough_results.items()}
 
@@ -807,6 +821,23 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--iterate-from", default=None, dest="iterate_from",
+        metavar="PATH",
+        help=(
+            "前回生成画像 (ファイルパスまたは run-dir) を起点に i2i モードで Stage 3 を実行する。\n"
+            "Stage 4 (違反修正) / Stage 5 (Canva) は通常通り走る。\n"
+            "例: output/20260616/.../num057_corefolder_01.jpg"
+        ),
+    )
+    parser.add_argument(
+        "--revisions", default=None,
+        metavar="TEXT",
+        help=(
+            "修正指示。';' または改行で複数項目に分割される。--iterate-from と組み合わせて使用。\n"
+            "例: '尻尾は元のまま; 表情だけ笑顔にして'"
+        ),
+    )
+    parser.add_argument(
         "--prefer-gemini-parse", action="store_true",
         help="--natural / --story のパース時に Gemini を OpenAI より優先する",
     )
@@ -897,6 +928,8 @@ def main() -> None:
             background=cp.get("background", ""),
             skip_canva=args.skip_canva,
             correction_mode=args.correction_mode,
+            iterate_from=args.iterate_from,
+            revisions=args.revisions,
         )
         print(f"\n[完了] ステータス: {result.status}")
         if result.scene_used:

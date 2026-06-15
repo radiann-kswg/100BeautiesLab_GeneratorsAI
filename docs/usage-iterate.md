@@ -152,7 +152,49 @@ output/{YYYYMMDD}/{YYYYMMDD_HH}/{ts}_{provider}_{form}_num{NNN}_iter{N}/
 
 ---
 
-## 7. バッチ実行との関係
+## 7. パイプライン経由の i2i (推奨)
+
+`--iterate-from` / `--revisions` は `src.pipeline.image_pipeline` でも使用できる。
+こちらを使うと **Stage 4 (違反修正) → Stage 5 (Canva 仕上げ)** も自動で走り、
+完成画像 3 枚まで一気に生成できる。
+
+### コマンド例
+
+```powershell
+# 単発 Gemini i2i の代わりに 5 ステージ全体を回す
+python -m src.pipeline.image_pipeline --num 57 --form corefolder `
+    --iterate-from "output/20260616/.../20260616_150049_gemini_corefolder_num057" `
+    --revisions "尻尾は元のまま; 表情だけ笑顔にして" `
+    --skip-canva
+
+# Canva 仕上げも含めてフル実行
+python -m src.pipeline.image_pipeline --num 57 --form corefolder `
+    --iterate-from "output/20260616/.../num057_corefolder_01.jpg" `
+    --revisions "背景を白に; 番号マーキングを大きく"
+```
+
+### 単体 i2i との違い
+
+| 項目 | 単体 (`src.gemini.generate`) | パイプライン (`src.pipeline.image_pipeline`) |
+|---|---|---|
+| Stage 1 (プロンプト精製) | なし | あり (GPT-4o + Gemini Flash) |
+| Stage 3 (ラフ生成) | 1〜4 枚 | 5 枚 (i2i) |
+| Stage 4 (違反修正) | なし | あり |
+| Stage 5 (Canva 仕上げ) | なし | あり |
+| 用途 | 素早く 1 枚だけ確認 | 修正 → 品質保証 → 完成まで自動化 |
+
+`--iterate-from` で指定した起点画像は Stage 3 の Gemini 参照先頭に挿入される。
+revision block はパイプラインが Stage 1 で生成した高品質なキャラクタープロンプトの先頭に差し込まれる。
+出力先サブフォルダに `_iter1` / `_iter2` ... サフィックスが付く点は単体と同じ。
+
+### 使い分け指針
+
+- **パイプライン**: Stage 4/5 まで一気に完成させたい場合。品質保証も兼ねてほしい場合。
+- **単体 Gemini**: 修正内容だけ素早く確認したい場合。`iter` チェーンを回して比較したい場合。
+
+---
+
+## 8. バッチ実行との関係
 
 `src.batch_generate` には **意図的に `--iterate-from` を実装していない**。
 i2i は「直前の結果を見ながら 1 件ずつ調整する」用途のため、複数キャラ × 形態を機械的に回すバッチとは目的が異なる。

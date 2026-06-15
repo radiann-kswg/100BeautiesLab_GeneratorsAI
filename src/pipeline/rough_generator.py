@@ -34,12 +34,30 @@ def _generate_gemini_rough(
     count: int,
     work_key: str,
     extra_ref_paths: list[str] | None = None,
+    iterate_from: str | None = None,
+    revisions: "str | list[str] | None" = None,
 ) -> list[Path]:
     """Gemini Imagen でラフ画像を生成する。
 
+    iterate_from: 前回生成画像のパス。指定時は i2i モードになり、source が参照先頭に差し込まれる。
+    revisions:    修正指示（";"/改行区切り文字列 or list）。iterate_from と組み合わせて使用。
     extra_ref_paths: Adobe が作成した構図ガイドを参照画像の末尾に追加する。
     """
     from src.gemini.generate import generate_image
+
+    # iterate_from がある場合、revision block を Stage 1 プロンプト先頭に差し込む。
+    # generate_image() の prompt_override は build_gemini_prompt() の revision 処理を迂回するため、
+    # ここで明示的にブロックを構築して先頭に付加する。
+    final_prompt = prompt_override
+    if iterate_from and revisions:
+        from src.utils.iterate import parse_revisions
+        from src.utils.dataset import _build_revision_block
+        revision_items = (
+            parse_revisions(revisions) if isinstance(revisions, str) else list(revisions)
+        )
+        rev_block = _build_revision_block(revision_items)
+        if rev_block and final_prompt:
+            final_prompt = rev_block + "\n\n" + final_prompt
 
     try:
         paths = generate_image(
@@ -48,7 +66,8 @@ def _generate_gemini_rough(
             work_key=work_key,
             out_dir=str(stage_dir),
             count=count,
-            prompt_override=prompt_override,
+            prompt_override=final_prompt,
+            iterate_from=iterate_from,
         )
         # 生成後、extra_ref_paths を run_meta に記録 (Gemini 側では参照添付が既に行われている)
         return paths
@@ -127,6 +146,8 @@ def generate_rough_images(
     scene: str = "",
     background: str = "",
     style: str = "",
+    iterate_from: str | None = None,
+    revisions: "str | list[str] | None" = None,
 ) -> dict[str, list[Path]]:
     """Adobe 構図ガイド + Gemini Imagen でラフ画像を生成する。
 
@@ -141,6 +162,8 @@ def generate_rough_images(
     scene:        シーン説明（Adobe 構図ガイドの雰囲気づけに使用）
     background:   背景ヒント（同上）
     style:        作風ヒント（同上）
+    iterate_from: 前回生成画像のパス。指定時は i2i モードでラフを生成する。
+    revisions:    修正指示（";"/改行区切り文字列 or list）。iterate_from と組み合わせて使用。
 
     Returns
     -------
@@ -169,13 +192,16 @@ def generate_rough_images(
     gemini_prompt = prompts.get("base_gemini", "") or prompts.get("gemini", "")
     if scene and "シーン" not in gemini_prompt:
         gemini_prompt = gemini_prompt + f"\n\n[シーン・追加要望]\n- シーン: {scene}"
-    print(f"[Stage2-Gemini] Imagen でラフ生成中 (count={count})...")
+    mode_label = "i2i" if iterate_from else "T2I"
+    print(f"[Stage2-Gemini] Imagen でラフ生成中 (count={count}, mode={mode_label})...")
     gemini_paths = _generate_gemini_rough(
         record, form,
         prompt_override=gemini_prompt,
         stage_dir=stage_dir,
         count=count,
         work_key=work_key,
+        iterate_from=iterate_from,
+        revisions=revisions,
         extra_ref_paths=[str(p) for p in adobe_guide_paths],
     )
 

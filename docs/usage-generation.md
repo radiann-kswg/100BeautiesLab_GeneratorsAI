@@ -59,6 +59,8 @@ python -m src.pipeline.image_pipeline --num 57 --form corefolder --skip-canva
 | `--style` / `--composition` / `--background` | `""` | 作風・構図・背景ヒント |
 | `--skip-canva` | false | Stage 5 の Canva をスキップ |
 | `--correction-mode` | `t2i` | Stage 4 重度違反時の対処モード。`t2i`: Stage 4 内で T2I 再生成 / `stage3`: Stage 3 に差し戻してラフを再生成 |
+| `--iterate-from PATH` | None | 前回生成画像を起点に Stage 3 を **i2i モード**で実行。Stage 4/5 は通常通り走る。詳細は [`usage-iterate.md`](usage-iterate.md) |
+| `--revisions TEXT` | None | 修正指示（`; `/改行区切り）。`--iterate-from` と組み合わせて使用 |
 | `--prefer-gemini-parse` | false | `--natural` / `--story` のパース時に Gemini を OpenAI より優先 |
 
 **出力構成:**
