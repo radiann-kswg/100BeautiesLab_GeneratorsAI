@@ -10,9 +10,10 @@ Copyright © RadianN_kswg — CC BY-NC 4.0
     過去の生成結果が上書きされないようにします。``--out`` でベースを上書き可能。
 
 必要な環境変数 (.env):
-    GEMINI_API_KEY   — Google AI Studio の API キー
-    IMAGEN_MODEL     — 使用モデル (デフォルト: imagen-3.0-generate-001)
-    OUTPUT_BASE_DIR  — 出力ベースディレクトリ (デフォルト: output)
+    GEMINI_API_KEY       — Google AI Studio の API キー
+    IMAGEN_MODEL         — 使用モデル (デフォルト: imagen-3.0-generate-002)
+    GEMINI_IMAGE_SLEEP   — 複数枚生成時の待機秒 (デフォルト: 6)
+    OUTPUT_BASE_DIR      — 出力ベースディレクトリ (デフォルト: output)
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ import argparse
 import mimetypes
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +48,87 @@ from src.utils import (  # noqa: E402
     save_image_bytes,
     write_run_meta,
 )
+
+
+# Imagen フォールバックモデルチェーン (先頭から順に試す)
+_IMAGEN_FALLBACK_MODELS = [
+    "imagen-3.0-generate-002",
+    "imagen-3.0-fast-generate-001",
+]
+
+
+def _is_rate_limit(err: Exception) -> bool:
+    s = str(err)
+    return "429" in s or "RESOURCE_EXHAUSTED" in s
+
+
+def _is_not_found(err: Exception) -> bool:
+    s = str(err)
+    return "404" in s or "NOT_FOUND" in s
+
+
+def _generate_content_with_retry(client, types, model, prompt_text, ref_parts,
+                                  max_retries: int = 2, base_delay: float = 12.0):
+    """429 リトライ付き generate_content (参照入力モード)。
+    Returns (response, error) のタプル。"""
+    delay = base_delay
+    for attempt in range(max_retries + 1):
+        try:
+            resp = client.models.generate_content(
+                model=model,
+                contents=[types.Part.from_text(text=prompt_text), *ref_parts],
+                config=types.GenerateContentConfig(
+                    response_modalities=[types.Modality.IMAGE],
+                    image_config=types.ImageConfig(aspect_ratio="1:1"),
+                ),
+            )
+            return resp, None
+        except Exception as err:
+            if _is_rate_limit(err) and attempt < max_retries:
+                print(f"[WARN] 参照入力モード 429 超過。{delay:.0f}秒後にリトライ ({attempt + 1}/{max_retries})...")
+                time.sleep(delay)
+                delay *= 2
+            else:
+                return None, err
+    return None, Exception("最大リトライ回数に達しました (参照入力)")
+
+
+def _generate_images_with_retry(client, types, model, prompt_text,
+                                 max_retries: int = 2, base_delay: float = 12.0):
+    """404 フォールバック + 429 リトライ付き generate_images (通常生成モード)。
+    Returns (response, used_model, error) のタプル。"""
+    models_to_try = [model] + [m for m in _IMAGEN_FALLBACK_MODELS if m != model]
+    last_err: Exception | None = None
+
+    for m in models_to_try:
+        delay = base_delay
+        for attempt in range(max_retries + 1):
+            try:
+                resp = client.models.generate_images(
+                    model=m,
+                    prompt=prompt_text,
+                    config=types.GenerateImagesConfig(
+                        number_of_images=1,
+                        aspect_ratio="1:1",
+                        safety_filter_level=types.SafetyFilterLevel.BLOCK_LOW_AND_ABOVE,
+                    ),
+                )
+                if m != model:
+                    print(f"[INFO] フォールバックモデルで成功: {m}")
+                return resp, m, None
+            except Exception as err:
+                last_err = err
+                if _is_not_found(err):
+                    print(f"[WARN] モデル {m} が見つかりません。次のモデルを試みます...")
+                    break  # 次のモデルへ
+                if _is_rate_limit(err) and attempt < max_retries:
+                    print(f"[WARN] Imagen ({m}) 429 超過。{delay:.0f}秒後にリトライ ({attempt + 1}/{max_retries})...")
+                    time.sleep(delay)
+                    delay *= 2
+                else:
+                    break  # リトライ上限 or その他エラー
+
+    return None, None, last_err
 
 
 def _guess_mime_type(path_or_url: str) -> str:
@@ -155,7 +238,8 @@ def generate_image(
     if not api_key:
         sys.exit("[ERROR] GEMINI_API_KEY が設定されていません。.env を確認してください。")
 
-    model = os.environ.get("IMAGEN_MODEL", "imagen-3.0-generate-001")
+    model = os.environ.get("IMAGEN_MODEL", "imagen-3.0-generate-002")
+    _inter_image_sleep = float(os.environ.get("GEMINI_IMAGE_SLEEP", "6"))
     reference_model = os.environ.get("GEMINI_REFERENCE_MODEL", "models/gemini-3.1-flash-image")
 
     # iterate-from が指定されている場合、起点画像と次の iter ラベルを解決する。
@@ -284,45 +368,36 @@ def generate_image(
     results: list[dict[str, object]] = []
     errors: list[dict[str, object]] = []
     for i in range(count):
+        # レートリミット対策: 2枚目以降は待機
+        if i > 0:
+            print(f"[INFO] レートリミット対策: {_inter_image_sleep:.0f}秒待機 (画像 {i + 1}/{count})...")
+            time.sleep(_inter_image_sleep)
+
         image_data: bytes | None = None
         attempt_errors: list[str] = []
 
         if use_reference_input:
-            try:
-                response = client.models.generate_content(
-                    model=multimodal_model,
-                    contents=[types.Part.from_text(text=prompt_text), *ref_parts],
-                    config=types.GenerateContentConfig(
-                        response_modalities=[types.Modality.IMAGE],
-                        image_config=types.ImageConfig(aspect_ratio="1:1"),
-                    ),
-                )
+            response, err = _generate_content_with_retry(
+                client, types, multimodal_model, prompt_text, ref_parts
+            )
+            if err is None:
                 generated = _extract_generated_image_bytes(response)
                 if generated:
                     image_data = generated[0]
                 else:
-                    msg = (
-                        f"画像 {i + 1}: 参照入力モードの生成結果が空でした。通常生成へフォールバックします。"
-                    )
+                    msg = f"画像 {i + 1}: 参照入力モードの生成結果が空でした。通常生成へフォールバックします。"
                     print(f"[WARN] {msg}")
                     attempt_errors.append(msg)
-            except Exception as err:
+            else:
                 msg = f"画像 {i + 1}: 参照入力モードに失敗 ({err})。通常生成へフォールバックします。"
                 print(f"[WARN] {msg}")
                 attempt_errors.append(msg)
 
         if image_data is None:
-            try:
-                response = client.models.generate_images(
-                    model=model,
-                    prompt=prompt_text,
-                    config=types.GenerateImagesConfig(
-                        number_of_images=1,
-                        aspect_ratio="1:1",
-                        safety_filter_level=types.SafetyFilterLevel.BLOCK_LOW_AND_ABOVE,
-                    ),
-                )
-
+            response, used_model, err = _generate_images_with_retry(
+                client, types, model, prompt_text
+            )
+            if err is None and response is not None:
                 generated = _extract_generated_image_bytes(response)
                 if generated:
                     image_data = generated[0]
@@ -330,7 +405,7 @@ def generate_image(
                     msg = f"画像 {i + 1} の生成結果が空でした。スキップします。"
                     print(f"[WARN] {msg}")
                     attempt_errors.append(msg)
-            except Exception as err:
+            else:
                 msg = f"画像 {i + 1}: 通常生成も失敗しました ({err})"
                 print(f"[ERROR] {msg}")
                 attempt_errors.append(msg)
