@@ -73,6 +73,9 @@ def _expand_forms(form_arg: str) -> list[str]:
 def _expand_providers(provider_arg: str) -> list[str]:
     if provider_arg == "both":
         return ["gemini", "openai"]
+    if provider_arg == "all":
+        # canva は入力画像 (--from-image) が必須なためバッチ一括には含めない。
+        return ["gemini", "openai", "adobe"]
     return [provider_arg]
 
 
@@ -139,6 +142,39 @@ def _run_one(
         if path is None:
             return BatchResult(num, form, provider, "failed", "no image generated")
         return BatchResult(num, form, provider, "ok", "1 png", [str(path)])
+
+    if provider == "adobe":
+        from src.adobe.generate import generate_image_firefly as firefly_generate
+
+        try:
+            paths = firefly_generate(
+                num=num,
+                form=form,
+                work_key=work_key,
+                out_dir=out_dir,
+                count=count,
+                scene=scene,
+                style=style,
+                composition=composition,
+                background=background,
+            )
+        except SystemExit as e:
+            return BatchResult(num, form, provider, "failed", f"SystemExit: {e}")
+        except Exception as e:
+            return BatchResult(num, form, provider, "failed", f"{type(e).__name__}: {e}")
+
+        if not paths:
+            return BatchResult(num, form, provider, "failed", "no images generated")
+        return BatchResult(
+            num, form, provider, "ok", f"{len(paths)} img", [str(p) for p in paths]
+        )
+
+    if provider == "canva":
+        # Canva は生成済み画像が必要。バッチ一括では扱わず単発実行へ誘導する。
+        return BatchResult(
+            num, form, provider, "skipped",
+            "canva は --from-image が必須: python -m src.canva.generate --num N --from-image <path>",
+        )
 
     return BatchResult(num, form, provider, "failed", f"unknown provider: {provider}")
 
@@ -271,9 +307,13 @@ def main() -> None:
     )
     parser.add_argument(
         "--provider",
-        choices=["gemini", "openai", "both"],
+        choices=["gemini", "openai", "adobe", "canva", "both", "all"],
         default="gemini",
-        help="使用するプロバイダ (デフォルト: gemini)",
+        help=(
+            "使用するプロバイダ (デフォルト: gemini)。"
+            " both=gemini+openai / all=gemini+openai+adobe。"
+            " canva は --from-image 必須のため単発実行を推奨。"
+        ),
     )
     parser.add_argument("--work", default="#Works_NumberTales", help="作品キー")
     parser.add_argument(

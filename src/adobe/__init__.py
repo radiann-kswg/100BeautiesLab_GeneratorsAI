@@ -1,0 +1,1 @@
+"""Adobe Firefly Services プロバイダ。"""

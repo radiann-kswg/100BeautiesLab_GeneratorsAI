@@ -12,8 +12,9 @@
 
 | ドキュメント                                 | 内容                                                                                        |
 | -------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| [`setup.md`](setup.md)                       | 依存パッケージ、`.env`、サブモジュール、API キー準備、PowerShell での注意点                 |
-| [`usage-generation.md`](usage-generation.md) | `src.gemini.generate` / `src.openai.generate` / `src.batch_generate` の基本コマンドとフラグ |
+| [`setup.md`](setup.md)                       | 依存パッケージ、`.env`、サブモジュール、API キー準備、macOS `setup_mac.sh`、PowerShell での注意点 |
+| [`usage-generation.md`](usage-generation.md) | `src.gemini` / `src.openai` / `src.adobe` / `src.canva` / `src.batch_generate` の基本コマンドとフラグ |
+| [`usage-mcp-canva-adobe.md`](usage-mcp-canva-adobe.md) | Claude(Cowork) 経由で接続済み Adobe / Canva MCP を使う対話的ワークフロー、Canva 接続手順 |
 | [`usage-iterate.md`](usage-iterate.md)       | `--iterate-from` / `--revisions` による i2i (前回画像をベースに改稿) のワークフロー         |
 | [`output-and-logs.md`](output-and-logs.md)   | `output/` の3階層レイアウト、`prompt.txt` / `run_meta.json` / `notes.md` の役割と書式       |
 | [`tools.md`](tools.md)                       | 画像 MIME チェック、output レイアウト移行、形態共通データセットの管理                       |
@@ -28,6 +29,12 @@ python -m src.gemini.generate --num 57 --form corefolder
 
 # 単発生成 (OpenAI / gpt-image-1)
 python -m src.openai.generate --num 57 --form corefolder
+
+# 単発生成 (Adobe Firefly)
+python -m src.adobe.generate --num 57 --form corefolder
+
+# 生成済み画像を Canva でデザイン化・書き出し (--from-image 必須)
+python -m src.canva.generate --num 57 --from-image <生成済み画像のパス>
 
 # シーン・作風・構図・背景を指定
 python -m src.gemini.generate --num 57 --form humanoid `

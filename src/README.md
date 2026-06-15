@@ -6,6 +6,8 @@
 
 - `gemini/generate.py` — Google Imagen 3 による画像生成
 - `openai/generate.py` — DALL-E 3 による画像生成 / GPT-4o によるプロンプト補助
+- `adobe/generate.py` — Adobe Firefly Services によるテキスト→画像生成 (provider: adobe)
+- `canva/generate.py` — Canva Connect API による生成済み画像のデザイン化・書き出し (provider: canva, `--from-image` 必須)
 - `utils/dataset.py` — `manifest.jsonl` 読み込み・プロンプト組み立てユーティリティ
 - `utils/paths.py` — 実行ごとの出力ディレクトリ生成ユーティリティ
 - `utils/run_log.py` — 実行ごとの `prompt.txt` / `run_meta.json` / `notes.md` 保存ユーティリティ
