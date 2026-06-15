@@ -29,10 +29,11 @@ git clone --recurse-submodules <このリポジトリのURL>
 
 ### サブモジュール一覧
 
-| ディレクトリ     | リポジトリ                                                                                         | 用途                |
-| ---------------- | -------------------------------------------------------------------------------------------------- | ------------------- |
-| `_creations-ai/` | [100BeautiesLab_CreationsAI](https://github.com/radiann-kswg/100BeautiesLab_CreationsAI)           | AI 学習データセット |
-| `_creations-db/` | [100BeautiesLab_CreationsDB](https://github.com/radiann-kswg/100BeautiesLab_CreationsDB) (develop) | キャラクター原典 DB |
+| ディレクトリ     | リポジトリ                                                                               | 用途                                                                  |
+| ---------------- | ---------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `_creations-ai/` | [100BeautiesLab_CreationsAI](https://github.com/radiann-kswg/100BeautiesLab_CreationsAI) | AI 学習データセット。内部にネストサブモジュール `creations-db` を含む  |
+
+> キャラクター原典 DB ([100BeautiesLab_CreationsDB](https://github.com/radiann-kswg/100BeautiesLab_CreationsDB) / `addon-ai-tag` ブランチ) は `_creations-ai/creations-db/` にネストサブモジュールとして取り込まれる。clone・更新時は `--recursive` が必須。
 
 ---
 
@@ -45,7 +46,7 @@ git clone --recurse-submodules <このリポジトリのURL>
 │   ├── instructions/                # applyTo 付き自動ロード指示
 │   └── _roleplay-datas/             # Copilot ロールプレイ設定 (正本)
 ├── _creations-ai/          # AI 学習データ（サブモジュール）
-├── _creations-db/          # キャラクター DB（サブモジュール・読み取り専用）
+│   └── creations-db/       # キャラクター DB（ネストサブモジュール・読み取り専用）
 ├── _ideas/                 # プロンプト草案・アイデア
 ├── docs/                   # 使い方ドキュメント (docs/README.md が入口)
 └── src/                    # 生成スクリプト
@@ -68,5 +69,5 @@ git clone --recurse-submodules <このリポジトリのURL>
 ## ライセンス
 
 - 本リポジトリの設定ファイル・スクリプト: CC BY-NC 4.0
-- `_creations-ai/`, `_creations-db/` 内コンテンツ: 各サブモジュールのライセンスに従う
+- `_creations-ai/`（ネストの `creations-db/` を含む）内コンテンツ: 各サブモジュールのライセンスに従う
 - 非商用目的に限り利用可。商用利用・再配布には著作権者の許諾が必要。

@@ -83,7 +83,7 @@ output/
   "iteration": null,
   "reference_urls": ["https://database.numbertales-radiann.net/..."],
   "reference_local_paths": [
-    "_creations-db/data/Works_NumberTales/Images/.../emstk_corefolder57-1.png"
+    "_creations-ai/creations-db/data/Works_NumberTales/Images/.../emstk_corefolder57-1.png"
   ],
   "record_capabilities": {
     "current_form_hints_present": true,

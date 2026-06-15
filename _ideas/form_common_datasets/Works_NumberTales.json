@@ -5,10 +5,10 @@
   "work_title_en": "NumberTales",
   "version": "2026-06-09.1",
   "source": {
-    "glossary": "_creations-db/data/Works_NumberTales/References/ref_Glossary.json",
+    "glossary": "_creations-ai/creations-db/data/Works_NumberTales/References/ref_Glossary.json",
     "manifest": "_creations-ai/ai-dataset/manifest-training.jsonl",
-    "images_root": "_creations-db/data/Works_NumberTales/Images",
-    "glossary_figures_root": "_creations-db/data/Works_NumberTales/Images/Ref_Glossary/concept-figure"
+    "images_root": "_creations-ai/creations-db/data/Works_NumberTales/Images",
+    "glossary_figures_root": "_creations-ai/creations-db/data/Works_NumberTales/Images/Ref_Glossary/concept-figure"
   },
   "preferred_art_style": [
     "soft cel-shaded 2D anime illustration",
@@ -59,7 +59,7 @@
         "compact-storage mode used during maintenance or rest"
       ],
       "figure_reference_local": [
-        "_creations-db/data/Works_NumberTales/Images/Ref_Glossary/concept-figure/cnsp-fg_NTsCoreFolder.png"
+        "_creations-ai/creations-db/data/Works_NumberTales/Images/Ref_Glossary/concept-figure/cnsp-fg_NTsCoreFolder.png"
       ],
       "figure_reference_url": [
         "https://database.numbertales-radiann.net/data/Works_NumberTales/Images/Ref_Glossary/concept-figure/cnsp-fg_NTsCoreFolder.png"
@@ -181,7 +181,7 @@
         "supports the master with near-human motion"
       ],
       "figure_reference_local": [
-        "_creations-db/data/Works_NumberTales/Images/Ref_Glossary/concept-figure/cnsp-fg_NTsHumanoid.png"
+        "_creations-ai/creations-db/data/Works_NumberTales/Images/Ref_Glossary/concept-figure/cnsp-fg_NTsHumanoid.png"
       ],
       "figure_reference_url": [
         "https://database.numbertales-radiann.net/data/Works_NumberTales/Images/Ref_Glossary/concept-figure/cnsp-fg_NTsHumanoid.png"

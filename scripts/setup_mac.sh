@@ -6,7 +6,7 @@
 # このMacBookで生成ツールを動かせる状態にするための一発セットアップ。
 #   - Python / venv の用意
 #   - 依存パッケージのインストール (requirements.txt)
-#   - サブモジュール取得 (_creations-ai / _creations-db)
+#   - サブモジュール取得 (_creations-ai / ネストの creations-db を再帰取得)
 #   - .env の存在チェック (★ .env は作成・上書きしない。鍵は手動設定)
 #   - dry-run による動作確認 (API 未呼び出し・課金ゼロ)
 #
@@ -98,7 +98,7 @@ c_ok "依存インストール完了 (requirements.txt)"
 # ---- 4. サブモジュール ------------------------------------------------------
 if [[ "$SKIP_SUBMODULE" -eq 0 ]]; then
   if [[ -f .gitmodules ]]; then
-    c_info "サブモジュールを取得します (_creations-ai / _creations-db)"
+    c_info "サブモジュールを取得します (_creations-ai / ネストの creations-db を再帰取得)"
     git submodule update --init --recursive || c_warn "サブモジュール取得で警告が出ました。ネットワーク/権限を確認してください。"
     c_ok "サブモジュール処理完了"
   else

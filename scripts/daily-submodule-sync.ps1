@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    サブモジュール (_creations-ai / _creations-db) を毎朝同期し、更新があれば取り込んで
+    サブモジュール (_creations-ai / ネストの creations-db) を毎朝同期し、更新があれば取り込んで
     _tasks/ にログを生成し、コミット (push なし) するメンテナンススクリプト。
 
 .DESCRIPTION
@@ -122,6 +122,8 @@ foreach ($sm in $submodules) {
     try {
         & git -C $sm.Path checkout $localBranch 2>&1 | Out-Null
         & git -C $sm.Path merge --ff-only $trackRef 2>&1 | Out-Null
+        # ネストサブモジュール (_creations-ai/creations-db) を新ポインタへ再帰的に追従させる。
+        & git -C $sm.Path submodule update --init --recursive 2>&1 | Out-Null
         $newCur = (& git -C $sm.Path rev-parse HEAD).Trim()
         $results += [pscustomobject]@{ Name=$sm.Name; Path=$sm.Path; Track=$trackRef; Old=$cur; New=$newCur; Action='UPDATED'; Reason='FF 取り込み完了' }
     }

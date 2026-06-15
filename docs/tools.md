@@ -173,7 +173,7 @@ _ideas/
 ### URL → ローカル変換
 
 `_collect_work_common_reference_images()` 内で
-`https://database.numbertales-radiann.net/` → `_creations-db/` 変換を試み、
+`https://database.numbertales-radiann.net/` → `_creations-ai/creations-db/` 変換を試み、
 ローカルにあれば実バイトで Gemini に渡せるようにしている。
 これにより、ネット越し DL を待たずに `Part.from_bytes` で確実に添付できる。
 
@@ -185,7 +185,7 @@ env `CREATIONS_DB_PACKAGE_ENABLE` で動作切替。
 
 | 値                    | 動作                                                           |
 | --------------------- | -------------------------------------------------------------- |
-| 未設定 / `1`          | `_creations-db/pkg/` 配下のパッケージレイヤを使う (デフォルト) |
+| 未設定 / `1`          | `_creations-ai/creations-db/pkg/` 配下のパッケージレイヤを使う (デフォルト) |
 | `0` / `false` / `off` | 無効化。 raw JSON だけを読む                                   |
 
 通常は触らない。デバッグや上流改修時の動作切り分けで使う。

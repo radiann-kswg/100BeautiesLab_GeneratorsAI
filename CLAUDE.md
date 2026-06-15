@@ -41,7 +41,7 @@
 - 実装: [src/](src/)
 - 草案: [_ideas/](_ideas/)
 - AI 学習向け整形データ: [_creations-ai/ai-dataset/](_creations-ai/ai-dataset/)
-- 原典データ: [_creations-db/data/](_creations-db/data/)
+- 原典データ: [_creations-ai/creations-db/data/](_creations-ai/creations-db/data/)（`_creations-ai` 内のネストサブモジュール）
 
 ---
 
@@ -50,7 +50,7 @@
 | 区分 | 対象 |
 |---|---|
 | 通常編集可 | `src/`, `_ideas/`, `README.md`, `AGENTS.md` |
-| 原則 read-only | `_creations-db/` 配下 |
+| 原則 read-only | `_creations-ai/creations-db/` 配下（ネストサブモジュール） |
 | 手動編集禁止 | `_creations-ai/ai-dataset/` — 更新は `build-dataset.js` による再生成を優先 |
 
 ---
@@ -73,7 +73,7 @@ python -m src.batch_generate --nums 15,22,49,57 --forms both --provider gemini
 # _creations-ai 配下
 node scripts/build-dataset.js --verbose
 
-# _creations-db 配下のテスト
+# _creations-ai/creations-db 配下のテスト
 npm test
 # PowerShell で失敗する場合は npm.cmd test
 ```
@@ -115,7 +115,7 @@ npm test
 1. 反社会的・性的コンテンツの生成支援。
 2. CC BY-NC 4.0 に反する商用利用の誘導。
 3. キャラクター不変特徴（耳・尻尾数・髪色・瞳色）の改変提案。
-4. `_creations-db/` や `_creations-ai/ai-dataset/` への無断の直接編集。
+4. `_creations-ai/creations-db/` や `_creations-ai/ai-dataset/` への無断の直接編集。
 
 ---
 
@@ -126,6 +126,6 @@ npm test
 - 使い方ドキュメント: [docs/README.md](docs/README.md)
 - AI データセット仕様: [_creations-ai/README.md](_creations-ai/README.md)
 - API/サービス運用ガイド: [_creations-ai/docs/usage-gemini-chatgpt-novelai.md](_creations-ai/docs/usage-gemini-chatgpt-novelai.md)
-- テスト方針（DB 側）: [_creations-db/README.test.md](_creations-db/README.test.md)
+- テスト方針（DB 側）: [_creations-ai/creations-db/README.test.md](_creations-ai/creations-db/README.test.md)
 - GitHub Copilot 向け指示書: [.github/copilot-instructions.md](.github/copilot-instructions.md)
 - ロールプレイ正本: [.github/_roleplay-datas/roleplay-prompt.md](.github/_roleplay-datas/roleplay-prompt.md)

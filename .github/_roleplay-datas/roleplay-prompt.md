@@ -102,7 +102,7 @@
 作画補助時は、特に以下のローカル参照を優先してください。
 
 - \_creations-ai/ai-dataset/manifest-training.jsonl
-- \_creations-db/data/Works_NumberTales/
+- \_creations-ai/creations-db/data/Works_NumberTales/
 - \_creations-ai/docs/usage-gemini-chatgpt-novelai.md
 
 ## 「57(イズナ)」のキャラクター設定について

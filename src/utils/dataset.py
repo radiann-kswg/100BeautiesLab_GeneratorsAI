@@ -451,7 +451,7 @@ def _collect_forced_local_images(
 
 
 # 公開URL → ローカルパス変換に使用する URL prefix。
-# `_creations-db/` 配下に同じ相対パスでファイルが存在することを期待する。
+# `_creations-ai/creations-db/` 配下に同じ相対パスでファイルが存在することを期待する。
 # 2026-06-09 (A4): work_common.reference_images.{form}_reference[] は URL のみで保存されている
 # ことが多いため、URL を見つけたらローカルパスにも変換を試みて Gemini に実バイトで渡せるようにする。
 _URL_TO_LOCAL_PREFIXES: tuple[str, ...] = (
@@ -461,7 +461,7 @@ _URL_TO_LOCAL_PREFIXES: tuple[str, ...] = (
 
 
 def _try_resolve_url_to_local_path(url: str, creations_db_base: str) -> str | None:
-    """公開URLが既知の prefix なら、`_creations-db/` 配下の同名ファイルパスを返す。
+    """公開URLが既知の prefix なら、`_creations-ai/creations-db/` 配下の同名ファイルパスを返す。
 
     対応する prefix に該当しない URL や、ローカルにファイルが存在しない場合は ``None``。
     """
@@ -489,9 +489,9 @@ def _collect_work_common_reference_images(
 
     作品共通の設計図 (`Ref_Glossary/concept-figure/cnsp-fg_*CoreFolder.png` 等) を想定する。
     キャラクター番号フィルタは通さない (作品共通リソースのため)。
-    ローカル相対パスは ``_creations-db/`` 配下と仮定して絶対化する。
+    ローカル相対パスは ``_creations-ai/creations-db/`` 配下と仮定して絶対化する。
     2026-06-09 (A4): URL しか格納されていない場合でも、対応するローカルファイルが
-    ``_creations-db/`` 配下に存在すれば ``locals_`` にも追加する。
+    ``_creations-ai/creations-db/`` 配下に存在すれば ``locals_`` にも追加する。
     """
     hints = record.get("ai_hints") or {}
     work_common = hints.get("work_common") or {}
@@ -527,7 +527,7 @@ def _collect_work_common_reference_images(
 def collect_reference_images(
     record: dict[str, Any],
     form: str = "corefolder",
-    creations_db_base: str = "_creations-db",
+    creations_db_base: str = "_creations-ai/creations-db",
     max_images: int = 6,
 ) -> dict[str, list[str]]:
     """レコードから参照画像 URL とローカルパスを集約して返す。
@@ -609,7 +609,7 @@ def collect_reference_images(
 def collect_record_capabilities(
     record: dict[str, Any],
     form: str = "corefolder",
-    creations_db_base: str = "_creations-db",
+    creations_db_base: str = "_creations-ai/creations-db",
 ) -> dict[str, Any]:
     """レコードが備える AI ヒント・DB 画像の充実度を辞書化する。
 
@@ -722,7 +722,7 @@ def find_character(
 ) -> dict[str, Any] | None:
     """番号と作品キーでキャラクターを検索して返す。見つからない場合は None。
 
-    `_creations-db/pkg/python` の `CreationsDBClient` が利用可能な場合、
+    `_creations-ai/creations-db/pkg/python` の `CreationsDBClient` が利用可能な場合、
     取得したレコードに原典DBレコードを `db_record` として統合する。
     """
     target: dict[str, Any] | None = None
@@ -756,14 +756,14 @@ def _creations_db_repo_root() -> Path:
     )
     return Path(
         os.environ.get(
-            "CREATIONS_DB_REPO_ROOT", project_root / "_creations-db"
+            "CREATIONS_DB_REPO_ROOT", project_root / "_creations-ai" / "creations-db"
         )
     )
 
 
 @lru_cache(maxsize=1)
 def _get_creationdb_client() -> Any | None:
-    """`_creations-db/pkg/python` の CreationsDBClient を返す。利用不可なら None。"""
+    """`_creations-ai/creations-db/pkg/python` の CreationsDBClient を返す。利用不可なら None。"""
     if not _is_creations_db_pkg_enabled():
         return None
 

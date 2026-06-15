@@ -36,19 +36,21 @@ git submodule update --init --recursive
 | ディレクトリ     | 用途                | 編集可否                              |
 | ---------------- | ------------------- | ------------------------------------- |
 | `_creations-ai/` | AI 学習データセット | 通常編集不可 (生成物)                 |
-| `_creations-db/` | キャラクター原典 DB | 原則 read-only (上流リポジトリで管理) |
+| `_creations-ai/creations-db/` | キャラクター原典 DB（`_creations-ai` 内のネストサブモジュール） | 原則 read-only (上流リポジトリで管理) |
+
+> 原典 DB は `_creations-ai` のネストサブモジュール `creations-db` (`addon-ai-tag` ブランチ) として取り込まれる。clone・更新時は `--recursive` を付けること。
 
 更新コマンド:
 
 ```powershell
-# 全サブモジュール更新
-git submodule update --remote --merge
+# 全サブモジュール更新 (ネストの creations-db も含めて再帰的に)
+git submodule update --remote --recursive --merge
 
-# _creations-ai のみ
-git submodule update --remote _creations-ai
+# _creations-ai のみ (内部の creations-db も追従)
+git submodule update --remote --recursive _creations-ai
 
-# _creations-db のみ (develop ブランチ)
-git submodule update --remote _creations-db
+# 原典 DB (ネストの creations-db, addon-ai-tag ブランチ) のみ更新
+git -C _creations-ai submodule update --remote creations-db
 ```
 
 ---
@@ -160,7 +162,7 @@ CREATIONS_DB_PACKAGE_ENABLE=1
 - 仮想環境アクティベート: `.\.venv\Scripts\Activate.ps1`
 - コマンドの連結に `&&` を使わない。代わりに `;` で区切る。
 - 日本語出力が文字化けする場合は `$env:PYTHONIOENCODING="utf-8"` を先に設定。
-- `npm test` がうまく解決されない場合は `npm.cmd test` を使う ([`_creations-db/`](../_creations-db) でのみ使用)。
+- `npm test` がうまく解決されない場合は `npm.cmd test` を使う ([`_creations-ai/creations-db/`](../_creations-ai/creations-db) でのみ使用)。
 
 ---
 
@@ -190,7 +192,7 @@ python -m src.gemini.generate --num 57 --form corefolder --count 1
 | `invalid_request_error (400)` で画像が弾かれる       | [`tools.md`](tools.md) の `check_image_mime` を参照。実体 MIME と拡張子の不一致が原因 |
 | OpenAI で `The model 'dall-e-3' does not exist`      | `.env` の `DALLE_MODEL=gpt-image-1` に切替                                            |
 | 仮想環境を作ったのに `pip install` が global に入る  | `Activate.ps1` を実行したか確認。`where.exe python` で `.venv` 配下か確認             |
-| サブモジュール (`_creations-db/data/...`) の中身が空 | `git submodule update --init --recursive` を実行                                      |
+| サブモジュール (`_creations-ai/creations-db/data/...`) の中身が空 | `git submodule update --init --recursive` を実行 (ネストまで再帰必須)                  |
 | (macOS) `permission denied: ./scripts/setup_mac.sh`  | `chmod +x scripts/setup_mac.sh` を実行                                                |
 | (macOS) `python3` が無い                             | `brew install python@3.12` で導入                                                     |
 | Firefly `401 Unauthorized`                           | `FIREFLY_CLIENT_ID` / `FIREFLY_CLIENT_SECRET` を確認。トークンは24hで失効             |

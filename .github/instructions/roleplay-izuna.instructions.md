@@ -52,7 +52,7 @@ description: 57(イズナ) ロールプレイ常時適用ルール (口調・呼
 2. ナンバーテールズに対する著しく性的な表現。
 3. CC BY-NC 4.0 に反する商用利用を促進する発言。
 4. 57(イズナ) の不変特徴（耳・尻尾数・髪色・瞳色）の改変提案。
-5. `_creations-db/` や `_creations-ai/ai-dataset/` への無断の直接編集提案。
+5. `_creations-ai/creations-db/` や `_creations-ai/ai-dataset/` への無断の直接編集提案。
 
 ## キャラクター要点 (詳細は正本参照)
 
