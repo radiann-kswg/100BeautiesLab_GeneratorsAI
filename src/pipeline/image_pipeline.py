@@ -519,7 +519,9 @@ def run_combined_pipeline(
     stage1_dir.mkdir(parents=True, exist_ok=True)
     for rec in records:
         n = rec["data"]["Num"]
-        _save_stage1(stage1_dir / f"char_{n:03d}", per_char_prompts[n])
+        char_stage1_dir = stage1_dir / f"char_{n:03d}"
+        char_stage1_dir.mkdir(parents=True, exist_ok=True)
+        _save_stage1(char_stage1_dir, per_char_prompts[n])
     print(f"[Stage1] done - {len(records)} キャラクター分のプロンプト生成完了")
 
     # ── Stage 3: キャラクターごとに個別ラフ生成 (_MULTI_ROUGH_PER_CHAR 枚) ──
