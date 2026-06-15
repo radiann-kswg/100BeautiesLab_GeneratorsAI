@@ -2,8 +2,8 @@
   "preferred_art_style": [
     "Cute",
     "Deformed",
-    "Thick lines",
-    "Chibi"
+    "Simple",
+    "Round"
   ],
   "forms": {
     "corefolder": {
@@ -15,9 +15,9 @@
       "silhouette_summary_en": "",
       "required_shape_keywords": [
         "Pastel colors",
-        "Cel shading",
-        "Simple background",
-        "Simple"
+        "Chibi",
+        "Minimal shading",
+        "White background"
       ],
       "disallow_cross_form_keywords": [],
       "common_equipment": [],
@@ -29,15 +29,15 @@
     "keywords_en": [
       "Cute",
       "Deformed",
-      "Thick lines",
-      "Chibi",
+      "Simple",
+      "Round",
       "Pastel colors",
-      "Cel shading",
-      "Simple background",
-      "Simple"
+      "Chibi",
+      "Minimal shading",
+      "White background"
     ],
-    "overall_mood": "極度にデフォルメされた、ずんぐりとした丸い体型が特徴。表情は豊かで、困惑、不機嫌、不敵な笑みなど、感情が明確に表現されている。可愛らしくもユニークで、どこかシュールな雰囲気を併せ持つタッチ。",
-    "analyzed_character_count": 21,
+    "overall_mood": "非常にデフォルメされた、丸みを帯びたキャラクターデザインが特徴で、全体的に可愛らしく、癒やし系の雰囲気を持っています。表情豊かで、困惑、泣き顔、照れ顔など、感情が強調されています。",
+    "analyzed_character_count": 18,
     "analyzed_form": "corefolder"
   }
 }

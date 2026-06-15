@@ -95,9 +95,9 @@ python -m src.tools.check_image_mime --strict
 
 ## output レイアウト整理 (一回限り)
 
-旧フォーマット (`output/{date}/{provider}/...` や `output/{ts}_..._num...` のような
-日付/時刻階層が無いもの) を、現行レイアウト
-`output/{YYYYMMDD}/{YYYYMMDD_HH}/{ts}_{provider}_{form}_num{NNN}/` に
+旧フォーマット (`output/{date}/{provider}/...`、`output/{ts}_..._num...` の日付階層なし、
+旧 3 階層 `output/{date}/{date}_{HH}/{run}/`) を、現行 2 階層レイアウト
+`output/{YYYYMMDD}/{ts}_{provider}_{form}_num{NNN}/` に
 寄せるためのツールも用意しています。
 
 ```bash

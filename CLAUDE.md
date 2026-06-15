@@ -114,9 +114,10 @@ npm test
 
 ## 出力パス規則
 
-- 生成画像の保存先は `output/{YYYYMMDD}/{YYYYMMDD_HH}/{ts}_{provider}_{form}_num{NNN}[_suffix]/` の3階層レイアウト。
+- 生成画像の保存先は `output/{YYYYMMDD}/{ts}_{provider}_{form}_num{NNN}[_suffix]/` の2階層レイアウト（日付フォルダ + 1実行フォルダ）。
   - ベースディレクトリ: `OUTPUT_BASE_DIR` (互換: `OUTPUT_DIR`) または CLI の `--out`
   - フォルダ生成ロジック: [src/utils/paths.py](src/utils/paths.py) の `build_run_output_dir()`
+  - パイプラインは「1実行=1フォルダ」。各ステージ配下の子生成は `date_group=False` で日付フォルダを作らずフラットに置く（`{stageN}/{ts}_{provider}_{form}_num{NNN}/`）。
 - 各実行ディレクトリには `prompt.txt` / `run_meta.json` / `notes.md` を必ず残すこと（上書き禁止、追記マージのみ）。
   - 実装: [src/utils/run_log.py](src/utils/run_log.py) の `initialize_run_logs()` / `finalize_run_logs()`
 - 過去フォーマットを現行レイアウトへ移行するワンショットツール:

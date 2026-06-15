@@ -29,13 +29,17 @@ Copyright © RadianN_kswg — CC BY-NC 4.0
     python -m src.pipeline.image_pipeline --nums 25,57 --form corefolder
 
 保存先:
-    {OUTPUT_BASE_DIR}/{YYYYMMDD}/{YYYYMMDD_HH}/{ts}_pipeline_{form}_num{NNN}/
+    {OUTPUT_BASE_DIR}/{YYYYMMDD}/{ts}_pipeline_{form}_num{NNN}/   ← 1 実行 = 1 フォルダ
       stage1_prompt/        — 生成済みプロンプト (openai/gemini/base)
       stage2_db/            — DB サマリー + キャラクタースペック
       stage3_rough/         — Adobe 構図ガイド + Gemini Imagen ラフ 5 案
       stage4_correct/       — 違反分析ログ + 修正済み画像
       stage5_final/         — Canva 仕上げ完成画像 3 枚
       pipeline_summary.json — 全ステージの実行結果まとめ
+
+    各ステージ配下の子生成 (Gemini/Canva) は日付フォルダを作らず
+    ``{stageN}/{ts}_{provider}_{form}_num{NNN}/`` のようにフラットに配置される
+    (旧レイアウトの {YYYYMMDD}/{YYYYMMDD_HH}/ 再ネストは廃止)。
 
 必要な環境変数 (.env):
     GEMINI_API_KEY             — Gemini / Imagen 用

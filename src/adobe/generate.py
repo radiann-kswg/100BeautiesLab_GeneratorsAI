@@ -11,7 +11,8 @@ Firefly Services の Generate Images API (v3) を OAuth Server-to-Server
     python -m src.adobe.generate --num 57 --form corefolder --count 1
 
 保存先:
-    {OUTPUT_BASE_DIR}/{YYYYMMDD}/{YYYYMMDD_HH}/{ts}_adobe_{form}_num{NNN}/
+    {OUTPUT_BASE_DIR}/{YYYYMMDD}/{ts}_adobe_{form}_num{NNN}/
+    (out_dir 明示時 = パイプライン各ステージ配下では日付フォルダを作らずフラットに配置)
 
 必要な環境変数 (.env):
     FIREFLY_CLIENT_ID      — Adobe Developer Console の Client ID (x-api-key)
@@ -193,8 +194,10 @@ def generate_image_firefly(
             parse_revisions(revisions) if isinstance(revisions, str) else list(revisions or [])
         )
 
+    # out_dir 明示時 (パイプラインの各ステージ配下) は日付フォルダを作らずフラットに置く。
     output_dir = build_run_output_dir(
-        provider="adobe", num=num, form=form, base_dir=out_dir, suffix=iter_label
+        provider="adobe", num=num, form=form, base_dir=out_dir, suffix=iter_label,
+        date_group=out_dir is None,
     )
     print(f"[INFO] 出力先: {output_dir}")
 

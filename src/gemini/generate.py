@@ -11,7 +11,7 @@ Copyright © RadianN_kswg — CC BY-NC 4.0
 
 必要な環境変数 (.env):
     GEMINI_API_KEY       — Google AI Studio の API キー
-    IMAGEN_MODEL         — 使用モデル (デフォルト: imagen-3.0-generate-002)
+    IMAGEN_MODEL         — 使用モデル (デフォルト: imagen-4.0-generate-001)
     GEMINI_IMAGE_SLEEP   — 複数枚生成時の待機秒 (デフォルト: 6)
     OUTPUT_BASE_DIR      — 出力ベースディレクトリ (デフォルト: output)
 """
@@ -25,6 +25,8 @@ import sys
 import time
 from pathlib import Path
 from typing import Any
+
+import requests
 
 from dotenv import load_dotenv
 
@@ -51,9 +53,10 @@ from src.utils import (  # noqa: E402
 
 
 # Imagen フォールバックモデルチェーン (先頭から順に試す)
+# 注: Gemini API では imagen-3.0-* は廃止済み。現行は imagen-4.0-* のみ利用可。
 _IMAGEN_FALLBACK_MODELS = [
-    "imagen-3.0-generate-002",
-    "imagen-3.0-fast-generate-001",
+    "imagen-4.0-generate-001",
+    "imagen-4.0-fast-generate-001",
 ]
 
 
@@ -155,9 +158,22 @@ def _build_reference_parts(
             return parts
 
     for url in ref_urls:
-        parts.append(
-            types_module.Part.from_uri(file_uri=url, mime_type=_guess_mime_type(url))
-        )
+        # Gemini API (非 Vertex) では Part.from_uri(file_uri=任意の公開URL) は
+        # サーバー側フェッチに失敗し 400 INVALID_ARGUMENT になる。
+        # ここで実バイトを取得して from_bytes で渡す。取得失敗した URL はスキップ。
+        try:
+            resp = requests.get(url, timeout=20)
+            resp.raise_for_status()
+            data = resp.content
+            if not data:
+                raise ValueError("空レスポンス")
+            mime = resp.headers.get("Content-Type") or _guess_mime_type(url)
+            if not str(mime).startswith("image/"):
+                mime = _guess_mime_type(url)
+            parts.append(types_module.Part.from_bytes(data=data, mime_type=mime))
+        except Exception as err:  # noqa: BLE001
+            print(f"[WARN] 参照URL取得失敗のためスキップ: {url} ({err})")
+            continue
         if len(parts) >= limit:
             break
 
@@ -219,9 +235,10 @@ def generate_image(
     form:     形態 ("corefolder" または "humanoid")
     work_key: 作品キー
     out_dir:  出力ベースディレクトリ (None の場合は環境変数
-              ``OUTPUT_BASE_DIR`` → ``OUTPUT_DIR`` → ``output`` を使用)。
-              実際の保存先はその配下に
-              ``{YYYYMMDD_HHMMSS}_gemini_{form}_num{NNN}/`` を切る。
+              ``OUTPUT_BASE_DIR`` → ``OUTPUT_DIR`` → ``output`` を使用し、
+              ``{YYYYMMDD}/{YYYYMMDD_HHMMSS}_gemini_{form}_num{NNN}/`` を切る)。
+              out_dir を明示した場合 (パイプラインの各ステージ配下) は日付フォルダを
+              作らず ``{out_dir}/{YYYYMMDD_HHMMSS}_gemini_{form}_num{NNN}/`` をフラットに切る。
     count:    生成枚数 (1–4)
 
     Returns
@@ -241,7 +258,7 @@ def generate_image(
     if not api_key:
         sys.exit("[ERROR] GEMINI_API_KEY が設定されていません。.env を確認してください。")
 
-    model = os.environ.get("IMAGEN_MODEL", "imagen-3.0-generate-002")
+    model = os.environ.get("IMAGEN_MODEL", "imagen-4.0-generate-001")
     _inter_image_sleep = float(os.environ.get("GEMINI_IMAGE_SLEEP", "6"))
     reference_model = os.environ.get("GEMINI_REFERENCE_MODEL", "models/gemini-3.1-flash-image")
 
@@ -265,12 +282,14 @@ def generate_image(
             f" -> 次ラベル: {iter_label} / 修正指示 {len(revision_items)} 件"
         )
 
+    # out_dir 明示時 (パイプラインの各ステージ配下) は日付フォルダを作らずフラットに置く。
     output_dir = build_run_output_dir(
         provider="gemini",
         num=num,
         form=form,
         base_dir=out_dir,
         suffix=iter_label,
+        date_group=out_dir is None,
     )
     print(f"[INFO] 出力先: {output_dir}")
 

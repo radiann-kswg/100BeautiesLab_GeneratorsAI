@@ -78,7 +78,7 @@ Claude が Canva MCP でデザイン化 → サイズ展開 → PNG 書き出し
 
 ### 手順 4: 成果物をリポジトリに保存する
 
-書き出した画像は `output/{YYYYMMDD}/{YYYYMMDD_HH}/...` 配下に保存し、
+書き出した画像は `output/{YYYYMMDD}/...` 配下に保存し、
 各 run の `prompt.txt` / `run_meta.json` / `notes.md` を残してください
 (上書き禁止・追記マージのみ)。MCP 経由でも同じレイアウトに揃えると後から比較しやすいです。
 

@@ -118,10 +118,10 @@ python -m src.openai.generate --num 57 --form corefolder --mode dalle `
 ### 出力先
 
 ```text
-output/{YYYYMMDD}/{YYYYMMDD_HH}/{ts}_{provider}_{form}_num{NNN}_iter{N}/
+output/{YYYYMMDD}/{ts}_{provider}_{form}_num{NNN}_iter{N}/
 ```
 
-- 例: `output/20260609/20260609_16/20260609_161200_gemini_corefolder_num057_iter1/`
+- 例: `output/20260616/20260616_161200_gemini_corefolder_num057_iter1/`
 
 通常 run と同じく `prompt.txt` / `run_meta.json` / `notes.md` + 生成画像が保存される。
 

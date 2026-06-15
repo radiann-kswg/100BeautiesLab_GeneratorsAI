@@ -1,31 +1,33 @@
 """
-src/tools/migrate_output_layout.py — output/ 配下を `{作業日}/{バッチHH}/{実行}/` 階層へ統一するマイグレーションツール
+src/tools/migrate_output_layout.py — output/ 配下を `{作業日}/{実行}/` 2 階層へ統一するマイグレーションツール
 Copyright © RadianN_kswg — CC BY-NC 4.0
 
-目標レイアウト:
+目標レイアウト (現行: 日付フォルダ + 1 実行フォルダの 2 階層):
 
     output/
       {YYYYMMDD}/                              ← 作業日
-        {YYYYMMDD_HH}/                         ← その時間帯の一括バッチ
-          {YYYYMMDD_HHMMSS}_{provider}_{form}_num{NNN}/  ← 1 実行
+        {YYYYMMDD_HHMMSS}_{provider}_{form}_num{NNN}/  ← 1 実行 = 1 フォルダ
             prompt.txt
             run_meta.json
             notes.md
             *.png / *.jpg ...
 
+> 旧レイアウトの時間帯フォルダ `{YYYYMMDD_HH}/` は廃止済み。本ツールは旧 3 階層
+> (`{date}/{date}_{HH}/{run}/`) を含む各種フォーマットを 2 階層へ寄せる。
+
 既存レイアウトの対応パターン:
 
-    1. `output/{date}/{date}_{HH}/{ts}_{provider}_{form}_num{NNN}/` (理想形)
+    1. `output/{date}/{ts}_{provider}_{form}_num{NNN}/` (現行 2 階層・理想形)
         → 何もしない (skip)
-    2. `output/{date}/{ts}_{provider}_{form}_num{NNN}/` (HH 階層なし)
-        → `{date}_{HH}/` を挟む形で移動
-    3. `output/{ts}_{provider}_{form}_num{NNN}/` (date/HH 階層なし)
-        → `output/{date}/{date}_{HH}/` 配下へ移動
+    2. `output/{date}/{date}_{HH}/{ts}_{provider}_{form}_num{NNN}/` (旧 3 階層)
+        → `{date}/{run}/` へ引き上げ、空になった `{date}_{HH}/` は削除
+    3. `output/{ts}_{provider}_{form}_num{NNN}/` (date 階層なし)
+        → `output/{date}/{run}/` 配下へ移動
     4. `output/{date}/{date}_{HH}/{date}_{HH}_{provider}/{file}` (バッチ一括ファイル散在)
         → ファイル名から (form, num) を推測し、
-           `{date}_{HH}0000_{provider}_{form}_num{NNN}/{file}` に集約
+           `{date}/{date}_{HH}0000_{provider}_{form}_num{NNN}/{file}` に集約
     5. `output/{date}/{provider}/{file}` (日時情報なし旧フォーマット)
-        → `{date}_00/{date}_000000_{provider}_{form}_num{NNN}/{file}` に集約
+        → `{date}/{date}_000000_{provider}_{form}_num{NNN}/{file}` に集約
 
 使い方:
 
@@ -145,8 +147,7 @@ def _plan_run_dir_relocation(
         plan.warnings.append(f"run dir 解析失敗: {run_dir}")
         return
     date = info["date"]
-    hh = info["hh"]
-    target = base / date / f"{date}_{hh}" / run_dir.name
+    target = base / date / run_dir.name
     try:
         if run_dir.resolve() == target.resolve():
             plan.skipped.append((run_dir, "already in canonical location"))
@@ -186,7 +187,7 @@ def _plan_batch_provider_dir(
         key = (meta["num"], meta["form"])
         file_groups.setdefault(key, []).append(child)
 
-    parent_batch = base / date / f"{date}_{hh}"
+    parent_batch = base / date
     # 各 (num, form) ペアにつき 1 実行フォルダを切る
     # タイムスタンプは {date}_{hh}0000 を使い、競合時は秒を +1 する
     seconds_counter = 0
@@ -249,7 +250,7 @@ def _plan_dateless_provider_dir(
         key = (meta["num"], meta["form"])
         file_groups.setdefault(key, []).append(child)
 
-    parent_batch = base / date / f"{date}_00"
+    parent_batch = base / date
     seconds_counter = 0
     for (num, form), files in sorted(file_groups.items()):
         ts = f"{date}_0000{seconds_counter:02d}"
@@ -335,6 +336,15 @@ def build_plan(base: Path) -> MigrationPlan:
                             )
                             continue
                         plan.warnings.append(f"{date}_{m_hh.group(2)}/ 配下の分類不能ディレクトリ: {run_or_batch}")
+                    # 配下を引き上げたあと、空になった旧 {date}_{HH}/ フォルダを削除する
+                    plan.actions.append(
+                        MoveAction(
+                            src=sub,
+                            dst=sub,
+                            kind="cleanup_empty_dir",
+                            note="旧 {date}_{HH}/ 中間フォルダを移動後に削除",
+                        )
+                    )
                     continue
                 # `{date}/{ts}_{provider}_{form}_numNNN/` 形式 (HH 階層なし)
                 if _parse_run_dir(sub_name):
@@ -439,7 +449,7 @@ def render_plan(plan: MigrationPlan) -> str:
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m src.tools.migrate_output_layout",
-        description="output/ 配下を {作業日}/{バッチHH}/{実行}/ レイアウトへ統一するマイグレーションツール",
+        description="output/ 配下を {作業日}/{実行}/ の 2 階層レイアウトへ統一するマイグレーションツール",
     )
     parser.add_argument(
         "--base",

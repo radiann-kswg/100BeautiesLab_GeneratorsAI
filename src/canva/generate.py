@@ -15,7 +15,8 @@ Copyright © RadianN_kswg — CC BY-NC 4.0
         --from-image output/.../num057_corefolder_01.png
 
 保存先:
-    {OUTPUT_BASE_DIR}/{YYYYMMDD}/{YYYYMMDD_HH}/{ts}_canva_{form}_num{NNN}/
+    {OUTPUT_BASE_DIR}/{YYYYMMDD}/{ts}_canva_{form}_num{NNN}/
+    (out_dir 明示時 = パイプライン各ステージ配下では日付フォルダを作らずフラットに配置)
 
 必要な環境変数 (.env):
     CANVA_ACCESS_TOKEN   — Canva Connect の user OAuth アクセストークン
@@ -179,8 +180,10 @@ def export_via_canva(
     if not dry_run and not token:
         sys.exit("[ERROR] CANVA_ACCESS_TOKEN が設定されていません。.env を確認してください。")
 
+    # out_dir 明示時 (パイプラインの各ステージ配下) は日付フォルダを作らずフラットに置く。
     output_dir = build_run_output_dir(
-        provider="canva", num=num, form=form, base_dir=out_dir
+        provider="canva", num=num, form=form, base_dir=out_dir,
+        date_group=out_dir is None,
     )
     print(f"[INFO] 出力先: {output_dir}")
 

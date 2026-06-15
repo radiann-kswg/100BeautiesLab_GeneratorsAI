@@ -7,26 +7,29 @@
 
 ---
 
-## 1. 物理レイアウト (3 階層)
+## 1. 物理レイアウト (2 階層 = 日付フォルダ + 1 実行フォルダ)
 
 ```text
 output/
-└── {YYYYMMDD}/                            # 作業日 (例: 20260609)
-    └── {YYYYMMDD_HH}/                     # バッチ時刻 (例: 20260609_14)
-        └── {YYYYMMDD_HHMMSS}_{provider}_{form}_num{NNN}[_suffix]/
-            ├── num057_corefolder_01.png   # 生成画像
-            ├── prompt.txt                 # 渡したプロンプト本文
-            ├── run_meta.json              # 構造化メタ
-            └── notes.md                   # 手書きレビュー
+└── {YYYYMMDD}/                            # 作業日 (例: 20260616)
+    └── {YYYYMMDD_HHMMSS}_{provider}_{form}_num{NNN}[_suffix]/   # 1 実行 = 1 フォルダ
+        ├── num057_corefolder_01.png       # 生成画像
+        ├── prompt.txt                     # 渡したプロンプト本文
+        ├── run_meta.json                  # 構造化メタ
+        └── notes.md                       # 手書きレビュー
 ```
+
+> **旧 3 階層 (`{YYYYMMDD}/{YYYYMMDD_HH}/{run}/`) からの変更点**: 「1 回の実行ごとに
+> フォルダを分けて見やすく」という方針に合わせ、時間帯フォルダ `{YYYYMMDD_HH}/` を
+> 廃止し **日付フォルダ + 実行フォルダの 2 階層** にした。パイプライン各ステージ配下の
+> 子生成は日付フォルダ自体を作らずフラットに置く (§6 参照)。
 
 ### 命名要素
 
 | 要素             | 例                          | 備考                                                               |
 | ---------------- | --------------------------- | ------------------------------------------------------------------ |
-| `{YYYYMMDD}`     | `20260609`                  | 作業日                                                             |
-| `{YYYYMMDD_HH}`  | `20260609_14`               | 実行時間帯 (バッチをまとめやすい粒度)                              |
-| `{ts}`           | `20260609_140532`           | 個別実行のタイムスタンプ                                           |
+| `{YYYYMMDD}`     | `20260616`                  | 作業日 (この日の実行をすべて束ねる)                               |
+| `{ts}`           | `20260616_140532`           | 個別実行のタイムスタンプ (= 実行フォルダ名の先頭)                 |
 | `{provider}`     | `gemini` / `openai`         | 使用プロバイダ                                                     |
 | `{form}`         | `corefolder` / `humanoid`   | 形態                                                               |
 | `{NNN}`          | `057`                       | キャラクター番号 (3 桁ゼロパディング)                              |
@@ -41,7 +44,8 @@ output/
 | 3        | env `OUTPUT_DIR`      | 互換のため残してある旧名            |
 | 4        | デフォルト            | `output`                            |
 
-> いずれを指定しても **配下に 3 階層サブフォルダを必ず切る** ため、過去 run を上書きする事故は起きない。
+> 標準 (`--out` 省略時) は **配下に `{YYYYMMDD}/{run}/` の 2 階層を切る** ため、過去 run を上書きする事故は起きない。
+> `--out <dir>` を明示した単体生成では、その dir 直下に run フォルダを直に置く (日付フォルダは作らない)。
 
 ### 実装
 
@@ -68,7 +72,7 @@ output/
 ```json
 {
   "provider": "gemini",
-  "model": "imagen-3.0-generate-001",
+  "model": "imagen-4.0-generate-001",
   "reference_model": "models/gemini-3.1-flash-image",
   "use_reference_input": true,
   "num": 57,
@@ -178,18 +182,19 @@ Get-ChildItem -Recurse -Filter prompt.txt output | Where-Object { $_.Directory.N
 
 ## 6. パイプライン固有のディレクトリ構造
 
-`src.pipeline.image_pipeline` を使って生成した場合は、通常の3階層の下に
-さらにパイプライン専用のサブディレクトリが作られる。
+`src.pipeline.image_pipeline` を使って生成した場合は、日付フォルダ直下の
+パイプライン実行フォルダ (1 実行 = 1 フォルダ) の中に各ステージのサブディレクトリが作られる。
+各ステージ配下の子生成 (Gemini/Canva) は **日付フォルダを作らずフラットに** 置かれる。
 
 ### 単体キャラクター (`--num`)
 
 ```text
-output/{YYYYMMDD}/{YYYYMMDD_HH}/{ts}_pipeline_{form}_num{NNN}/
+output/{YYYYMMDD}/{ts}_pipeline_{form}_num{NNN}/      # ← 1 実行 = 1 フォルダ
 ├── stage1_prompt/
 │   ├── prompt_openai.txt
 │   └── prompt_gemini.txt
-├── stage3_rough/          # ラフ5案 (Gemini)
-│   └── {ts}_gemini_{form}_num{NNN}/
+├── stage3_rough/          # ラフ5案 (Gemini) + Adobe 構図ガイド
+│   └── {ts}_gemini_{form}_num{NNN}/      # 子生成はフラット 1 段
 │       ├── num{NNN}_{form}_01.jpg
 │       └── ...
 ├── stage4_correct/        # 違反修正 (i2i, キャラ別)
@@ -205,7 +210,7 @@ output/{YYYYMMDD}/{YYYYMMDD_HH}/{ts}_pipeline_{form}_num{NNN}/
 ### 合同キャラクター (`--nums`)
 
 ```text
-output/{YYYYMMDD}/{YYYYMMDD_HH}/{ts}_pipeline_{form}_nums{AAA}_{BBB}/
+output/{YYYYMMDD}/{ts}_pipeline_{form}_nums{AAA}_{BBB}/
 ├── stage1_prompt/
 │   ├── char_{AAA}/
 │   │   ├── prompt_openai.txt

@@ -52,8 +52,10 @@ python -m src.tools.check_image_mime --fix-rename --dry-run
 
 ## 2. output レイアウト移行 (`migrate_output_layout`)
 
-旧レイアウト (`output/{ts}_..._num.../` などの平置き、`output/{date}/{provider}/...` のような変則) を、
-現行 3 階層 (`output/{YYYYMMDD}/{YYYYMMDD_HH}/{ts}_{provider}_{form}_num{NNN}/`) に寄せるためのワンショットツール。
+旧レイアウト (`output/{ts}_..._num.../` の平置き、`output/{date}/{date}_{HH}/{run}/` の旧 3 階層、
+`output/{date}/{provider}/...` のような変則) を、現行 2 階層
+(`output/{YYYYMMDD}/{ts}_{provider}_{form}_num{NNN}/`) に寄せるためのワンショットツール。
+旧 3 階層の時間帯フォルダ `{YYYYMMDD_HH}/` は引き上げ後に空削除される。
 
 ### コマンド
 

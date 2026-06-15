@@ -65,7 +65,7 @@ python -m src.pipeline.image_pipeline --num 57 --form corefolder --skip-canva
 
 **出力構成 (単体キャラ `--num`):**
 ```
-{OUTPUT_BASE_DIR}/{YYYYMMDD}/{YYYYMMDD_HH}/{ts}_pipeline_{form}_num{NNN}/
+{OUTPUT_BASE_DIR}/{YYYYMMDD}/{ts}_pipeline_{form}_num{NNN}/      # 1 実行 = 1 フォルダ
   stage1_prompt/     — 生成済みプロンプト (openai/gemini/base テキスト) + stage1_meta.json
   stage2_db/         — DB サマリー + キャラクタースペック (violation_features 等)
   stage3_rough/      — Gemini Imagen ラフ 5 案
@@ -78,7 +78,7 @@ python -m src.pipeline.image_pipeline --num 57 --form corefolder --skip-canva
 
 **出力構成 (合同キャラ `--nums`):**
 ```
-{OUTPUT_BASE_DIR}/{YYYYMMDD}/{YYYYMMDD_HH}/{ts}_pipeline_{form}_nums{AAA}_{BBB}/
+{OUTPUT_BASE_DIR}/{YYYYMMDD}/{ts}_pipeline_{form}_nums{AAA}_{BBB}/
   stage1_prompt/char_{AAA}/   — キャラ別生成プロンプト
   stage1_prompt/char_{BBB}/
   char_{AAA}/
@@ -205,9 +205,10 @@ python -m src.gemini.generate --num 57 --form corefolder [オプション]
 ### 動作モード
 
 1. **参照画像あり** (`ai_hints.*.reference_images` または DB レコード `images` が解決できる場合)
-   → `gemini-3.1-flash-image` モデルで `generate_content` + `Part.from_bytes / from_uri` を使う i2i 風生成。
+   → `gemini-3.1-flash-image` モデルで `generate_content` + `Part.from_bytes` を使う i2i 風生成。
+     参照 URL は実バイトを DL してから添付する (Gemini サーバーが任意 URL を直接 fetch できないため)。
 2. **参照画像なし**
-   → `imagen-3.0-generate-001` (env で上書き可) の `generate_images` を使う純テキスト→画像生成。
+   → `imagen-4.0-generate-001` (env で上書き可。imagen-3.0 系は廃止) の `generate_images` を使う純テキスト→画像生成。
 
 参照モデルは `GEMINI_REFERENCE_MODEL` (env) で上書き可能。
 
@@ -388,7 +389,7 @@ python -m src.batch_generate --nums 15,22,49,57 --forms both --provider both --s
 
 ### 出力
 
-実行ごとに通常通り `output/{YYYYMMDD}/{YYYYMMDD_HH}/{ts}_{provider}_{form}_num{NNN}/` が切られる。
+実行ごとに通常通り `output/{YYYYMMDD}/{ts}_{provider}_{form}_num{NNN}/` が切られる。
 バッチ自体に専用のサマリ JSON は出ないが、最後にコンソールへ `BATCH SUMMARY` (total / ok / skipped / failed の件数) が表示される。
 
 ---

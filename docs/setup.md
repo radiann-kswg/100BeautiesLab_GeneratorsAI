@@ -117,7 +117,7 @@ OPENAI_API_KEY=your_openai_api_key_here
 
 # --- 任意 (デフォルト値) ---
 # Gemini / Imagen
-IMAGEN_MODEL=imagen-3.0-generate-001
+IMAGEN_MODEL=imagen-4.0-generate-001   # imagen-3.0-* は廃止。現行は imagen-4.0-* のみ
 GEMINI_REFERENCE_MODEL=models/gemini-3.1-flash-image
 
 # OpenAI
@@ -179,7 +179,7 @@ python -m src.batch_generate --nums 57 --forms both --provider both --dry-run
 python -m src.gemini.generate --num 57 --form corefolder --count 1
 ```
 
-実行後、`output/{YYYYMMDD}/{YYYYMMDD_HH}/{ts}_gemini_corefolder_num057/` に
+実行後、`output/{YYYYMMDD}/{ts}_gemini_corefolder_num057/` に
 `prompt.txt` / `run_meta.json` / `notes.md` + 生成画像が出ていれば成功。
 
 ---

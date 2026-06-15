@@ -132,12 +132,14 @@ def generate_image_dalle(
             f" -> 次ラベル: {iter_label} / 修正指示 {len(revision_items)} 件"
         )
 
+    # out_dir 明示時 (パイプラインの各ステージ配下) は日付フォルダを作らずフラットに置く。
     output_dir = build_run_output_dir(
         provider="openai",
         num=num,
         form=form,
         base_dir=out_dir,
         suffix=iter_label,
+        date_group=out_dir is None,
     )
     print(f"[INFO] 出力先: {output_dir}")
 
@@ -358,6 +360,7 @@ def assist_prompt_gpt(
         form=form,
         base_dir=out_dir,
         suffix="prompt-assist",
+        date_group=out_dir is None,
     )
     print(f"[INFO] prompt-assist 出力先: {output_dir}")
 
