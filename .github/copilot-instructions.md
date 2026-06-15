@@ -48,13 +48,19 @@ pip install -r requirements.txt
 
 # ── マルチ LLM パイプライン (推奨) ────────────────────────────────
 # 5 ステージ: Stage1 プロンプト生成(シーン自動生成) → Stage2 DB取得
-#             → Stage3 ラフ5案 → Stage4 違反修正 → Stage5 Canva仕上げ3枚固定
+#             → Stage3 ラフ生成 → Stage4 違反修正(キャラ別) → Stage5 合成3枚固定
 python -m src.pipeline.image_pipeline --num 57 --form corefolder
 python -m src.pipeline.image_pipeline --num 57 --form corefolder \
     --scene "図書館で本を読んでいるシーン" --skip-canva
-python -m src.pipeline.image_pipeline --nums 25,57 --form corefolder
+# 合同キャラ: Stage 3-4 をキャラ別に実行 → Stage 5 で全員を 1 枚に合成
+python -m src.pipeline.image_pipeline --nums 25,57 --form corefolder \
+    --scene "自信に満ちた表情で並んでいるシーン"
 python -m src.pipeline.image_pipeline \
     --natural "コアフォルダ姿の25(フィズ)がチョコレートを咥えている絵"
+# i2i 改稿: --iterate-from で前回 run を起点に Stage 3〜5 を改稿モードで実行
+python -m src.pipeline.image_pipeline --num 57 --form corefolder --skip-canva \
+    --iterate-from "output/20260609/20260609_15/20260609_150049_gemini_corefolder_num057" \
+    --revisions "尻尾は元のまま; 表情だけ笑顔にして"
 
 # テキスト生成パイプライン (GPT-4o 生成 → Gemini クロスレビュー)
 python -m src.pipeline.text_pipeline --num 57 --mode scene \

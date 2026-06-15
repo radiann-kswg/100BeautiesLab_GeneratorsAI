@@ -176,7 +176,71 @@ Get-ChildItem -Recurse -Filter prompt.txt output | Where-Object { $_.Directory.N
 
 ---
 
-## 6. 関連規約
+## 6. パイプライン固有のディレクトリ構造
+
+`src.pipeline.image_pipeline` を使って生成した場合は、通常の3階層の下に
+さらにパイプライン専用のサブディレクトリが作られる。
+
+### 単体キャラクター (`--num`)
+
+```text
+output/{YYYYMMDD}/{YYYYMMDD_HH}/{ts}_pipeline_{form}_num{NNN}/
+├── stage1_prompt/
+│   ├── prompt_openai.txt
+│   └── prompt_gemini.txt
+├── stage3_rough/          # ラフ5案 (Gemini)
+│   └── {ts}_gemini_{form}_num{NNN}/
+│       ├── num{NNN}_{form}_01.jpg
+│       └── ...
+├── stage4_correct/        # 違反修正 (i2i, キャラ別)
+│   ├── rough_01_corrected/
+│   │   └── {ts}_gemini_{form}_num{NNN}_iter1/
+│   └── ...
+├── stage5_final/
+│   ├── synth/             # Gemini 合成 3 枚
+│   └── canva/             # Canva 仕上げ (--skip-canva 省略時)
+└── pipeline_summary.json  # 全 Stage の結果パスとメタ
+```
+
+### 合同キャラクター (`--nums`)
+
+```text
+output/{YYYYMMDD}/{YYYYMMDD_HH}/{ts}_pipeline_{form}_nums{AAA}_{BBB}/
+├── stage1_prompt/
+│   ├── char_{AAA}/
+│   │   ├── prompt_openai.txt
+│   │   └── prompt_gemini.txt
+│   └── char_{BBB}/
+│       └── ...
+├── char_{AAA}/
+│   ├── stage3_rough/      # ラフ3枚/キャラ (Gemini)
+│   └── stage4_correct/    # 違反修正 (i2i, キャラ別)
+├── char_{BBB}/
+│   ├── stage3_rough/
+│   └── stage4_correct/
+├── stage5_final/
+│   ├── synth/             # 全キャラ画像を参照して合成 3 枚
+│   └── canva/
+└── pipeline_summary.json
+```
+
+### `pipeline_summary.json` の主要フィールド
+
+| フィールド         | 説明                                                                                        |
+| ------------------ | ------------------------------------------------------------------------------------------- |
+| `nums`             | 対象キャラ番号リスト                                                                        |
+| `form`             | 形態 (`corefolder` / `humanoid`)                                                            |
+| `stage3_paths`     | Stage 3 生成パス。単体は配列、合同は `char_{NNN}` キーごとの dict + `"all"` キー            |
+| `stage4_paths`     | Stage 4 補正パス。合同は `char_{NNN}` キーと `"best_per_char"` (Stage 5 参照用) を含む      |
+| `stage5_paths`     | `synth` / `canva` / `all` の3キー                                                           |
+| `stage1_prompts`   | シーン / キャラ名 / `iterate_from` + `revisions` (i2i 時)                                   |
+| `status`           | `"ok"` / `"failed"` / `"partial"`                                                           |
+| `errors`           | 各 Stage のエラー要旨                                                                        |
+| `elapsed_seconds`  | パイプライン全体の所要秒数                                                                  |
+
+---
+
+## 7. 関連規約
 
 - **絶対に上書きしない**: 既存 run の `prompt.txt` / `run_meta.json` / `notes.md` は失敗時でも残す。新しい試行は必ず新フォルダ。
 - **MIME 整合性**: Gemini が JPEG を返しているのに `.png` で保存されると後段の Anthropic API などに弾かれる。

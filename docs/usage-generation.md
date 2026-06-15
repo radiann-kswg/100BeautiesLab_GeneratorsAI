@@ -19,9 +19,9 @@ MCP (Adobe / Canva) との連携は [`usage-mcp-canva-adobe.md`](usage-mcp-canva
 |---|---|---|
 | Stage 1 | コマンド解析 + ベースプロンプト生成 (シーン未指定時はキャラクターに合ったシーンを自動生成) | OpenAI GPT-4o + Gemini Flash |
 | Stage 2 | キャラクター選定 + 創作 DB から原典画像・特徴を取得 | manifest.jsonl + 参照画像索引 |
-| Stage 3 | ラフ **5 案**生成 | Adobe 非 Firefly (構図ガイド) + Gemini Imagen |
-| Stage 4 | 違反特徴の除去 + 構図修正 (単体生成のみ) | OpenAI Vision (違反分析) + Gemini i2i (修正適用) |
-| Stage 5 | 全ラフを俯瞰して **合成 3 枚**生成 → Canva 仕上げ | Gemini (マルチ参照合成) + Canva Connect API |
+| Stage 3 | ラフ生成 (単体: **5 案** / 合同: キャラ別 **3 枚×N 人**) | Adobe 非 Firefly (構図ガイド) + Gemini Imagen |
+| Stage 4 | 違反特徴の除去 + 構図修正 (単体・合同ともキャラ別に実行) | OpenAI Vision (違反分析) + Gemini i2i (修正適用) |
+| Stage 5 | 完成画像 **3 枚**生成 → Canva 仕上げ | Gemini (マルチ参照合成) + Canva Connect API |
 
 ```bash
 # 基本実行（キャラクター番号直接指定・シーンは自動生成）
@@ -39,8 +39,8 @@ python -m src.pipeline.image_pipeline \
 python -m src.pipeline.image_pipeline --story "_ideas/my_scene.txt"
 
 # ★ 複数キャラクターを 1 枚に合同生成 (マルチキャラクターシーン)
-# --nums に 2 件以上指定すると全員を 1 枚の画像に収めた合同パイプラインが走る。
-# Stage 4 違反修正はスキップし、Stage 5 で全ラフを俯瞰して 3 枚合成する。
+# --nums に 2 件以上指定すると合同パイプラインが走る。
+# Stage 3-4 をキャラ別に実行し、Stage 5 で全員を 1 枚に合成する。
 python -m src.pipeline.image_pipeline --nums 25,52 --form corefolder \
     --scene "研究所のラボで並んでいるシーン" --skip-canva
 
@@ -63,18 +63,37 @@ python -m src.pipeline.image_pipeline --num 57 --form corefolder --skip-canva
 | `--revisions TEXT` | None | 修正指示（`; `/改行区切り）。`--iterate-from` と組み合わせて使用 |
 | `--prefer-gemini-parse` | false | `--natural` / `--story` のパース時に Gemini を OpenAI より優先 |
 
-**出力構成:**
+**出力構成 (単体キャラ `--num`):**
 ```
 {OUTPUT_BASE_DIR}/{YYYYMMDD}/{YYYYMMDD_HH}/{ts}_pipeline_{form}_num{NNN}/
   stage1_prompt/     — 生成済みプロンプト (openai/gemini/base テキスト) + stage1_meta.json
   stage2_db/         — DB サマリー + キャラクタースペック (violation_features 等)
-  stage3_rough/      — Adobe 構図ガイド画像 + Gemini Imagen ラフ 5 案
+  stage3_rough/      — Gemini Imagen ラフ 5 案
                        └── regen/  — Stage 3 差し戻し再生成分 (--correction-mode stage3 時のみ)
   stage4_correct/    — 違反分析ログ (analysis_log.json) + 修正済み画像
   stage5_final/      — Canva 仕上げ完成画像 3 枚
                        └── synth/  — Gemini マルチ参照合成の中間出力 (Canva 前)
   pipeline_summary.json
 ```
+
+**出力構成 (合同キャラ `--nums`):**
+```
+{OUTPUT_BASE_DIR}/{YYYYMMDD}/{YYYYMMDD_HH}/{ts}_pipeline_{form}_nums{AAA}_{BBB}/
+  stage1_prompt/char_{AAA}/   — キャラ別生成プロンプト
+  stage1_prompt/char_{BBB}/
+  char_{AAA}/
+    stage3_rough/             — ラフ 3 枚/キャラ
+    stage4_correct/           — 違反修正済み画像 (キャラ別)
+  char_{BBB}/
+    stage3_rough/
+    stage4_correct/
+  stage5_final/
+    synth/                    — 全キャラ画像を参照して 1 枚に合成 (3 案)
+    canva/
+  pipeline_summary.json
+```
+
+詳細な構造説明は [`output-and-logs.md`](output-and-logs.md) のセクション 6 を参照。
 
 #### 自然文パーサー単体実行
 

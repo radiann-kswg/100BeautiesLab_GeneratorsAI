@@ -46,6 +46,19 @@ python -m src.gemini.generate --num 57 --form corefolder `
   --iterate-from "output/20260609/20260609_15/20260609_150049_gemini_corefolder_num057" `
   --revisions "尻尾は元のまま; 表情だけ笑顔にして"
 
+# マルチ LLM パイプライン (Stage 1〜5 を一括実行、単体キャラ)
+python -m src.pipeline.image_pipeline --num 57 --form corefolder
+python -m src.pipeline.image_pipeline --num 57 --form corefolder --skip-canva `
+  --scene "図書館で本を読んでいるシーン"
+
+# マルチ LLM パイプライン (合同キャラ: Stage 3-4 をキャラ別に実行し Stage 5 で合成)
+python -m src.pipeline.image_pipeline --nums 25,57 --form corefolder
+
+# パイプライン i2i (前回 run を起点に Stage 3〜5 を改稿モードで実行)
+python -m src.pipeline.image_pipeline --num 57 --form corefolder --skip-canva `
+  --iterate-from "output/20260609/20260609_15/20260609_150049_gemini_corefolder_num057" `
+  --revisions "尻尾は元のまま; 表情だけ笑顔にして"
+
 # 複数キャラ/形態/プロバイダのバッチ実行 (本実行前は必ず --dry-run)
 python -m src.batch_generate --nums 15,22,49,57 --forms both --provider both --dry-run
 python -m src.batch_generate --nums 15,22,49,57 --forms both --provider both
