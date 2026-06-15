@@ -75,7 +75,6 @@ python -m src.pipeline.text_pipeline --num 57 --mode caption \
     --prompt "夕暮れの研究所テラスで一人たたずむシーン"
 
 # ── 単体プロバイダ生成 ─────────────────────────────────────────────
-# 画像生成
 python -m src.gemini.generate --num 57 --form corefolder
 python -m src.openai.generate --num 57 --form corefolder
 python -m src.openai.generate --num 57 --mode prompt-assist --scene "図書館で本を読んでいるシーン"
@@ -96,14 +95,65 @@ npm test
 
 ## 実務ルール
 
-- プロンプト提案時は [_creations-ai/ai-dataset/manifest-training.jsonl](_creations-ai/ai-dataset/manifest-training.jsonl) を優先し、`ai_training.allowed` 前提を守ること。
+- プロンプト提案時は [_creations-ai/ai-dataset/manifest.jsonl](_creations-ai/ai-dataset/manifest.jsonl) を使用し、`has_ai_hints=True` のレコードのみを対象とすること。
 - API キーやシークレットはコードに埋め込まず、`.env` を利用すること。
 - 新規の提案テキストや作業メモは [_ideas/](_ideas/) に集約すること。
-- 生成画像の保存先は `output/{YYYYMMDD}/{YYYYMMDD_HH}/{ts}_{provider}_{form}_num{NNN}[_suffix]/` の3階層レイアウトとし、実行ごとにフォルダを分けて過去結果を上書きしないこと。
+- 仕様が曖昧な場合は推測実装より先に関連ドキュメントへのリンクを示して確認すること。
+
+---
+
+## 出力パス規則
+
+- 生成画像の保存先は `output/{YYYYMMDD}/{YYYYMMDD_HH}/{ts}_{provider}_{form}_num{NNN}[_suffix]/` の3階層レイアウト。
   - ベースディレクトリ: `OUTPUT_BASE_DIR` (互換: `OUTPUT_DIR`) または CLI の `--out`
   - フォルダ生成ロジック: [src/utils/paths.py](src/utils/paths.py) の `build_run_output_dir()`
 - 各実行ディレクトリには `prompt.txt` / `run_meta.json` / `notes.md` を必ず残すこと（上書き禁止、追記マージのみ）。
   - 実装: [src/utils/run_log.py](src/utils/run_log.py) の `initialize_run_logs()` / `finalize_run_logs()`
+- 過去フォーマットを現行レイアウトへ移行するワンショットツール:
+  ```bash
+  python -m src.tools.migrate_output_layout --dry-run
+  python -m src.tools.migrate_output_layout
+  ```
+
+---
+
+## 画像 MIME チェック
+
+Anthropic 等の API は宣言 MIME と実体バイト列の不一致で `invalid_request_error (400)` が発生するため定期スキャンを推奨。
+
+```bash
+python -m src.tools.check_image_mime            # デフォルトで output/ を再帰スキャン
+python -m src.tools.check_image_mime --fix-rename   # 拡張子を実体に揃える
+python -m src.tools.check_image_mime --strict       # CI 用: ミスマッチで exit 1
+```
+
+- 実装: [src/tools/check_image_mime.py](src/tools/check_image_mime.py)
+- 保存側の根本対策: [src/utils/image_io.py](src/utils/image_io.py) の `save_image_bytes()` がバイト列マジックで拡張子を自動補正する。
+
+---
+
+## 形態共通データセット
+
+- 作品ごとの形態共通特徴は `_ideas/form_common_datasets/Works_{作品名}.json` で管理する。
+- 各形態（`corefolder` / `humanoid`）の `definition_ja/en` / `surface_description_ja/en` / `common_equipment[]` / `required_shape_keywords[]` などを埋めるとプロンプトへ自動差し込みされる。
+- 読込順: `FORM_COMMON_DATASET_PATH` (env) → 作品別ファイル。
+
+---
+
+## サブモジュール運用
+
+```bash
+# 全サブモジュール更新 (ネストの creations-db も含めて再帰的に)
+git submodule update --remote --recursive --merge
+
+# _creations-ai のみ更新
+git submodule update --remote --recursive _creations-ai
+
+# 原典 DB (creations-db) 単独更新 — _creations-ai 内で操作
+git -C _creations-ai submodule update --remote creations-db
+```
+
+サブモジュール更新後は、参照先仕様差分が `src/` 側のプロンプト生成ロジックに影響しないか確認する。
 
 ---
 
@@ -119,8 +169,17 @@ npm test
 | `Works_*.json` スキーマ変更 | `docs/tools.md` の該当節 |
 | 新しい環境変数 | `docs/setup.md` |
 | プロンプトビルダーの重要ブロック追加 | `docs/usage-generation.md` のプロンプト構造セクション |
+| サブモジュール運用方針変更 | AGENTS.md + `docs/setup.md` のサブモジュール節 |
 
 実装変更後は `docs/` を grep して旧表記を一掃すること。
+
+### エージェント設定書の同期ルール
+
+**この設定書（CLAUDE.md）と [.github/copilot-instructions.md](.github/copilot-instructions.md) は常に同等の内容を保つこと。**
+
+- 仕様変更・新機能追加の際は、**必ず両ファイルを同一コミットで更新** する。
+- 正本は [AGENTS.md](AGENTS.md) とし、両設定書はそのサマリー版として維持する。
+- 一方だけ更新して放置しない。更新漏れがあれば即座に追従する。
 
 ---
 
@@ -135,9 +194,14 @@ npm test
 
 ## 参照ドキュメント
 
-- 全体運用: [AGENTS.md](AGENTS.md)
+- 全体運用: [AGENTS.md](AGENTS.md)（エージェント共通・詳細の正本）
 - プロジェクト概要: [README.md](README.md)
 - 使い方ドキュメント: [docs/README.md](docs/README.md)
+  - 環境準備: [docs/setup.md](docs/setup.md)
+  - 生成コマンド: [docs/usage-generation.md](docs/usage-generation.md)
+  - i2i: [docs/usage-iterate.md](docs/usage-iterate.md)
+  - 出力・ログ: [docs/output-and-logs.md](docs/output-and-logs.md)
+  - 補助ツール: [docs/tools.md](docs/tools.md)
 - AI データセット仕様: [_creations-ai/README.md](_creations-ai/README.md)
 - API/サービス運用ガイド: [_creations-ai/docs/usage-gemini-chatgpt-novelai.md](_creations-ai/docs/usage-gemini-chatgpt-novelai.md)
 - テスト方針（DB 側）: [_creations-ai/creations-db/README.test.md](_creations-ai/creations-db/README.test.md)

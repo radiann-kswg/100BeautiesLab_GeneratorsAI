@@ -171,7 +171,7 @@ git -C _creations-ai submodule update --remote creations-db
 | --------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
 | CLI フラグの追加・既存フラグの動作変更                                                  | [`docs/usage-generation.md`](docs/usage-generation.md) または [`docs/usage-iterate.md`](docs/usage-iterate.md)  |
 | 出力ディレクトリ階層・ログファイル仕様 (`prompt.txt`/`run_meta.json`/`notes.md`) の変更 | [`docs/output-and-logs.md`](docs/output-and-logs.md) と AGENTS.md の出力規則セクション                          |
-| `src/tools/` への新スクリプト追加                                                       | [`docs/tools.md`](docs/tools.md) に節を追加 + AGENTS.md / copilot-instructions.md のクイックリファレンスに 1 行 |
+| `src/tools/` への新スクリプト追加                                                       | [`docs/tools.md`](docs/tools.md) に節を追加 + AGENTS.md / `CLAUDE.md` / `copilot-instructions.md` のクイックリファレンスに 1 行 |
 | 形態共通データセット (`Works_*.json`) のスキーマ変更                                    | [`docs/tools.md`](docs/tools.md) の該当節 + Works\_\*.json の `version` を上げる                                |
 | 新しい環境変数 (`.env`) の導入                                                          | [`docs/setup.md`](docs/setup.md) の `.env` セクション                                                           |
 | プロンプトビルダー側で重要なブロック追加 (例: `[番号印字仕様]`)                         | [`docs/usage-generation.md`](docs/usage-generation.md) のプロンプト構造表                                       |
@@ -181,7 +181,8 @@ git -C _creations-ai submodule update --remote creations-db
 
 - 実装変更後は `grep` で旧フラグ名・旧パス・旧階層が `docs/` 配下に残っていないか確認する。
 - 新しい `docs/*.md` を追加した場合は [`docs/README.md`](docs/README.md) の目次に必ず追記する。
-- セッション内で固まった運用ルールは、再利用前提なら `docs/` と AGENTS.md / `.github/copilot-instructions.md` の **両方** に反映する。
+- セッション内で固まった運用ルールは、再利用前提なら `docs/` と AGENTS.md / `CLAUDE.md` / `.github/copilot-instructions.md` の **すべて** に反映する。
+- `CLAUDE.md`（Claude Code 向け）と `.github/copilot-instructions.md`（GitHub Copilot 向け）は **常に同等の内容を保つ**。一方を更新したら必ず同一コミットでもう一方も更新する。
 - ドキュメント更新は実装と同じ粒度のレビュー対象とする (PR description でも言及する)。
 
 ---
