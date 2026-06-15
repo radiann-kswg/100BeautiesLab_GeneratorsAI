@@ -137,6 +137,9 @@ def _apply_correction_gemini(
 
     violations = analysis.get("violations") or []
     comp_issues = analysis.get("composition_issues") or []
+    # T2I はフル再生成なので全仕様を含む base_gemini を使う。
+    # i2i はソース画像がスタイルアンカーになるため、修正ターゲットのみに絞った短いプロンプトを使う。
+    # base_gemini を i2i に使うと「別のポーズで描いてください」という再生成指示が競合し作風が崩れる。
     base_prompt = prompts.get("base_gemini", "") or prompts.get("gemini", "")
 
     if use_t2i:
@@ -148,15 +151,26 @@ def _apply_correction_gemini(
         iterate_path = None
         print(f"[Stage4] rough_{index:02d}: 違反 {len(violations)} 件 → T2I (フル再生成)")
     else:
-        spec_instruction = (
-            "[形態修正指示]\n"
-            + "\n".join(f"- {v} を除去または修正してください" for v in violations)
-            + ("\n[構図修正]\n" + "\n".join(f"- {c}" for c in comp_issues) if comp_issues else "")
+        # i2i 専用: 最小限の修正指示のみ。ソース画像の作風・構図を最大限維持させる。
+        hints = record.get("ai_hints") or {}
+        _common = hints.get("common") or {}
+        identity_tags = ", ".join(((_common.get("identity_tags") or []) + (_common.get("immutable_traits") or []))[:6])
+        num_val = (record.get("data") or {}).get("Num", "?")
+
+        fix_lines = "\n".join(f"- {v} を除去または修正" for v in violations)
+        comp_lines = (
+            "\n[構図修正]\n" + "\n".join(f"- {c}" for c in comp_issues) if comp_issues else ""
         )
         correction_prompt = (
-            f"{spec_instruction}\n\n[ベースプロンプト (維持すること)]\n{base_prompt}"
-            if base_prompt
-            else spec_instruction
+            "[i2i 最小修正 — 入力画像の作風・構図・フォルムを最大限維持すること]\n"
+            "以下の違反のみを修正し、それ以外は入力画像に忠実に保つこと。\n\n"
+            f"[修正対象]\n{fix_lines}{comp_lines}\n\n"
+            "[維持すること]\n"
+            f"- 形態: {form}\n"
+            f"- 識別要素: {identity_tags}\n"
+            f"- キャラクター番号: #{num_val}\n"
+            "- 作風（線の太さ・塗りスタイル）は入力画像に合わせること\n"
+            "- 画像内にテキスト・文字・ラベルを一切描かないこと"
         )
         iterate_path = str(rough_path)
 

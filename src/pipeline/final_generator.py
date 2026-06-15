@@ -37,6 +37,7 @@ def _build_synthesis_prompt(base_prompt: str, rough_count: int) -> str:
         "- 添付した全ラフ案を参照し、各案の優れた点を組み合わせた完成画像を 1 枚生成する\n"
         "- 形態・番号・固有アクセサリなど全案に共通する識別要素を最優先で維持する\n"
         "- 構図・ポーズ・表情は全案の中で最もキャラクターらしいバリエーションを採用する\n"
+        "- 作風・線画・塗りのスタイルは先頭の参照画像群（違反なし素案）を最も重視すること\n"
         "- ラフ段階の粗さ・線引き・テキストは最終出力に含めず、完成イラストとして仕上げる\n\n"
     )
     return header + base_prompt
@@ -159,12 +160,14 @@ def generate_final_images(
     stage_dir = pipeline_dir / "stage5_final"
     stage_dir.mkdir(parents=True, exist_ok=True)
 
-    # Stage 4 全出力を収集 (corrected 優先、次に passed)
+    # Stage 4 全出力を収集。
+    # passed（違反なし素案）を先頭に置きスタイルアンカーとして重視させる。
+    # corrected（i2i 修正済み）は後続に置き、識別要素の補完として使う。
     all_stage4: list[Path] = []
-    for p in (corrected_results.get("corrected") or []):
+    for p in (corrected_results.get("passed") or []):
         if p.exists() and p not in all_stage4:
             all_stage4.append(p)
-    for p in (corrected_results.get("passed") or []):
+    for p in (corrected_results.get("corrected") or []):
         if p.exists() and p not in all_stage4:
             all_stage4.append(p)
 
