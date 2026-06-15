@@ -1371,6 +1371,16 @@ def build_dalle_prompt(
     revision_block_text = _build_revision_block(revisions)
     revision_section = (revision_block_text + "\n\n") if revision_block_text else ""
 
+    # [素体特徴] — manifest が空なら db_record["AIHints"] → silhouette_features の順でフォールバック
+    _body_nld = _sanitize_natural_language_description(common.get('natural_language_description', ''))
+    if not _body_nld:
+        _db_ai_common = ((record.get("db_record") or {}).get("AIHints") or {}).get("common") or {}
+        _body_nld = _sanitize_natural_language_description(_db_ai_common.get('natural_language_description', ''))
+    if not _body_nld:
+        _sf = common.get('silhouette_features') or []
+        if _sf:
+            _body_nld = "Visual features: " + ", ".join(str(s) for s in _sf[:6] if s)
+
     return (
         "このキャラクターを描いてください。\n\n"
         "[最優先ルール - 画像内テキスト禁止]\n"
@@ -1383,7 +1393,7 @@ def build_dalle_prompt(
         f"- 可能であれば以下の既存画像も参照してください。\n"
         f"- URL: {ref_urls or '(なし)'}\n"
         "- ローカル画像は添付される前提です。\n\n"
-        f"[素体特徴]\n{_sanitize_natural_language_description(common.get('natural_language_description', ''))}\n\n"
+        f"[素体特徴]\n{_body_nld}\n\n"
         f"[今回の姿]\n{current_form_description}\n\n"
         f"{number_print_section}"
         f"[形態固定ルール]\n{form_lock}\n\n"
@@ -1547,6 +1557,16 @@ def build_gemini_prompt(
     revision_block_text = _build_revision_block(revisions)
     revision_section = (revision_block_text + "\n\n") if revision_block_text else ""
 
+    # [素体特徴] — manifest が空なら db_record["AIHints"] → silhouette_features の順でフォールバック
+    _body_nld = _sanitize_natural_language_description(common.get('natural_language_description', ''))
+    if not _body_nld:
+        _db_ai_common = ((record.get("db_record") or {}).get("AIHints") or {}).get("common") or {}
+        _body_nld = _sanitize_natural_language_description(_db_ai_common.get('natural_language_description', ''))
+    if not _body_nld:
+        _sf = common.get('silhouette_features') or []
+        if _sf:
+            _body_nld = "Visual features: " + ", ".join(str(s) for s in _sf[:6] if s)
+
     prompt = (
         "以下の参照画像と同じキャラクターを、別のポーズで描いてください。\n\n"
         "[最優先ルール - 画像内テキスト禁止]\n"
@@ -1557,7 +1577,7 @@ def build_gemini_prompt(
         f"{revision_section}"
         f"[参照画像URL]\n{ref_urls or '- (なし)'}\n\n"
         "[参照画像ローカル]\n- ローカル画像はAPIリクエスト時に添付されます。\n\n"
-        f"[素体特徴]\n{_sanitize_natural_language_description(common.get('natural_language_description', ''))}\n\n"
+        f"[素体特徴]\n{_body_nld}\n\n"
         f"[今回の姿]\n{current_form_description}\n\n"
         f"{number_print_section}"
         f"[形態固定ルール]\n{form_lock}\n\n"

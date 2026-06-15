@@ -243,6 +243,7 @@ def run_image_pipeline(
             pipeline_dir=pipeline_dir,
             count=len(needs_regen),
             work_key=work_key,
+            scene=scene,
         )
         if regen_paths:
             corrected_results["corrected"].extend(regen_paths)

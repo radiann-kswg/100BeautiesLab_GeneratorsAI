@@ -137,7 +137,7 @@ def _apply_correction_gemini(
 
     violations = analysis.get("violations") or []
     comp_issues = analysis.get("composition_issues") or []
-    base_prompt = prompts.get("gemini", "")
+    base_prompt = prompts.get("base_gemini", "") or prompts.get("gemini", "")
 
     if use_t2i:
         avoid_note = ""

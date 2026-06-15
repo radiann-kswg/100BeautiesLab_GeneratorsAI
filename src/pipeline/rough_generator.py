@@ -94,6 +94,7 @@ def retry_rough_images(
     pipeline_dir: Path,
     count: int,
     work_key: str = "#Works_NumberTales",
+    scene: str = "",
 ) -> list[Path]:
     """Stage 3 差し戻し: 重度違反ラフの代替を再生成する (stage3_rough/regen/ に保存)。
 
@@ -102,9 +103,12 @@ def retry_rough_images(
     regen_dir = pipeline_dir / "stage3_rough" / "regen"
     regen_dir.mkdir(parents=True, exist_ok=True)
     print(f"[Stage3-Regen] フル再生成 {count} 枚 → {regen_dir}")
+    gemini_prompt = prompts.get("base_gemini", "") or prompts.get("gemini", "")
+    if scene and "シーン" not in gemini_prompt:
+        gemini_prompt = gemini_prompt + f"\n\n[シーン・追加要望]\n- シーン: {scene}"
     paths = _generate_gemini_rough(
         record, form,
-        prompt_override=prompts.get("gemini", ""),
+        prompt_override=gemini_prompt,
         stage_dir=regen_dir,
         count=count,
         work_key=work_key,
@@ -130,7 +134,7 @@ def generate_rough_images(
     ----------
     record:       キャラクターレコード
     form:         形態 ("corefolder" / "humanoid")
-    prompts:      refine_prompt_dual() の返却値。"gemini" キーを使用
+    prompts:      refine_prompt_dual() の返却値。"base_gemini" キーを優先使用
     pipeline_dir: パイプライン出力ルートディレクトリ
     count:        Gemini の生成枚数 (1-4)
     work_key:     作品キー
@@ -160,10 +164,15 @@ def generate_rough_images(
         print("[Stage2-Adobe] 構図ガイドなし (参照画像不足 or PIL/Adobe 設定未完)。Gemini のみで続行。")
 
     # Step B: Gemini Imagen でラフ生成 (構図ガイドを参照に追加)
+    # base_gemini (形態固定ルール・シーン・尻尾数・識別記号等すべてのブロックを含む) を優先使用する。
+    # 短縮版の "gemini" キーは Gemini テキストモデルが 600 token に圧縮した版でシーン等が欠落するため使わない。
+    gemini_prompt = prompts.get("base_gemini", "") or prompts.get("gemini", "")
+    if scene and "シーン" not in gemini_prompt:
+        gemini_prompt = gemini_prompt + f"\n\n[シーン・追加要望]\n- シーン: {scene}"
     print(f"[Stage2-Gemini] Imagen でラフ生成中 (count={count})...")
     gemini_paths = _generate_gemini_rough(
         record, form,
-        prompt_override=prompts.get("gemini", ""),
+        prompt_override=gemini_prompt,
         stage_dir=stage_dir,
         count=count,
         work_key=work_key,
