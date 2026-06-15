@@ -19,9 +19,9 @@ MCP (Adobe / Canva) との連携は [`usage-mcp-canva-adobe.md`](usage-mcp-canva
 |---|---|---|
 | Stage 1 | コマンド解析 + ベースプロンプト生成 (シーン未指定時はキャラクターに合ったシーンを自動生成) | OpenAI GPT-4o + Gemini Flash |
 | Stage 2 | キャラクター選定 + 創作 DB から原典画像・特徴を取得 | manifest.jsonl + 参照画像索引 |
-| Stage 3 | ラフ **4 案**生成 | Adobe 非 Firefly (構図ガイド) + Gemini Imagen |
+| Stage 3 | ラフ **5 案**生成 | Adobe 非 Firefly (構図ガイド) + Gemini Imagen |
 | Stage 4 | 違反特徴の除去 + 構図修正 | OpenAI Vision (違反分析) + Gemini i2i (修正適用) |
-| Stage 5 | 作風調整・仕上げ → 完成画像 **2-3 枚**生成 | Canva Connect API |
+| Stage 5 | 作風調整・仕上げ → 完成画像 **3 枚**固定生成 | Canva Connect API |
 
 ```bash
 # 基本実行（キャラクター番号直接指定・シーンは自動生成）
@@ -63,9 +63,9 @@ python -m src.pipeline.image_pipeline --num 57 --form corefolder --skip-canva
 {OUTPUT_BASE_DIR}/{YYYYMMDD}/{YYYYMMDD_HH}/{ts}_pipeline_{form}_num{NNN}/
   stage1_prompt/     — 生成済みプロンプト (openai/gemini/base テキスト) + stage1_meta.json
   stage2_db/         — DB サマリー + キャラクタースペック (violation_features 等)
-  stage3_rough/      — Adobe 構図ガイド画像 + Gemini Imagen ラフ 4 案
+  stage3_rough/      — Adobe 構図ガイド画像 + Gemini Imagen ラフ 5 案
   stage4_correct/    — 違反分析ログ (analysis_log.json) + 修正済み画像
-  stage5_final/      — Canva 仕上げ完成画像 2-3 枚
+  stage5_final/      — Canva 仕上げ完成画像 3 枚
   pipeline_summary.json
 ```
 

@@ -1,10 +1,10 @@
 """
-pipeline/final_generator.py — Stage 5: Canva 作風調整 + 完成画像生成 (2-3 枚)
+pipeline/final_generator.py — Stage 5: Canva 作風調整 + 完成画像生成 (3 枚固定)
 Copyright © RadianN_kswg — CC BY-NC 4.0
 
 Stage 4 で修正済みの画像を入力に、Canva で作風調整・仕上げを行い完成画像を生成する。
 
-  - 修正済み画像 (Stage 4 出力) を最大 3 枚選び、それぞれ Canva でデザイン化・書き出し
+  - 修正済み画像 (Stage 4 出力) から 3 枚を選び、それぞれ Canva でデザイン化・書き出し (3 枚固定)
   - --skip-canva 指定時は Canva をスキップし、修正済み画像をそのまま最終出力とする
   - 最終出力は stage5_final/ に保存
 """
@@ -18,7 +18,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-_FINAL_IMAGE_COUNT = 3  # Canva で生成する最大完成画像枚数
+_FINAL_IMAGE_COUNT = 3  # Canva で仕上げる完成画像枚数 (固定)
 
 
 def _export_canva(
@@ -60,7 +60,7 @@ def generate_final_images(
     work_key: str = "#Works_NumberTales",
     skip_canva: bool = False,
 ) -> dict[str, list[Path]]:
-    """Stage 4 修正済み画像を Canva で仕上げ、完成画像を 2-3 枚生成する。
+    """Stage 4 修正済み画像を Canva で仕上げ、完成画像を 3 枚生成する。
 
     Parameters
     ----------
@@ -94,7 +94,7 @@ def generate_final_images(
         print("[WARN] Stage5: 入力画像が見つかりません。Stage 5 をスキップします。")
         return {"canva": [], "all": []}
 
-    print(f"[Stage5] 仕上げ対象: {len(sources)} 枚 (最大 {_FINAL_IMAGE_COUNT} 枚)")
+    print(f"[Stage5] 仕上げ対象: {len(sources)} 枚 / {_FINAL_IMAGE_COUNT} 枚固定")
 
     if skip_canva:
         print("[INFO] Stage5: --skip-canva のため Canva をスキップします。修正済み画像を最終出力とします。")

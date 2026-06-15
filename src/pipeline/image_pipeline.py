@@ -6,9 +6,9 @@ Copyright © RadianN_kswg — CC BY-NC 4.0
   Stage 1: コマンド解析 + OpenAI/Gemini でベースプロンプト生成
            (シーン未指定時はキャラクターに合ったシーンをランダム生成)
   Stage 2: キャラクター選定 + 創作 DB から原典画像・特徴を取得
-  Stage 3: Gemini Imagen + Adobe 非Firefly でラフ 4 案生成
+  Stage 3: Gemini Imagen + Adobe 非Firefly でラフ 5 案生成
   Stage 4: OpenAI Vision で違反特徴を分析 + Gemini i2i で修正
-  Stage 5: Canva で作風調整・仕上げ → 完成画像 2-3 枚生成
+  Stage 5: Canva で作風調整・仕上げ → 完成画像 3 枚固定生成
 
 使用方法:
     # キャラクター番号で直接指定 (シーン省略 → ランダム生成)
@@ -32,9 +32,9 @@ Copyright © RadianN_kswg — CC BY-NC 4.0
     {OUTPUT_BASE_DIR}/{YYYYMMDD}/{YYYYMMDD_HH}/{ts}_pipeline_{form}_num{NNN}/
       stage1_prompt/        — 生成済みプロンプト (openai/gemini/base)
       stage2_db/            — DB サマリー + キャラクタースペック
-      stage3_rough/         — Adobe 構図ガイド + Gemini Imagen ラフ 4 案
+      stage3_rough/         — Adobe 構図ガイド + Gemini Imagen ラフ 5 案
       stage4_correct/       — 違反分析ログ + 修正済み画像
-      stage5_final/         — Canva 仕上げ完成画像 2-3 枚
+      stage5_final/         — Canva 仕上げ完成画像 3 枚
       pipeline_summary.json — 全ステージの実行結果まとめ
 
 必要な環境変数 (.env):
@@ -72,7 +72,7 @@ from src.pipeline.rough_generator import generate_rough_images  # noqa: E402
 from src.pipeline.correction_generator import correct_rough_images  # noqa: E402
 from src.pipeline.final_generator import generate_final_images  # noqa: E402
 
-_ROUGH_COUNT = 4  # Stage 3: ラフ生成枚数 (固定)
+_ROUGH_COUNT = 5  # Stage 3: ラフ生成枚数 (固定)
 
 
 @dataclass
@@ -198,7 +198,7 @@ def run_image_pipeline(
     }
 
     # ──────────────────────────────────────
-    # Stage 3: ラフ 4 案生成 (Adobe + Gemini)
+    # Stage 3: ラフ 5 案生成 (Adobe + Gemini)
     # ──────────────────────────────────────
     print(f"\n[=] Stage 3: ラフ {_ROUGH_COUNT} 案生成 (Adobe 非Firefly 構図ガイド + Gemini Imagen)")
     rough_results = generate_rough_images(
@@ -235,9 +235,9 @@ def run_image_pipeline(
         return result
 
     # ──────────────────────────────────────
-    # Stage 5: Canva 作風調整 + 仕上げ (2-3 枚)
+    # Stage 5: Canva 作風調整 + 仕上げ (3 枚固定)
     # ──────────────────────────────────────
-    print("\n[=] Stage 5: Canva 作風調整 + 完成画像生成 (2-3 枚)")
+    print("\n[=] Stage 5: Canva 作風調整 + 完成画像生成 (3 枚固定)")
     final_results = generate_final_images(
         record, form,
         corrected_results=corrected_results,
@@ -347,9 +347,9 @@ def main() -> None:
             "画像生成パイプライン (5 ステージ):\n"
             "  Stage1: コマンド解析 + OpenAI/Gemini でプロンプト生成\n"
             "  Stage2: キャラクター選定 + 創作 DB から原典画像・特徴を取得\n"
-            "  Stage3: Adobe 非Firefly 構図ガイド + Gemini Imagen でラフ 4 案生成\n"
+            "  Stage3: Adobe 非Firefly 構図ガイド + Gemini Imagen でラフ 5 案生成\n"
             "  Stage4: OpenAI Vision で違反分析 + Gemini i2i で修正\n"
-            "  Stage5: Canva で作風調整・仕上げ → 完成画像 2-3 枚生成"
+            "  Stage5: Canva で作風調整・仕上げ → 完成画像 3 枚固定生成"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

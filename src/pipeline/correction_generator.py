@@ -2,7 +2,7 @@
 pipeline/correction_generator.py — Stage 4: 違反特徴の除去 + 構図修正
 Copyright © RadianN_kswg — CC BY-NC 4.0
 
-Stage 3 のラフ4案を入力に、以下の2ステップで修正を行う:
+Stage 3 のラフ5案を入力に、以下の2ステップで修正を行う:
 
   1. 分析 (OpenAI Vision):
      各ラフ画像をキャラクタースペックと照合し、
@@ -14,7 +14,7 @@ Stage 3 のラフ4案を入力に、以下の2ステップで修正を行う:
      違反なし・分析スキップのラフはそのまま pass-through する。
 
 出力: stage4_correct/ に修正済み画像を保存。
-Stage 5 はここで生成された画像 (最大 4 枚) を受け取り、最良 2-3 枚を仕上げる。
+Stage 5 はここで生成された画像 (最大 5 枚) を受け取り、3 枚を仕上げる。
 """
 
 from __future__ import annotations
