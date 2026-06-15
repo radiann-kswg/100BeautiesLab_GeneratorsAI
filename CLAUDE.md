@@ -62,10 +62,14 @@
 pip install -r requirements.txt
 
 # ── マルチ LLM パイプライン (推奨) ────────────────────────────────
-# 画像生成パイプライン (Stage1: プロンプト加工 → Stage2: ラフ → Stage3: 本生成)
+# 5 ステージ: Stage1 プロンプト生成(シーン自動生成) → Stage2 DB取得
+#             → Stage3 ラフ4案 → Stage4 違反修正 → Stage5 Canva仕上げ2-3枚
 python -m src.pipeline.image_pipeline --num 57 --form corefolder
 python -m src.pipeline.image_pipeline --num 57 --form corefolder \
-    --scene "図書館で本を読んでいるシーン" --count 2 --skip-canva
+    --scene "図書館で本を読んでいるシーン" --skip-canva
+python -m src.pipeline.image_pipeline --nums 25,57 --form corefolder
+python -m src.pipeline.image_pipeline \
+    --natural "コアフォルダ姿の25(フィズ)がチョコレートを咥えている絵"
 
 # テキスト生成パイプライン (GPT-4o 生成 → Gemini クロスレビュー)
 python -m src.pipeline.text_pipeline --num 57 --mode scene \

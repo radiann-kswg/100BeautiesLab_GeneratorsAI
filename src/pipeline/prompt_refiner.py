@@ -1,11 +1,13 @@
 """
-pipeline/prompt_refiner.py — Stage 1: デュアル LLM プロンプト加工
+pipeline/prompt_refiner.py — Stage 1: コマンド解析 + デュアル LLM プロンプト加工
 Copyright © RadianN_kswg — CC BY-NC 4.0
 
 OpenAI (GPT-4o) と Gemini (Flash) の両方でキャラデータベースに基づきプロンプトを加工する。
-各モデルの強みを活かし、Stage 2 の各プロバイダに最適化されたプロンプトを生成する:
-  - OpenAI 加工結果 → Stage 2 Adobe Firefly 用
-  - Gemini 加工結果  → Stage 2 Gemini Imagen 用
+各モデルの強みを活かし、Stage 3 の各プロバイダに最適化されたプロンプトを生成する:
+  - OpenAI 加工結果 → Stage 3/4 Adobe + 修正指示用
+  - Gemini 加工結果  → Stage 3/4 Gemini Imagen / i2i 用
+
+シーン未指定時はキャラクターの特徴に合ったランダムシーンを自動生成する。
 """
 
 from __future__ import annotations
@@ -19,6 +21,61 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from src.utils import build_dalle_prompt, build_gemini_prompt  # noqa: E402
+
+_RANDOM_SCENE_SYSTEM = (
+    "あなたはナンバーテールズシリーズのクリエイティブディレクターです。"
+    "キャラクターのデータを基に、そのキャラクターが映えるシーン・ポーズを1つ提案してください。"
+    "- 30文字以内で「〜しているシーン」「〜のポーズ」のような日本語表現で返すこと"
+    "- キャラクターの形態・特徴と自然に合うシーンを選ぶこと"
+    "- 単純な「立っている」は避け、行動・感情・状況が伝わる表現にする"
+    "- シーン説明のみ返すこと。JSON・説明文・前置きは不要"
+)
+
+
+def generate_random_scene(record: dict, form: str) -> str:
+    """シーン未指定時にキャラクターに合ったシーン説明をランダム生成する。"""
+    try:
+        from google import genai
+        from google.genai import types as genai_types
+    except ImportError:
+        return ""
+
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        return ""
+
+    hints = record.get("ai_hints") or {}
+    common = hints.get("common") or {}
+    form_data = (hints.get("forms") or {}).get(form) or {}
+    identity = ", ".join((common.get("identity_tags") or [])[:5])
+    form_desc = str(form_data.get("natural_language_description", ""))[:80]
+    char_name = record["data"].get("Name", "Unknown")
+
+    user_msg = (
+        f"キャラクター: {char_name} / 形態: {form}\n"
+        f"特徴: {identity}\n"
+        f"形態概要: {form_desc}\n"
+        "このキャラクターに合ったシーンを1つ提案してください:"
+    )
+
+    try:
+        text_model = os.environ.get("GEMINI_TEXT_MODEL", "gemini-2.5-flash")
+        client = genai.Client(api_key=api_key)
+        response = client.models.generate_content(
+            model=text_model,
+            contents=user_msg,
+            config=genai_types.GenerateContentConfig(
+                system_instruction=_RANDOM_SCENE_SYSTEM,
+                max_output_tokens=80,
+            ),
+        )
+        scene = (response.text or "").strip().splitlines()[0].strip()
+        if scene:
+            print(f"[Stage1] ランダムシーン自動生成: {scene}")
+            return scene
+    except Exception as err:
+        print(f"[WARN] ランダムシーン生成に失敗: {err}")
+    return ""
 
 
 def _system_instruction(char_name: str, form: str) -> str:

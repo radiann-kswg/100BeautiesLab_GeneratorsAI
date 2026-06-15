@@ -11,44 +11,96 @@ MCP (Adobe / Canva) との連携は [`usage-mcp-canva-adobe.md`](usage-mcp-canva
 
 ## 0. マルチ LLM パイプライン (`src.pipeline`) — 推奨
 
-複数のプロバイダ・LLM を連携させた 3 ステージ画像生成ワークフロー。
+複数のプロバイダ・LLM の得意分野を活かした **5 ステージ**画像生成ワークフロー。
 
 ### 0-1. 画像生成パイプライン
 
-| ステージ | 処理 | 使用モデル |
+| ステージ | 役割 | 使用モデル / ツール |
 |---|---|---|
-| Stage 1 | プロンプト加工 | OpenAI GPT-4o + Gemini Flash |
-| Stage 2 | ラフ画像生成 | Gemini Imagen + Adobe Firefly |
-| Stage 3 | 本生成・仕上げ | Gemini i2i + Canva Connect API |
+| Stage 1 | コマンド解析 + ベースプロンプト生成 (シーン未指定時はキャラクターに合ったシーンを自動生成) | OpenAI GPT-4o + Gemini Flash |
+| Stage 2 | キャラクター選定 + 創作 DB から原典画像・特徴を取得 | manifest.jsonl + 参照画像索引 |
+| Stage 3 | ラフ **4 案**生成 | Adobe 非 Firefly (構図ガイド) + Gemini Imagen |
+| Stage 4 | 違反特徴の除去 + 構図修正 | OpenAI Vision (違反分析) + Gemini i2i (修正適用) |
+| Stage 5 | 作風調整・仕上げ → 完成画像 **2-3 枚**生成 | Canva Connect API |
 
 ```bash
-# 基本実行
+# 基本実行（キャラクター番号直接指定・シーンは自動生成）
 python -m src.pipeline.image_pipeline --num 57 --form corefolder
 
-# シーン・作風指定
+# シーン・作風を明示指定
 python -m src.pipeline.image_pipeline --num 57 --form corefolder \
-    --scene "図書館で本を読んでいるシーン" --style "watercolor" --count 2
+    --scene "図書館で本を読んでいるシーン" --style "watercolor"
 
-# Canva フィニッシングをスキップ（CANVA_ACCESS_TOKEN 不要）
+# ★ 自然文でリクエスト（LLM がキャラクター・シーン等を抽出）
+python -m src.pipeline.image_pipeline \
+    --natural "コアフォルダ姿の25(フィズ)がチョコレートを咥えている絵を生成してほしい"
+
+# ★ 短編ストーリーファイルから指定
+python -m src.pipeline.image_pipeline --story "_ideas/my_scene.txt"
+
+# ★ 複数キャラクターを一括生成
+python -m src.pipeline.image_pipeline --nums 25,57 --form corefolder \
+    --scene "研究所のラボで並んでいるシーン"
+
+# Stage 5 Canva フィニッシングをスキップ（CANVA_ACCESS_TOKEN 不要）
 python -m src.pipeline.image_pipeline --num 57 --form corefolder --skip-canva
 ```
 
 | フラグ | 既定値 | 説明 |
 |---|---|---|
-| `--num` | 必須 | キャラクター番号 |
-| `--form` | corefolder | 形態 |
-| `--scene` / `--style` / `--composition` / `--background` | `""` | 生成オプション |
-| `--count` | 1 | 各プロバイダの生成枚数 (1-4) |
-| `--skip-canva` | false | Stage 3 の Canva をスキップ |
+| `--num` | (いずれか必須) | キャラクター番号 |
+| `--nums` | — | 複数キャラクター番号 カンマ区切り (例: `25,57,15`) |
+| `--natural TEXT` | — | 自然文からパラメータを LLM 抽出 |
+| `--story FILE` | — | テキストファイルから LLM 抽出 |
+| `--form` | corefolder | 形態 (`--natural` 時は LLM 判定を優先) |
+| `--scene` | `""` | シーン説明。**省略時は Stage 1 でキャラクターに合ったシーンを自動生成** |
+| `--style` / `--composition` / `--background` | `""` | 作風・構図・背景ヒント |
+| `--skip-canva` | false | Stage 5 の Canva をスキップ |
+| `--prefer-gemini-parse` | false | `--natural` / `--story` のパース時に Gemini を OpenAI より優先 |
 
 **出力構成:**
 ```
 {OUTPUT_BASE_DIR}/{YYYYMMDD}/{YYYYMMDD_HH}/{ts}_pipeline_{form}_num{NNN}/
-  stage1_prompt/   — 加工済みプロンプト (openai/gemini/base テキスト)
-  stage2_rough/    — Gemini Imagen + Adobe Firefly ラフ画像
-  stage3_final/    — Gemini i2i 精錬 + Canva 書き出し
+  stage1_prompt/     — 生成済みプロンプト (openai/gemini/base テキスト) + stage1_meta.json
+  stage2_db/         — DB サマリー + キャラクタースペック (violation_features 等)
+  stage3_rough/      — Adobe 構図ガイド画像 + Gemini Imagen ラフ 4 案
+  stage4_correct/    — 違反分析ログ (analysis_log.json) + 修正済み画像
+  stage5_final/      — Canva 仕上げ完成画像 2-3 枚
   pipeline_summary.json
 ```
+
+#### 自然文パーサー単体実行
+
+```bash
+# パラメータ抽出結果のみ確認（画像生成しない）
+python -m src.pipeline.natural_parser "コアフォルダ姿の25(フィズ)がチョコレートを咥えている絵"
+# → [{"num": 25, "form": "corefolder", "scene": "チョコレートを咥えているシーン", ...}]
+```
+
+#### 作風データセットビルダー
+
+全キャラクターのコアフォルダイラストを Gemini Vision で分析し、
+原典作風の共通傾向を `_ideas/form_common_datasets/Works_NumberTales.json` に保存する。
+このデータは生成プロンプトに自動注入されて再現性を高める。
+
+```bash
+# まず dry-run で分析対象を確認
+python scripts/build_style_dataset.py --dry-run
+
+# 実行（最大 30 キャラクターを分析、約 45 秒〜）
+python scripts/build_style_dataset.py
+
+# 分析数を絞る（API コスト節約）
+python scripts/build_style_dataset.py --max-chars 10
+```
+
+| フラグ | 既定値 | 説明 |
+|---|---|---|
+| `--form` | corefolder | 分析形態 |
+| `--max-chars` | 30 | 最大分析キャラクター数 |
+| `--output` | `_ideas/form_common_datasets/Works_NumberTales.json` | 出力先 |
+| `--dry-run` | false | 対象一覧のみ表示 (API 未呼び出し) |
+| `--sleep` | 1.5 | キャラクター間の待機秒 |
 
 ### 0-2. テキスト生成パイプライン
 
@@ -71,12 +123,22 @@ python -m src.pipeline.text_pipeline --num 57 --mode caption \
 
 | 変数 | 用途 |
 |---|---|
-| `GEMINI_API_KEY` | Gemini Imagen + Gemini テキスト |
-| `OPENAI_API_KEY` | GPT-4o (プロンプト加工 + テキスト生成) |
-| `FIREFLY_CLIENT_ID` / `FIREFLY_CLIENT_SECRET` | Adobe Firefly (Stage 2) |
-| `CANVA_ACCESS_TOKEN` | Canva フィニッシング (Stage 3、`--skip-canva` で不要) |
-| `GEMINI_TEXT_MODEL` | Gemini テキストモデル (デフォルト: `gemini-2.0-flash-001`) |
-| `GPT_MODEL` | OpenAI テキストモデル (デフォルト: `gpt-4o`) |
+| `GEMINI_API_KEY` | Gemini Imagen + Gemini テキスト + 自然文パーサー + シーン自動生成 (Stage 1) |
+| `OPENAI_API_KEY` | GPT-4o (Stage 1 プロンプト加工・自然文パーサー・Stage 4 違反分析) |
+| `FIREFLY_CLIENT_ID` / `FIREFLY_CLIENT_SECRET` | Adobe IMS 認証 (Lightroom/Photoshop API 共通、Stage 3 構図ガイド用) |
+| `ADOBE_STORAGE_TYPE` | Adobe 非Firefly ストレージ: `local` (PIL fallback, デフォルト) / `dropbox` / `s3` |
+| `CANVA_ACCESS_TOKEN` | Canva フィニッシング (Stage 5、`--skip-canva` で不要) |
+| `GEMINI_TEXT_MODEL` | Gemini テキストモデル (デフォルト: `gemini-2.5-flash`) |
+| `GPT_MODEL` | OpenAI テキストモデル (デフォルト: `gpt-4o`、Stage 1/4 で使用) |
+
+> **Adobe 非 Firefly について**: `ADOBE_STORAGE_TYPE=local`（デフォルト）の場合、
+> Lightroom/Photoshop API の代わりに Pillow でローカル処理する (Stage 3 構図ガイド)。
+> クラウド API を有効にする場合は `ADOBE_STORAGE_TYPE=dropbox` 等を設定のうえ、
+> `ADOBE_INPUT_URL_1` / `ADOBE_OUTPUT_URL_1` に presigned URL を指定する。
+
+> **Stage 4 (違反分析) について**: `OPENAI_API_KEY` が未設定の場合は OpenAI Vision 分析をスキップし、
+> ラフ画像を pass-through として Stage 5 に送る。設定することで
+> 「コアフォルダ形態に腕が描かれている」等の違反を自動検出して Gemini i2i で修正できる。
 
 ---
 
@@ -202,27 +264,33 @@ python -m src.openai.generate --num 57 --mode prompt-assist `
 ローカル CLI から API で動かす追加プロバイダ。Claude(Cowork) 経由の対話的連携は
 [`usage-mcp-canva-adobe.md`](usage-mcp-canva-adobe.md) を参照 (2 ルートの使い分けはそちらに整理)。
 
-### 3-5-1. Adobe Firefly — `src.adobe.generate` (テキスト→画像生成)
+### 3-5-1. Adobe 非 Firefly — `src.adobe.image_ops` (構図ガイド生成)
 
-Firefly Services の Generate Images API (v3) を OAuth Server-to-Server で呼ぶ純生成プロバイダ。
-共通フラグ (`--num` / `--form` / `--scene` / `--style` / `--composition` / `--background` / `--count`) が使える。
+Firefly での text-to-image **ではなく**、Adobe Lightroom / Photoshop API で
+DB 参照画像を加工して構図ガイドを作成するモジュール。
+パイプライン Stage 3 から内部的に呼び出されるほか、単体実行も可能。
 
 ```bash
-# 単発生成 (corefolder)
-python -m src.adobe.generate --num 57 --form corefolder --count 1
-
-# API を呼ばず確認だけ (課金ゼロ)
-python -m src.adobe.generate --num 57 --form corefolder --dry-run
+# 単体で構図ガイド確認
+python -m src.adobe.image_ops --num 57 --form corefolder \
+    --scene "図書館で本を読んでいるシーン" --background "図書館" --out output/test_guide
 ```
 
-| env                     | 役割                                       |
-| ----------------------- | ------------------------------------------ |
-| `FIREFLY_CLIENT_ID`     | Client ID (x-api-key)                      |
-| `FIREFLY_CLIENT_SECRET` | Client Secret                              |
-| `FIREFLY_SIZE`          | 生成サイズ (例: `1024x1024`)               |
-| `FIREFLY_MODEL`         | 任意: モデルバージョン (省略時APIデフォルト) |
+| env                     | 役割                                          |
+| ----------------------- | --------------------------------------------- |
+| `FIREFLY_CLIENT_ID`     | IMS 認証 Client ID (Lightroom/Photoshop 共通) |
+| `FIREFLY_CLIENT_SECRET` | IMS 認証 Client Secret                        |
+| `ADOBE_STORAGE_TYPE`    | `local` (PIL fallback) / `dropbox` / `s3`     |
 
-出力は `output/.../{ts}_adobe_{form}_num{NNN}/num{NNN}_{form}_firefly_NN.png`。
+出力は指定 `--out` 配下に `num{NNN}_{form}_composition_guide_NN.png`。
+
+> **Firefly 単体生成スクリプト** (`src.adobe.generate`) は引き続き単独プロバイダとして使用可能。
+> ただしパイプライン Stage 2 では使用しない（Adobe の役割を非 Firefly 構図ガイドに変更済み）。
+
+```bash
+# Firefly 単体 (パイプライン外で使う場合)
+python -m src.adobe.generate --num 57 --form corefolder --count 1 --dry-run
+```
 
 ### 3-5-2. Canva — `src.canva.generate` (デザイン化・書き出し)
 
@@ -305,6 +373,7 @@ python -m src.batch_generate --nums 15,22,49,57 --forms both --provider both --s
 
 | 順序 | ブロック名                                            | 内容                                                                                                          | 出典フィールド                                                                 |
 | ---- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| 0    | **`[最優先ルール - 画像内テキスト禁止]`**             | 参照画像のテキスト・注釈・ラベルを画像内に再現しない。キャラ番号はバッジ造形としてのみ描く。英語/日本語で二重に明示 | (固定文、`build_gemini_prompt` 先頭 + `gemini/generate.py` 末尾サフィックスで二重適用) |
 | 1    | 導入文                                                | 「このキャラクターを描いてください」「同じキャラクターを別ポーズで〜」                                        | (固定文)                                                                       |
 | 1.5  | `[修正指示]` (i2i 時のみ)                             | iterate-from の修正項目を最優先で適用させる。詳細は [`usage-iterate.md`](usage-iterate.md)                    | `--revisions`                                                                  |
 | 2    | `[参照画像]` / `[参照画像URL]` / `[参照画像ローカル]` | URL とローカル添付の存在告知                                                                                  | `ai_hints.*.reference_images`, レコード `images`                               |

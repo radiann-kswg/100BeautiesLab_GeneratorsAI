@@ -202,6 +202,13 @@ def generate_image(
         revisions=revision_items or None,
     )
     prompt_text = prompt_override if prompt_override else data["prompt"]
+    # 参照画像内のテキストが生成画像に転写されるのを防ぐ安全装置 (prompt_override でも維持)
+    _no_text_suffix = (
+        "\n[絶対禁止] 画像内に文字・テキスト・ラベル・サインを一切描かないこと。"
+        " Do NOT render any text, words, labels, or signs in the image."
+    )
+    if _no_text_suffix not in prompt_text:
+        prompt_text = prompt_text + _no_text_suffix
     ref_url = data["reference_image_url"]
     ref_urls = data.get("reference_image_urls") or []
     ref_locals = data.get("reference_local_paths") or []

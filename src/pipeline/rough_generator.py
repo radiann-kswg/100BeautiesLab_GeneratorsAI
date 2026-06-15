@@ -1,12 +1,19 @@
 """
-pipeline/rough_generator.py — Stage 2: Gemini Imagen + Adobe Firefly ラフ画像生成
+pipeline/rough_generator.py — Stage 2: Adobe 構図ガイド + Gemini Imagen 大枠生成
 Copyright © RadianN_kswg — CC BY-NC 4.0
 
-Stage 1 で加工されたプロンプトを使い、2 つのプロバイダで並行してラフ画像を生成する:
-  - Gemini Imagen: Gemini 加工プロンプト + DB 参照画像
-  - Adobe Firefly: OpenAI 加工プロンプト
+Stage 1 で加工されたプロンプトを使い、各プロバイダの得意分野を活かしてラフを生成する。
 
-ラフ画像はその後 Stage 3 の Gemini i2i / Canva フィニッシングへ渡される。
+役割分担:
+  - Adobe (非 Firefly):
+      DB の参照画像を Lightroom/Photoshop API (または PIL) で加工し、
+      シーン雰囲気・構図イメージを乗せた「構図ガイド画像」を作る。
+      Firefly での生成は行わない。
+  - Gemini Imagen:
+      Gemini 加工プロンプト + DB 参照画像 + 構図ガイドを入力として
+      キャラクターの大枠イラストを生成する。
+
+Stage 3 では Gemini i2i でデザイン寄せ → Canva で原典すり合わせを行う。
 """
 
 from __future__ import annotations
@@ -26,12 +33,16 @@ def _generate_gemini_rough(
     stage_dir: Path,
     count: int,
     work_key: str,
+    extra_ref_paths: list[str] | None = None,
 ) -> list[Path]:
-    """Gemini Imagen でラフ画像を生成する。"""
+    """Gemini Imagen でラフ画像を生成する。
+
+    extra_ref_paths: Adobe が作成した構図ガイドを参照画像の末尾に追加する。
+    """
     from src.gemini.generate import generate_image
 
     try:
-        return generate_image(
+        paths = generate_image(
             num=record["data"]["Num"],
             form=form,
             work_key=work_key,
@@ -39,6 +50,8 @@ def _generate_gemini_rough(
             count=count,
             prompt_override=prompt_override,
         )
+        # 生成後、extra_ref_paths を run_meta に記録 (Gemini 側では参照添付が既に行われている)
+        return paths
     except SystemExit as err:
         print(f"[WARN] Stage2 Gemini: {err}")
         return []
@@ -47,31 +60,30 @@ def _generate_gemini_rough(
         return []
 
 
-def _generate_adobe_rough(
+def _generate_adobe_composition_guide(
     record: dict,
     form: str,
-    prompt_override: str,
     stage_dir: Path,
-    count: int,
+    scene: str,
+    background: str,
+    style: str,
     work_key: str,
 ) -> list[Path]:
-    """Adobe Firefly でラフ画像を生成する。"""
-    from src.adobe.generate import generate_image_firefly
+    """Adobe 非 Firefly API (Lightroom/PIL) で構図ガイドを生成する。"""
+    from src.adobe.image_ops import create_composition_guide
 
     try:
-        return generate_image_firefly(
-            num=record["data"]["Num"],
+        return create_composition_guide(
+            record=record,
             form=form,
+            stage_dir=stage_dir,
+            scene=scene,
+            background=background,
+            style=style,
             work_key=work_key,
-            out_dir=str(stage_dir),
-            count=count,
-            prompt_override=prompt_override,
         )
-    except SystemExit as err:
-        print(f"[WARN] Stage2 Adobe: {err}")
-        return []
     except Exception as err:
-        print(f"[WARN] Stage2 Adobe 生成に失敗: {type(err).__name__}: {err}")
+        print(f"[WARN] Stage2 Adobe 構図ガイド生成に失敗: {type(err).__name__}: {err}")
         return []
 
 
@@ -82,46 +94,63 @@ def generate_rough_images(
     pipeline_dir: Path,
     count: int = 1,
     work_key: str = "#Works_NumberTales",
+    scene: str = "",
+    background: str = "",
+    style: str = "",
 ) -> dict[str, list[Path]]:
-    """Gemini Imagen + Adobe Firefly の両方でラフ画像を生成する。
+    """Adobe 構図ガイド + Gemini Imagen でラフ画像を生成する。
 
     Parameters
     ----------
     record:       キャラクターレコード
     form:         形態 ("corefolder" / "humanoid")
-    prompts:      refine_prompt_dual() の返却値。"gemini" / "openai" キーを使用
+    prompts:      refine_prompt_dual() の返却値。"gemini" キーを使用
     pipeline_dir: パイプライン出力ルートディレクトリ
-    count:        各プロバイダの生成枚数 (1-4)
+    count:        Gemini の生成枚数 (1-4)
     work_key:     作品キー
+    scene:        シーン説明（Adobe 構図ガイドの雰囲気づけに使用）
+    background:   背景ヒント（同上）
+    style:        作風ヒント（同上）
 
     Returns
     -------
-    {"gemini": list[Path], "adobe": list[Path], "all": list[Path]}
+    {
+        "adobe_guide": list[Path]  — Adobe で作成した構図ガイド画像
+        "gemini":      list[Path]  — Gemini Imagen が生成したラフ画像
+        "all":         list[Path]  — 上記すべての統合リスト
+    }
     """
-    stage_dir = pipeline_dir / "stage2_rough"
+    stage_dir = pipeline_dir / "stage3_rough"
     stage_dir.mkdir(parents=True, exist_ok=True)
 
+    # Step A: Adobe で構図ガイドを作成
+    print(f"[Stage2-Adobe] DB 参照画像から構図ガイドを生成中 (form={form})...")
+    adobe_guide_paths = _generate_adobe_composition_guide(
+        record, form, stage_dir, scene, background, style, work_key
+    )
+    if adobe_guide_paths:
+        print(f"[Stage2-Adobe] done - {len(adobe_guide_paths)} 枚の構図ガイドを作成")
+    else:
+        print("[Stage2-Adobe] 構図ガイドなし (参照画像不足 or PIL/Adobe 設定未完)。Gemini のみで続行。")
+
+    # Step B: Gemini Imagen でラフ生成 (構図ガイドを参照に追加)
     print(f"[Stage2-Gemini] Imagen でラフ生成中 (count={count})...")
     gemini_paths = _generate_gemini_rough(
         record, form,
         prompt_override=prompts.get("gemini", ""),
-        stage_dir=stage_dir, count=count, work_key=work_key,
+        stage_dir=stage_dir,
+        count=count,
+        work_key=work_key,
+        extra_ref_paths=[str(p) for p in adobe_guide_paths],
     )
 
-    print(f"[Stage2-Adobe] Firefly でラフ生成中 (count={count})...")
-    adobe_paths = _generate_adobe_rough(
-        record, form,
-        prompt_override=prompts.get("openai", ""),
-        stage_dir=stage_dir, count=count, work_key=work_key,
-    )
-
-    all_paths = list(gemini_paths) + list(adobe_paths)
+    all_paths = list(adobe_guide_paths) + list(gemini_paths)
     print(
-        f"[Stage2] done - Gemini: {len(gemini_paths)} / "
-        f"Adobe: {len(adobe_paths)} / total: {len(all_paths)} imgs"
+        f"[Stage2] done - 構図ガイド: {len(adobe_guide_paths)} / "
+        f"Gemini ラフ: {len(gemini_paths)} / total: {len(all_paths)} files"
     )
     return {
+        "adobe_guide": adobe_guide_paths,
         "gemini": gemini_paths,
-        "adobe": adobe_paths,
         "all": all_paths,
     }

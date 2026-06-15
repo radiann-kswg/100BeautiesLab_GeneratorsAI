@@ -1,18 +1,12 @@
 """
-pipeline/final_generator.py — Stage 3: Gemini i2i キャラデザイン寄せ + Canva フィニッシング
+pipeline/final_generator.py — Stage 5: Canva 作風調整 + 完成画像生成 (2-3 枚)
 Copyright © RadianN_kswg — CC BY-NC 4.0
 
-Stage 2 のラフ画像を起点に本生成を行う 2 ステップ:
+Stage 4 で修正済みの画像を入力に、Canva で作風調整・仕上げを行い完成画像を生成する。
 
-  1. Gemini i2i:
-     Stage 2 の最良ラフを iterate-from として Gemini に渡し、
-     DB 参照画像 + 加工済みプロンプトでキャラクターの原典デザインに寄せる。
-
-  2. Canva フィニッシング:
-     Gemini 精錬後の画像（なければ最良ラフ）を Canva Connect API で
-     デザイン化・書き出しする。
-     ※ Claude アプリの Canva MCP ツール経由でも同等の操作が可能
-       (mcp__claude_ai_Canva__generate-design など)。
+  - 修正済み画像 (Stage 4 出力) を最大 3 枚選び、それぞれ Canva でデザイン化・書き出し
+  - --skip-canva 指定時は Canva をスキップし、修正済み画像をそのまま最終出力とする
+  - 最終出力は stage5_final/ に保存
 """
 
 from __future__ import annotations
@@ -24,35 +18,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-
-def _refine_gemini_i2i(
-    record: dict,
-    form: str,
-    rough_path: Path,
-    prompt_override: str,
-    stage_dir: Path,
-    work_key: str,
-) -> list[Path]:
-    """Gemini i2i でラフ画像をキャラクターデザインに寄せる。"""
-    from src.gemini.generate import generate_image
-
-    print(f"[Stage3-Gemini] i2i 精錬中 (起点: {rough_path.name})...")
-    try:
-        return generate_image(
-            num=record["data"]["Num"],
-            form=form,
-            work_key=work_key,
-            out_dir=str(stage_dir),
-            count=1,
-            iterate_from=str(rough_path),
-            prompt_override=prompt_override,
-        )
-    except SystemExit as err:
-        print(f"[WARN] Stage3 Gemini i2i: {err}")
-        return []
-    except Exception as err:
-        print(f"[WARN] Stage3 Gemini i2i に失敗: {type(err).__name__}: {err}")
-        return []
+_FINAL_IMAGE_COUNT = 3  # Canva で生成する最大完成画像枚数
 
 
 def _export_canva(
@@ -61,13 +27,14 @@ def _export_canva(
     source_image: Path,
     stage_dir: Path,
     work_key: str,
+    index: int,
 ) -> list[Path]:
     """Canva Connect API で画像をデザイン化して書き出す。"""
     from src.canva.generate import export_via_canva
 
     num = record["data"]["Num"]
     char_name = record["data"].get("Name", f"#{num:03d}")
-    print(f"[Stage3-Canva] デザイン化・書き出し中 (入力: {source_image.name})...")
+    print(f"[Stage5-Canva] ({index}) デザイン化・書き出し中 (入力: {source_image.name})...")
     try:
         return export_via_canva(
             num=num,
@@ -75,89 +42,74 @@ def _export_canva(
             work_key=work_key,
             out_dir=str(stage_dir),
             from_image=str(source_image),
-            title=f"NumberTales #{num:03d} {char_name} {form} [pipeline]",
+            title=f"NumberTales #{num:03d} {char_name} {form} [pipeline-v{index}]",
         )
     except SystemExit as err:
-        print(f"[WARN] Stage3 Canva: {err}")
+        print(f"[WARN] Stage5 Canva ({index}): {err}")
         return []
     except Exception as err:
-        print(f"[WARN] Stage3 Canva 書き出しに失敗: {type(err).__name__}: {err}")
+        print(f"[WARN] Stage5 Canva ({index}) 書き出しに失敗: {type(err).__name__}: {err}")
         return []
 
 
 def generate_final_images(
     record: dict,
     form: str,
-    rough_results: dict[str, list[Path]],
-    prompts: dict,
+    corrected_results: dict[str, list[Path]],
     pipeline_dir: Path,
     work_key: str = "#Works_NumberTales",
     skip_canva: bool = False,
 ) -> dict[str, list[Path]]:
-    """Gemini i2i でラフを精錬し、Canva でフィニッシングする。
+    """Stage 4 修正済み画像を Canva で仕上げ、完成画像を 2-3 枚生成する。
 
     Parameters
     ----------
-    record:        キャラクターレコード
-    form:          形態
-    rough_results: Stage 2 の結果 (generate_rough_images の返却値)
-    prompts:       Stage 1 の精錬プロンプト dict (「gemini」キーを使用)
-    pipeline_dir:  パイプライン出力ルートディレクトリ
-    work_key:      作品キー
-    skip_canva:    True なら Canva 書き出しをスキップ
+    record:            キャラクターレコード
+    form:              形態
+    corrected_results: Stage 4 の結果 (correct_rough_images の返却値)
+    pipeline_dir:      パイプライン出力ルートディレクトリ
+    work_key:          作品キー
+    skip_canva:        True なら Canva をスキップし修正済み画像をそのまま最終出力とする
 
     Returns
     -------
-    {"gemini": list[Path], "canva": list[Path], "all": list[Path]}
+    {"canva": list[Path], "all": list[Path]}
     """
-    stage_dir = pipeline_dir / "stage3_final"
+    stage_dir = pipeline_dir / "stage5_final"
     stage_dir.mkdir(parents=True, exist_ok=True)
 
-    # 起点画像: Gemini ラフ優先、なければ Adobe ラフ
-    gemini_roughs = rough_results.get("gemini") or []
-    adobe_roughs = rough_results.get("adobe") or []
-    best_rough: Path | None = (
-        next((p for p in gemini_roughs if p.exists()), None)
-        or next((p for p in adobe_roughs if p.exists()), None)
-    )
+    # Stage 4 の全出力から最大 _FINAL_IMAGE_COUNT 枚を選ぶ
+    # 修正済み画像を優先し、pass-through 画像で補完
+    source_candidates: list[Path] = []
+    for p in (corrected_results.get("corrected") or []):
+        if p.exists() and p not in source_candidates:
+            source_candidates.append(p)
+    for p in (corrected_results.get("passed") or []):
+        if p.exists() and p not in source_candidates:
+            source_candidates.append(p)
 
-    gemini_final: list[Path] = []
-    if best_rough:
-        gemini_final = _refine_gemini_i2i(
-            record, form,
-            rough_path=best_rough,
-            prompt_override=prompts.get("gemini", ""),
-            stage_dir=stage_dir,
-            work_key=work_key,
-        )
-    else:
-        print("[WARN] Stage3: ラフ画像が見つかりません。Gemini i2i をスキップします。")
+    sources = source_candidates[:_FINAL_IMAGE_COUNT]
 
-    # Canva の入力: Gemini 精錬後 > 最良ラフ
-    canva_source = (
-        next((p for p in gemini_final if p.exists()), None)
-        or best_rough
-    )
-    canva_final: list[Path] = []
+    if not sources:
+        print("[WARN] Stage5: 入力画像が見つかりません。Stage 5 をスキップします。")
+        return {"canva": [], "all": []}
+
+    print(f"[Stage5] 仕上げ対象: {len(sources)} 枚 (最大 {_FINAL_IMAGE_COUNT} 枚)")
+
     if skip_canva:
-        print("[INFO] Stage3: --skip-canva のため Canva をスキップします。")
-    elif canva_source and canva_source.exists():
-        canva_final = _export_canva(
-            record, form,
-            source_image=canva_source,
-            stage_dir=stage_dir,
-            work_key=work_key,
-        )
-    else:
-        print("[WARN] Stage3: Canva の入力画像が見つかりません。Canva をスキップします。")
+        print("[INFO] Stage5: --skip-canva のため Canva をスキップします。修正済み画像を最終出力とします。")
+        return {"canva": [], "all": sources}
 
-    all_paths = list(gemini_final) + list(canva_final)
+    canva_final: list[Path] = []
+    for i, src in enumerate(sources, 1):
+        paths = _export_canva(record, form, src, stage_dir, work_key, i)
+        canva_final.extend(paths)
+
+    all_paths = canva_final if canva_final else sources
     print(
-        f"[Stage3] done - Gemini: {len(gemini_final)} / "
-        f"Canva: {len(canva_final)} / total: {len(all_paths)} files"
+        f"[Stage5] done - Canva 書き出し: {len(canva_final)} 枚 / 最終出力: {len(all_paths)} 枚"
     )
     return {
-        "gemini": gemini_final,
         "canva": canva_final,
         "all": all_paths,
     }

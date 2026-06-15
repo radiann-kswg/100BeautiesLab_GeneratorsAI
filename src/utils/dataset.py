@@ -1365,6 +1365,11 @@ def build_dalle_prompt(
 
     return (
         "このキャラクターを描いてください。\n\n"
+        "[最優先ルール - 画像内テキスト禁止]\n"
+        "- 画像の中に文字・単語・文章・ラベル・サインを一切描かないこと\n"
+        "- 参照画像に含まれる注釈・テキストを再現しないこと\n"
+        "- キャラクター番号はバッジ・刻印の造形として描くこと（文字としてではなく）\n"
+        "- [STRICT] Do NOT render any text, words, labels, signs, or annotations in the image.\n\n"
         f"{revision_section}"
         "[参照画像]\n"
         f"- 可能であれば以下の既存画像も参照してください。\n"
@@ -1383,7 +1388,9 @@ def build_dalle_prompt(
         f"[混入禁止 (別形態由来)]\n{cross_form_block}\n\n"
         f"[避けるべき要素]\n{negative_visuals}"
         f"{art_style_block}"
-        f"{scene_block}"
+        f"{scene_block}\n\n"
+        "[再確認 - 絶対禁止] 画像内に文字・テキスト・ラベルを一切描かないこと。"
+        " Do NOT render any text, words, labels, or signs in the image."
     )
 
 
@@ -1526,6 +1533,11 @@ def build_gemini_prompt(
 
     prompt = (
         "以下の参照画像と同じキャラクターを、別のポーズで描いてください。\n\n"
+        "[最優先ルール - 画像内テキスト禁止]\n"
+        "- 画像の中に文字・単語・文章・ラベル・サイン・注釈を一切描かないこと\n"
+        "- 参照画像に含まれる注釈・ラベル・テキスト要素を画像内に再現しないこと\n"
+        "- キャラクターの番号はバッジ・刻印の「造形」として描くこと（浮かぶ文字・テキストとしてではなく）\n"
+        "- [STRICT] Do NOT render any text, words, sentences, labels, signs, or annotations in the image.\n\n"
         f"{revision_section}"
         f"[参照画像URL]\n{ref_urls or '- (なし)'}\n\n"
         "[参照画像ローカル]\n- ローカル画像はAPIリクエスト時に添付されます。\n\n"
@@ -1547,7 +1559,9 @@ def build_gemini_prompt(
         f"[パレット参考]\n"
         f"primary: {palette.get('primary', '')}\n"
         f"secondary: {palette.get('secondary', '')}\n"
-        f"accent: {palette.get('accent', '')}"
+        f"accent: {palette.get('accent', '')}\n\n"
+        "[再確認 - 絶対禁止] 画像内に文字・テキスト・ラベル・サインを一切描かないこと。"
+        " Do NOT render any text, words, labels, or signs anywhere in the image."
     )
 
     return {
