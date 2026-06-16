@@ -14,7 +14,9 @@
 
 特徴:
   - 1キャラ/形態が失敗しても次へ進む。最終にサマリー表示。
-  - 各実行は通常通り ``output/{タイムスタンプ}_{provider}_{form}_num{NNN}/`` に出力。
+  - 各実行は通常通り 3 階層レイアウト
+    ``output/{YYYYMMDD}/{YYYYMMDD_HH}/{ts}_{provider}_{form}_num{NNN}/`` に出力
+    (生成は ``src/utils/paths.py`` の ``build_run_output_dir()``)。
   - 形態フィルタ (B拡張): humanoid を指定したキャラクターでも、
     そのキャラクターに humanoid 形態の AI ヒントが無い場合は警告して skip する
     (``--skip-no-hints`` がデフォルト ON)。

@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(.venv/Scripts/python.exe -c ' *)",
+      "Bash(GEMINI_TEXT_MODEL=gemini-2.5-flash .venv/Scripts/python.exe -m src.pipeline.text_pipeline --num 57 --mode caption --prompt \"図書館で本を読んでいるシーン\")",
+      "Bash(PYTHONIOENCODING=utf-8 PYTHONUTF8=1 GEMINI_TEXT_MODEL=gemini-2.5-flash .venv/Scripts/python.exe -m src.pipeline.text_pipeline --num 57 --mode caption --prompt \"図書館で本を読んでいるシーン\")",
+      "Bash(PYTHONIOENCODING=utf-8 PYTHONUTF8=1 GEMINI_TEXT_MODEL=gemini-2.5-flash MANIFEST_PATH=_creations-ai/ai-dataset/manifest.jsonl .venv/Scripts/python.exe -m src.pipeline.text_pipeline --num 57 --mode caption --prompt \"図書館で本を読んでいるシーン\")"
+    ]
+  }
+}

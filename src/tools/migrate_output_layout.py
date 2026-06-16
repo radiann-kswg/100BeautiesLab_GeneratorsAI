@@ -17,7 +17,9 @@ Copyright © RadianN_kswg — CC BY-NC 4.0
 
 既存レイアウトの対応パターン:
 
-    1. `output/{date}/{ts}_{provider}_{form}_num{NNN}/` (現行 2 階層・理想形)
+    1. `output/{date}/{ts}_{provider}_{form}_num{NNN}/` (現行 2 階層・単体キャラ・理想形)
+        → 何もしない (skip)
+    1b. `output/{date}/{ts}_{provider}_{form}_nums{AAA}_{BBB}/` (現行 2 階層・合同キャラ)
         → 何もしない (skip)
     2. `output/{date}/{date}_{HH}/{ts}_{provider}_{form}_num{NNN}/` (旧 3 階層)
         → `{date}/{run}/` へ引き上げ、空になった `{date}_{HH}/` は削除
@@ -60,7 +62,7 @@ _DATE_RE = re.compile(r"^\d{8}$")
 _DATE_HH_RE = re.compile(r"^(\d{8})_(\d{2})$")
 _RUN_DIR_RE = re.compile(
     r"^(?P<date>\d{8})_(?P<hh>\d{2})(?P<mmss>\d{4})_(?P<provider>[A-Za-z0-9]+)_"
-    r"(?P<form>[A-Za-z0-9-]+)_num(?P<num>\d{3})(?:_(?P<suffix>[A-Za-z0-9-]+))?$"
+    r"(?P<form>[A-Za-z0-9-]+)_nums?(?P<num>\d{3}(?:_\d{3})*)(?:_(?P<suffix>[A-Za-z0-9-]+))?$"
 )
 _BATCH_PROVIDER_DIR_RE = re.compile(r"^(\d{8})_(\d{2})_([A-Za-z0-9]+)$")
 _PROVIDER_DIR_RE = re.compile(r"^(gemini|openai|anthropic|novelai)$", re.IGNORECASE)
