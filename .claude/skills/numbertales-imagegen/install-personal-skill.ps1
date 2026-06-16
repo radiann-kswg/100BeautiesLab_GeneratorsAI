@@ -13,8 +13,8 @@
 $ErrorActionPreference = 'Stop'
 
 # --- Resolve paths -----------------------------------------------------------
-$src  = $PSScriptRoot                                   # .claude\skills\numbertales-imagegen
-$repo = (Resolve-Path (Join-Path $src '..\..')).Path    # repository root
+$src  = $PSScriptRoot                                      # .claude\skills\numbertales-imagegen
+$repo = (Resolve-Path (Join-Path $src '..\..\..')).Path    # repository root (3 levels up)
 
 Write-Host "Repo root: $repo"
 
