@@ -858,6 +858,25 @@ def _load_form_common_dataset(work_key: str = "#Works_NumberTales") -> dict[str,
     return {}
 
 
+def _filter_immutable_traits_by_form(traits: list[str], form: str) -> list[str]:
+    """immutable_traits リストを指定フォームのみに絞り込む。
+
+    DB 更新 (2026-06-17) により immutable_traits の各エントリ末尾に
+    ``(corefolder)`` / ``(humanoid)`` の形態注記が付くようになった。
+    注記なしエントリ（フォーム共通）はすべての形態で保持する。
+    """
+    other = "humanoid" if form == "corefolder" else "corefolder"
+    result: list[str] = []
+    for t in traits:
+        if not isinstance(t, str):
+            continue
+        lower = t.lower().rstrip()
+        if lower.endswith(f"({other})"):
+            continue
+        result.append(t)
+    return result
+
+
 # 番号印字に関する語彙。identity_tags / immutable_traits / attached_items から
 # 番号関連エントリだけを抽出するために使う。
 # 2026-06-09: 番号印字の再現性向上のため [番号印字仕様] ブロックに集約する目的で追加。
@@ -922,7 +941,7 @@ def _extract_number_print_spec(record: dict[str, Any], form: str) -> list[str]:
     candidates: list[str] = []
     for source in (
         common.get("identity_tags") or [],
-        common.get("immutable_traits") or [],
+        _filter_immutable_traits_by_form(common.get("immutable_traits") or [], form),
         form_data.get("outfit_features") or [],
     ):
         for item in source:
@@ -1019,10 +1038,33 @@ def _build_number_print_block(record: dict[str, Any], form: str) -> str:
             f" Render the digits literally as printed / embroidered text matching \"{num_token}\","
             f" not as stylized shapes, decorative glyphs, or any other number."
         )
-        if form == "corefolder":
+        # NumberMarkLocation (db_record 由来) があればキャラ固有の印字位置を使う。
+        # なければ汎用フォールバックを使用する。
+        db_record = record.get("db_record") or {}
+        nml_entries = db_record.get("NumberMarkLocation") or []
+        form_marks: list[dict] | None = None
+        for nml_entry in nml_entries:
+            if isinstance(nml_entry, dict) and nml_entry.get("Formation") == form:
+                form_marks = nml_entry.get("Marks")
+                break
+        if form_marks:
+            mark_count = len(form_marks)
+            count_word = "1 か所" if mark_count == 1 else f"{mark_count} か所"
             lines.append(
-                "- corefolder では、番号は球体本体の前面中央付近、"
-                "またはハーネス/フードの正面パーツに 1 か所のみ表示する"
+                f"- 番号印字は {count_word} のみ表示すること（重複・追加表示は禁止）。"
+            )
+            for mark in form_marks:
+                if not isinstance(mark, dict):
+                    continue
+                pos_en = (mark.get("MarkPosition_EN") or "").strip()
+                color_en = (mark.get("MarkColor_EN") or "").strip()
+                notation_en = (mark.get("MarkNotation_EN") or "").strip()
+                parts = [p for p in [notation_en, color_en, pos_en] if p]
+                if parts:
+                    lines.append(f"  - {', '.join(parts)}")
+        elif form == "corefolder":
+            lines.append(
+                "- corefolder では、番号は球体本体の原典指定箇所に 1 か所のみ表示する"
                 "（複数箇所への重複表示は禁止）。"
             )
         else:
@@ -1033,7 +1075,9 @@ def _build_number_print_block(record: dict[str, Any], form: str) -> str:
     if spec_lines:
         lines.append("- 番号関連の原典指定（位置・装着方法・装飾形式）:")
         for entry in spec_lines:
-            lines.append(f"  - {entry}")
+            # 表示時にフォーム注記 "(corefolder)" / "(humanoid)" を除去する
+            display = re.sub(r"\s*\((corefolder|humanoid)\)\s*$", "", entry).strip()
+            lines.append(f"  - {display}")
 
     return "\n".join(lines)
 
@@ -1246,7 +1290,9 @@ def build_dalle_prompt(
     references = collect_reference_images(record, form=form)
 
     identity_tags = ", ".join(common.get("identity_tags") or [])
-    immutable_traits = ", ".join(common.get("immutable_traits") or [])
+    immutable_traits = ", ".join(
+        _filter_immutable_traits_by_form(common.get("immutable_traits") or [], form)
+    )
     form_tags = ", ".join(form_data.get("form_tags") or [])
     form_silhouette_body, form_silhouette_attached = _extract_silhouette_notes_for_prompt(
         form_data, form
@@ -1583,7 +1629,7 @@ def build_gemini_prompt(
         f"[形態固定ルール]\n{form_lock}\n\n"
         f"[識別記号 (必ず満たしてください)]\n"
         f"- {identity_tags}\n"
-        f"- 不変属性: {', '.join(common.get('immutable_traits') or []) or '(なし)'}\n"
+        f"- 不変属性: {', '.join(_filter_immutable_traits_by_form(common.get('immutable_traits') or [], form)) or '(なし)'}\n"
         f"- {form_tags}\n\n"
         f"{silhouette_block}"
         f"{form_common_block}\n\n"

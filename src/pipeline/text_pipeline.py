@@ -47,6 +47,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -127,7 +128,9 @@ def _build_char_summary(record: dict) -> str:
         lines.append(f"名前: {name}" + (f" (#{num})" if num else ""))
     immutable = common.get("immutable_traits") or []
     if immutable:
-        lines.append(f"不変特徴: {', '.join(immutable)}")
+        # (corefolder) / (humanoid) の形態注記はテキスト文脈では不要なので除去して表示する
+        immutable_display = [re.sub(r"\s*\((corefolder|humanoid)\)\s*$", "", t) for t in immutable]
+        lines.append(f"不変特徴: {', '.join(immutable_display)}")
     identity = common.get("identity_tags") or []
     if identity:
         lines.append(f"識別記号: {', '.join(identity)}")
@@ -206,10 +209,11 @@ def _review_gemini(
     immutable = common.get("immutable_traits") or []
     name = record["data"].get("Name", "Unknown")
 
+    immutable_display = [re.sub(r"\s*\((corefolder|humanoid)\)\s*$", "", t) for t in immutable]
     review_prompt = (
         f"以下は「{name}」というキャラクターについての{mode}テキストです。\n\n"
         "[このキャラクターの不変特徴（必ず正確に反映すること）]\n"
-        + ("\n".join(f"- {t}" for t in immutable) or "- （未設定）")
+        + ("\n".join(f"- {t}" for t in immutable_display) or "- （未設定）")
         + f"\n\n[レビュー対象テキスト]\n{primary_text}\n\n"
         "上記テキストをレビューし、改善したテキストのみを出力してください。"
         "（レビューコメント・説明文は不要）"

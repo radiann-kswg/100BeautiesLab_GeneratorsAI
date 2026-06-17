@@ -21,7 +21,7 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from src.utils import find_character  # noqa: E402
-from src.utils.dataset import collect_reference_images  # noqa: E402
+from src.utils.dataset import collect_reference_images, _filter_immutable_traits_by_form  # noqa: E402
 
 
 def collect_character_data(
@@ -115,7 +115,9 @@ def _build_character_spec(record: dict, form: str) -> dict:
 
     return {
         "identity_tags": common.get("identity_tags") or [],
-        "immutable_traits": common.get("immutable_traits") or [],
+        "immutable_traits": _filter_immutable_traits_by_form(
+            common.get("immutable_traits") or [], form
+        ),
         "form_tags": form_data.get("form_tags") or [],
         "negative_keywords": form_data.get("negative_keywords") or [],
         "violation_features": violation_features,
