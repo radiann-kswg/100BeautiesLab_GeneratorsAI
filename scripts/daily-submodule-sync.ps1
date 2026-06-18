@@ -25,7 +25,9 @@
 .NOTES
     Windows タスクスケジューラ登録例 (毎朝 9:00):
       schtasks /Create /TN "100BeautiesLab_SubmoduleSync" /SC DAILY /ST 09:00 ^
-        /TR "powershell -NoProfile -ExecutionPolicy Bypass -File \"D:\VisualStudio Code Userfile\100BeautiesLab_GeneratorsAI\scripts\daily-submodule-sync.ps1\""
+        /TR "powershell -NoProfile -ExecutionPolicy Bypass -File \"C:\Visual Studio Code UserFile\100BeautiesLab_GeneratorsAI\scripts\daily-submodule-sync.ps1\""
+
+    ドライブ移動に強い登録は scripts\register-submodule-sync-task.ps1 を利用 (実行場所からパスを自動解決)。
 #>
 [CmdletBinding()]
 param(

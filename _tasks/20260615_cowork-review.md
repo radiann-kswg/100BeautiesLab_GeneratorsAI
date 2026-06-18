@@ -23,7 +23,7 @@
 2. タスクスケジューラ未登録なら登録（毎朝 9:00 / ps1 の .NOTES と同一）:
    ```
    schtasks /Create /TN "100BeautiesLab_SubmoduleSync" /SC DAILY /ST 09:00 ^
-     /TR "powershell -NoProfile -ExecutionPolicy Bypass -File \"D:\VisualStudio Code Userfile\100BeautiesLab_GeneratorsAI\scripts\daily-submodule-sync.ps1\""
+     /TR "powershell -NoProfile -ExecutionPolicy Bypass -File \"C:\Visual Studio Code UserFile\100BeautiesLab_GeneratorsAI\scripts\daily-submodule-sync.ps1\""
    ```
    登録確認: `schtasks /Query /TN "100BeautiesLab_SubmoduleSync"`
 3. 実機スクリプトが `20260615_submodule-sync.md` を生成したら、次回の本レビューで差分を点検する。
