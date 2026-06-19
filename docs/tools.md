@@ -237,6 +237,36 @@ python -m src.pipeline.stage_cli status --run-dir <RUN_DIR>
 - Claude パーソナルスキル: `nt-pipeline-split`(分割パイプライン), `nt-gemini-image` /
   `nt-openai-image` / `nt-text`(単体 LLM)として配布。
 
+## 同期チェッカ (`src.tools.check_sync`)
+
+サンドボックス(FUSE マウント)が対象ファイルを完全に反映しているか(=同期済みか)を
+判定する汎用ツール。Cowork 等では Windows 側で編集した直後のファイルがマウント上で
+旧版/切り詰めとして見えることがある(eventual consistency)。本ツールは対象が
+「壊れず完全に読める」ことを確認し、任意で部分文字列・SHA256 と照合する。
+CI・予約タスク・オーケストレータから繰り返し呼ぶ用途を想定。
+
+```bash
+python -m src.tools.check_sync src/pipeline/stage_cli.py
+python -m src.tools.check_sync FILE --expect-substr "main()"
+python -m src.tools.check_sync FILE --expect-sha256 <hex>
+python -m src.tools.check_sync --manifest sync_manifest.json --strict   # 予約タスク/CI: 未同期で exit 1
+python -m src.tools.check_sync FILE --json                              # 機械可読出力
+```
+
+| フラグ | 説明 |
+|---|---|
+| `files...` | 判定対象(複数可) |
+| `--expect-substr` | 全対象に共通で要求する部分文字列(機能追加の確認) |
+| `--expect-sha256` | 単一対象の期待 SHA256(厳密同期) |
+| `--manifest` | `{"files":{path:{expect_substr,sha256}}}` 形式の JSON |
+| `--strict` | 未同期(いずれか pending)なら exit 1 |
+| `--json` | 機械可読 JSON 出力 |
+
+- 判定: 存在/非空 → `.py` は `ast.parse`(切り詰め検出) → `--expect-substr` → ハッシュ照合。
+- 実装: [src/tools/check_sync.py](../src/tools/check_sync.py)
+- 活用例: 予約タスク `mount-sync-watch-stagecli`(30分毎)がこれを `--strict` で呼び、
+  `stage_cli.py` の合同機能が完全反映されたら通知して自己停止する。
+
 ## パーソナルスキル `numbertales-imagegen`
 
 `image_pipeline` / `batch_generate` を自然文依頼から実行するためのスキル一式。
