@@ -228,7 +228,10 @@ python -m src.pipeline.stage_cli status --run-dir <RUN_DIR>
 - 実装: [src/pipeline/stage_cli.py](../src/pipeline/stage_cli.py)
 - 状態ファイル: `<run-dir>/pipeline_state.json`(各ステージが冪等に追記)。
 - `generate_final_images()` に `count` 引数を追加済み(Stage5 を 1 枚ずつ呼ぶための拡張)。
-- 制約: 合同(複数キャラ 1 枚合成)は未対応。合同は `image_pipeline --nums` を使う。
+- 合同(複数キャラ 1 枚合成)も分割実行に対応(`state["mode"]=="combined"`)。
+  `stage1 --nums 24,42` で開始し、`stage3`/`stage4` は `--num` でキャラ指定、
+  `stage5` で全員のベストを Gemini マルチ参照で 1 枚に合成する。
+  ワンショットで回せる環境では従来どおり `image_pipeline --nums` でもよい。
 - Canva 仕上げ(Stage5b)は `api.canva.com` 到達環境でのみ `--with-canva` で有効。
   到達不可環境では既定スキップし、接続済み Canva / Adobe Express MCP で代替する。
 - Claude パーソナルスキル: `nt-pipeline-split`(分割パイプライン), `nt-gemini-image` /
