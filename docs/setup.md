@@ -143,7 +143,18 @@ FORM_COMMON_DATASET_PATH=
 
 # 創作 DB パッケージ参照を一時的に無効化したい場合
 CREATIONS_DB_PACKAGE_ENABLE=1
+
+# パス・実行系 (任意。パーソナルスキル/ランチャーから任意 cwd で実行する場合に使う)
+NUMBERTALES_REPO=                       # ランチャーが使うリポジトリルートの明示指定 (最優先)
+PROJECT_ROOT=                           # src 側の基準ルート。manifest/creations-db/形態共通データの解決に使用
+                                        #   未設定時はモジュール位置 (src/utils) から自動解決
+MANIFEST_PATH=                          # manifest.jsonl の上書き。未設定時は PROJECT_ROOT/_creations-ai/ai-dataset/manifest.jsonl
 ```
+
+> `load_manifest` は cwd ではなく `PROJECT_ROOT` 基準で `manifest.jsonl` を探すため、
+> リポジトリルート以外から実行しても動く。ランチャー (`bin/ntimg.ps1` / `bin/ntimg.sh`) は
+> `PROJECT_ROOT` / `PYTHONPATH` を自動設定する。詳細は
+> [`.claude/skills/numbertales-imagegen/REFERENCE.md`](../.claude/skills/numbertales-imagegen/REFERENCE.md)。
 
 ### プロバイダ別の鍵メモ
 

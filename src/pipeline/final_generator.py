@@ -136,8 +136,9 @@ def generate_final_images(
     work_key: str = "#Works_NumberTales",
     skip_canva: bool = False,
     prompts: dict | None = None,
+    count: int | None = None,
 ) -> dict[str, list[Path]]:
-    """Stage 4 修正済み画像を全枚俯瞰して合成し、Canva で仕上げた完成画像を 3 枚生成する。
+    """Stage 4 修正済み画像を全枚俯瞰して合成し、Canva で仕上げた完成画像を生成する。
 
     Parameters
     ----------
@@ -148,6 +149,8 @@ def generate_final_images(
     work_key:          作品キー
     skip_canva:        True なら Canva をスキップし合成画像をそのまま最終出力とする
     prompts:           Stage 1 プロンプト dict (base_gemini キーを合成プロンプトに使用)
+    count:             合成枚数 (None なら既定 _FINAL_IMAGE_COUNT)。
+                       時間制約環境で 1 枚ずつ呼び出す分割運用のために外部指定可能。
 
     Returns
     -------
@@ -157,6 +160,8 @@ def generate_final_images(
         "all":   list[Path]  — 最終出力 (canva があれば canva, なければ synth)
     }
     """
+    n_final = count if (count and count > 0) else _FINAL_IMAGE_COUNT
+
     stage_dir = pipeline_dir / "stage5_final"
     stage_dir.mkdir(parents=True, exist_ok=True)
 
@@ -177,7 +182,7 @@ def generate_final_images(
 
     print(
         f"[Stage5] 仕上げ対象: Stage4 全 {len(all_stage4)} 枚を俯瞰して"
-        f" {_FINAL_IMAGE_COUNT} 枚合成"
+        f" {n_final} 枚合成"
     )
 
     # Stage 5a: Gemini マルチ参照合成
@@ -189,15 +194,15 @@ def generate_final_images(
         base_prompt=base_prompt,
         synth_dir=synth_dir,
         work_key=work_key,
-        count=_FINAL_IMAGE_COUNT,
+        count=n_final,
     )
 
     if not synth_images:
         print(
             "[WARN] Stage5-Synth 失敗。Stage 4 先頭"
-            f" {_FINAL_IMAGE_COUNT} 枚をフォールバックとして使用します。"
+            f" {n_final} 枚をフォールバックとして使用します。"
         )
-        synth_images = all_stage4[:_FINAL_IMAGE_COUNT]
+        synth_images = all_stage4[:n_final]
 
     print(f"[Stage5-Synth] done - {len(synth_images)} 枚合成完了")
 
@@ -213,8 +218,8 @@ def generate_final_images(
 
     all_paths = canva_final if canva_final else synth_images
     print(
-        f"[Stage5] done - 合成: {len(synth_images)} 枚 / Canva: {len(canva_final)} 枚"
-        f" / 最終: {len(all_paths)} 枚"
+        f"[Stage5] done - synth {len(synth_images)} / canva {len(canva_final)}"
+        f" / final {len(all_paths)}"
     )
     return {
         "synth": synth_images,

@@ -29,3 +29,7 @@ Thumbs.db
 # Editor
 .vscode/settings.json
 *.swp
+
+# Skill (numbertales-imagegen) — machine-specific config / build artifacts
+.claude/skills/numbertales-imagegen/repo_path.txt
+*.skill

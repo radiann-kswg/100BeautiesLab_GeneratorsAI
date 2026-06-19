@@ -689,9 +689,10 @@ def load_manifest(manifest_path: str | None = None) -> list[dict[str, Any]]:
     manifest-training.jsonl は学習許可済みサブセットで、生成では使用しない。
     パスは環境変数 MANIFEST_PATH で上書き可能。
     """
-    path = manifest_path or os.environ.get(
-        "MANIFEST_PATH",
-        "_creations-ai/ai-dataset/manifest.jsonl",
+    path = (
+        manifest_path
+        or os.environ.get("MANIFEST_PATH")
+        or str(_project_root() / "_creations-ai" / "ai-dataset" / "manifest.jsonl")
     )
     records: list[dict[str, Any]] = []
     with open(path, encoding="utf-8") as f:
@@ -750,10 +751,21 @@ def _is_creations_db_pkg_enabled() -> bool:
     }
 
 
-def _creations_db_repo_root() -> Path:
-    project_root = Path(
+def _project_root() -> Path:
+    """リポジトリルートを解決する（cwd 非依存）。
+
+    優先順: 環境変数 ``PROJECT_ROOT`` → このファイル位置から 3 つ上
+    (``src/utils/dataset.py`` の ``parents[2]`` = リポジトリルート)。
+    パーソナルスキル/ランチャー経由で任意の cwd から実行されても
+    manifest や creations-db を正しく解決できるようにするための基準点。
+    """
+    return Path(
         os.environ.get("PROJECT_ROOT", Path(__file__).resolve().parents[2])
     )
+
+
+def _creations_db_repo_root() -> Path:
+    project_root = _project_root()
     return Path(
         os.environ.get(
             "CREATIONS_DB_REPO_ROOT", project_root / "_creations-ai" / "creations-db"

@@ -203,3 +203,54 @@ env `CREATIONS_DB_PACKAGE_ENABLE` で動作切替。
 3. CI 連携を想定するなら `--strict` (exit 1) と `--json` (機械可読) を揃える。
 4. **必ずこの `docs/tools.md` に節を追加する** 。コマンド例 + フラグ表 + 主要オプションの説明を最小セット。
 5. AGENTS.md / copilot-instructions.md のクイックリファレンスにも 1 行載せる。
+
+## ステージ分割 CLI (`src.pipeline.stage_cli`)
+
+時間制約のある実行環境(例: Cowork サンドボックスの 1 コマンド 45 秒上限・バックグラウンド
+常駐不可)向けに、`image_pipeline` の 5 ステージを「呼び出し単位」で分割実行する CLI。
+ステージ間の受け渡しは run-dir 直下の `pipeline_state.json` に永続化される。
+
+```bash
+# Stage1: プロンプト生成 + run-dir/state 作成 (最終行に RUN_DIR= を出力)
+python -m src.pipeline.stage_cli stage1 --num 57 --form corefolder --scene "図書館で本を読むシーン"
+# Stage2: キャラクター DB データ取得
+python -m src.pipeline.stage_cli stage2 --run-dir <RUN_DIR>
+# Stage3: ラフを 1 枚ずつ生成 (繰り返し呼ぶと state に追記)
+python -m src.pipeline.stage_cli stage3 --run-dir <RUN_DIR> --count 1
+# Stage4: 違反修正 (--limit/--offset で 1 枚ずつ処理可)
+python -m src.pipeline.stage_cli stage4 --run-dir <RUN_DIR> --limit 1
+# Stage5: 合成完成画像 (既定 Canva スキップ・1 枚ずつ追記)。--with-canva で Canva 仕上げ
+python -m src.pipeline.stage_cli stage5 --run-dir <RUN_DIR> --count 1
+# 進捗確認
+python -m src.pipeline.stage_cli status --run-dir <RUN_DIR>
+```
+
+- 実装: [src/pipeline/stage_cli.py](../src/pipeline/stage_cli.py)
+- 状態ファイル: `<run-dir>/pipeline_state.json`(各ステージが冪等に追記)。
+- `generate_final_images()` に `count` 引数を追加済み(Stage5 を 1 枚ずつ呼ぶための拡張)。
+- 制約: 合同(複数キャラ 1 枚合成)は未対応。合同は `image_pipeline --nums` を使う。
+- Canva 仕上げ(Stage5b)は `api.canva.com` 到達環境でのみ `--with-canva` で有効。
+  到達不可環境では既定スキップし、接続済み Canva / Adobe Express MCP で代替する。
+- Claude パーソナルスキル: `nt-pipeline-split`(分割パイプライン), `nt-gemini-image` /
+  `nt-openai-image` / `nt-text`(単体 LLM)として配布。
+
+## パーソナルスキル `numbertales-imagegen`
+
+`image_pipeline` / `batch_generate` を自然文依頼から実行するためのスキル一式。
+実体は [.claude/skills/numbertales-imagegen/](../.claude/skills/numbertales-imagegen/) にあり、
+デスクトップ版 Claude / Claude Code / Cowork のいずれからでも、**任意の cwd から**実行できる。
+
+- ランチャー (パス非依存): `bin/ntimg.ps1`(Windows) / `bin/ntimg.sh`(bash・macOS・Cowork)。
+  リポジトリルートを `NUMBERTALES_REPO` → `repo_path.txt` → スクリプト位置 4 階層上 の順で解決し、
+  `PROJECT_ROOT` / `PYTHONPATH` を設定して `python -m <module>` を起動する。
+  モジュール切替は `-Module`(ps1) / `NT_MODULE`(sh)。
+- 実行環境の指針: 実機(鍵あり・ネット可)では直接実行、Cowork サンドボックス等では
+  実行せず組み立てたコマンドを提示(時間制約下では `stage_cli` で分割実行)。
+- インストール(常に最新): `install-personal-skill.ps1` がリポジトリ内実体への
+  ジャンクションを `~/.claude/skills/` に張る。`git pull` で全環境が最新化される。
+  `repo_path.txt`(機種固有・`.gitignore` 済み)も自動生成。
+- 配布(スナップショット): `build-skill-package.ps1` が `numbertales-imagegen.skill`(zip)を生成。
+  `repo_path.txt` は除外され、設置先で `NUMBERTALES_REPO`/配置位置から repo を解決する。
+- 詳細: [.claude/skills/numbertales-imagegen/REFERENCE.md](../.claude/skills/numbertales-imagegen/REFERENCE.md)
+- 関連 src 変更: `load_manifest` を `PROJECT_ROOT` 基準に変更し cwd 非依存化
+  ([src/utils/dataset.py](../src/utils/dataset.py))。
