@@ -1,8 +1,8 @@
 """
-pipeline/rough_generator.py — Stage 2: Adobe 構図ガイド + Gemini Imagen 大枠生成
+pipeline/rough_generator.py — Stage 3: Adobe 構図ガイド + Gemini Imagen 大枠生成
 Copyright © RadianN_kswg — CC BY-NC 4.0
 
-Stage 1 で加工されたプロンプトを使い、各プロバイダの得意分野を活かしてラフを生成する。
+Stage 1 で加工されたプロンプトを使い、Gemini Imagen でラフを生成する。
 
 役割分担:
   - Adobe (非 Firefly):
@@ -13,7 +13,7 @@ Stage 1 で加工されたプロンプトを使い、各プロバイダの得意
       Gemini 加工プロンプト + DB 参照画像 + 構図ガイドを入力として
       キャラクターの大枠イラストを生成する。
 
-Stage 3 では Gemini i2i でデザイン寄せ → Canva で原典すり合わせを行う。
+Stage 3 では Gemini T2I/i2i でラフを生成し、Stage 4 で gpt-image-1 外科的修正を行う。
 """
 
 from __future__ import annotations
@@ -77,6 +77,7 @@ def _generate_gemini_rough(
     except Exception as err:
         print(f"[WARN] Stage2 Gemini 生成に失敗: {type(err).__name__}: {err}")
         return []
+
 
 
 def _generate_adobe_composition_guide(
@@ -177,14 +178,14 @@ def generate_rough_images(
     stage_dir.mkdir(parents=True, exist_ok=True)
 
     # Step A: Adobe で構図ガイドを作成
-    print(f"[Stage2-Adobe] DB 参照画像から構図ガイドを生成中 (form={form})...")
+    print(f"[Stage3-Adobe] DB 参照画像から構図ガイドを生成中 (form={form})...")
     adobe_guide_paths = _generate_adobe_composition_guide(
         record, form, stage_dir, scene, background, style, work_key
     )
     if adobe_guide_paths:
-        print(f"[Stage2-Adobe] done - {len(adobe_guide_paths)} 枚の構図ガイドを作成")
+        print(f"[Stage3-Adobe] done - {len(adobe_guide_paths)} 枚の構図ガイドを作成")
     else:
-        print("[Stage2-Adobe] 構図ガイドなし (参照画像不足 or PIL/Adobe 設定未完)。Gemini のみで続行。")
+        print("[Stage3-Adobe] 構図ガイドなし (参照画像不足 or PIL/Adobe 設定未完)。テキスト生成で続行。")
 
     # Step B: Gemini Imagen でラフ生成 (構図ガイドを参照に追加)
     # base_gemini (形態固定ルール・シーン・尻尾数・識別記号等すべてのブロックを含む) を優先使用する。
@@ -193,7 +194,7 @@ def generate_rough_images(
     if scene and "シーン" not in gemini_prompt:
         gemini_prompt = gemini_prompt + f"\n\n[シーン・追加要望]\n- シーン: {scene}"
     mode_label = "i2i" if iterate_from else "T2I"
-    print(f"[Stage2-Gemini] Imagen でラフ生成中 (count={count}, mode={mode_label})...")
+    print(f"[Stage3-Gemini] Imagen でラフ生成中 (count={count}, mode={mode_label})...")
     gemini_paths = _generate_gemini_rough(
         record, form,
         prompt_override=gemini_prompt,
@@ -207,7 +208,7 @@ def generate_rough_images(
 
     all_paths = list(adobe_guide_paths) + list(gemini_paths)
     print(
-        f"[Stage2] done - 構図ガイド: {len(adobe_guide_paths)} / "
+        f"[Stage3] done - 構図ガイド: {len(adobe_guide_paths)} / "
         f"Gemini ラフ: {len(gemini_paths)} / total: {len(all_paths)} files"
     )
     return {

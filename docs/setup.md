@@ -132,7 +132,9 @@ FIREFLY_SIZE=1024x1024                 # 生成サイズ
 FIREFLY_MODEL=                         # 任意: モデルバージョン (省略時は API デフォルト)
 
 # Canva Connect API (provider: canva) — user OAuth アクセストークン
-CANVA_ACCESS_TOKEN=your_canva_oauth_access_token
+CANVA_CLIENT_ID=your_canva_client_id           # OAuth クライアント ID (Developer Portal で確認)
+CANVA_CLIENT_SECRET=your_canva_client_secret   # OAuth クライアントシークレット (同上)
+CANVA_ACCESS_TOKEN=your_canva_oauth_access_token  # 期限切れ時: python -m src.tools.refresh_canva_token
 CANVA_EXPORT_FORMAT=png                # 書き出し形式 (png/jpg/pdf)
 
 # 出力先
@@ -207,4 +209,4 @@ python -m src.gemini.generate --num 57 --form corefolder --count 1
 | (macOS) `permission denied: ./scripts/setup_mac.sh`  | `chmod +x scripts/setup_mac.sh` を実行                                                |
 | (macOS) `python3` が無い                             | `brew install python@3.12` で導入                                                     |
 | Firefly `401 Unauthorized`                           | `FIREFLY_CLIENT_ID` / `FIREFLY_CLIENT_SECRET` を確認。トークンは24hで失効             |
-| Canva `401` / `403`                                  | `CANVA_ACCESS_TOKEN` の OAuth スコープと有効期限を確認。期限切れは再取得              |
+| Canva `401` / `403`                                  | `CANVA_ACCESS_TOKEN` の期限切れ。`python -m src.tools.refresh_canva_token` で再取得（自動的に `.env` を更新）              |

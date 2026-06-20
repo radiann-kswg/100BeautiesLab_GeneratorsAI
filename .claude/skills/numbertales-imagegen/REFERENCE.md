@@ -107,7 +107,9 @@ NT_MODULE=src.openai.generate ./bin/ntimg.sh --num 57 --mode prompt-assist --sce
 | `DALLE_MODEL` / `OPENAI_IMAGE_QUALITY` / `GPT_MODEL` | OpenAI 系モデル指定 |
 | `FIREFLY_CLIENT_ID` / `FIREFLY_CLIENT_SECRET` / `FIREFLY_SIZE` / `FIREFLY_MODEL` | Adobe IMS 認証 |
 | `ADOBE_STORAGE_TYPE` | `local`（既定 PIL fallback）/ `dropbox` / `s3` |
-| `CANVA_ACCESS_TOKEN` / `CANVA_EXPORT_FORMAT` | Canva 仕上げ（`--skip-canva` で不要） |
+| `CANVA_CLIENT_ID` / `CANVA_CLIENT_SECRET` | Canva OAuth2 クライアント資格情報（トークン再取得スクリプトが参照） |
+| `CANVA_ACCESS_TOKEN` / `CANVA_EXPORT_FORMAT` | Canva 仕上げ（`--skip-canva` で不要）。期限切れは `python -m src.tools.refresh_canva_token` で再取得 |
+| `OPENAI_CORRECTION_MODEL` | Stage 4 軽度違反の外科的 i2i 修正に使う gpt-image-1 モデル（例: `gpt-image-1`）。未設定時は Gemini i2i にフォールバック |
 | `OUTPUT_BASE_DIR`（互換 `OUTPUT_DIR`） | 出力ベース |
 | `FORM_COMMON_DATASET_PATH` | 形態共通データセットの上書きパス |
 
@@ -144,6 +146,10 @@ NT_MODULE=src.openai.generate ./bin/ntimg.sh --num 57 --mode prompt-assist --sce
 ```bash
 # 自然文パーサー単体（抽出結果のみ）
 NT_MODULE=src.pipeline.natural_parser ./bin/ntimg.sh "コアフォルダ姿の25(フィズ)がチョコレートを咥えている絵"
+
+# Canva アクセストークン再取得（期限切れ時）
+NT_MODULE=src.tools.refresh_canva_token ./bin/ntimg.sh   # ブラウザで OAuth 認証 → .env 自動更新
+NT_MODULE=src.tools.refresh_canva_token ./bin/ntimg.sh --dry-run   # .env を書き換えず表示のみ
 
 # MIME チェック
 NT_MODULE=src.tools.check_image_mime ./bin/ntimg.sh

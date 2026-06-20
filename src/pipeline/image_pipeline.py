@@ -252,8 +252,10 @@ def run_image_pipeline(
     )
     result.stage3_paths = {k: [str(p) for p in v] for k, v in rough_results.items()}
 
-    if not rough_results["gemini"]:
-        result.errors.append("Stage 3: Gemini ラフ画像が 1 枚も生成できませんでした。")
+    if not rough_results["all"]:
+        result.errors.append(
+            "Stage 3: ラフ画像が 1 枚も生成できませんでした (Gemini・OpenAI ともに失敗)。"
+        )
         result.status = "partial"
         _save_summary(pipeline_dir, result, start_time)
         return result
@@ -966,13 +968,13 @@ def main() -> None:
                 print(f"  [ERROR] {err}")
         s5 = result.stage5_paths.get("all") or []
         s4_all = result.stage4_paths.get("all") or []
-        s3_rough = result.stage3_paths.get("gemini") or []
+        s3_gemini = result.stage3_paths.get("gemini") or []
         if s5:
             print(f"  完成画像 (Stage5): {len(s5)} 枚")
         if s4_all:
             print(f"  修正済みラフ (Stage4): {len(s4_all)} 枚")
-        if s3_rough:
-            print(f"  Gemini ラフ (Stage3): {len(s3_rough)} 枚")
+        if s3_gemini:
+            print(f"  ラフ (Stage3): Gemini {len(s3_gemini)} 枚")
 
     else:
         # 2 件以上の --nums → 全員を 1 枚に合同生成

@@ -4,14 +4,16 @@ Copyright © RadianN_kswg — CC BY-NC 4.0
 
 Stage 3 のラフ5案を入力に、以下の2ステップで修正を行う:
 
-  1. 分析 (OpenAI Vision):
+  1. 分析 (OpenAI Vision / GPT-4o):
      各ラフ画像をキャラクタースペックと照合し、
      「形態として存在しない特徴」「構図の破綻」を列挙する。
      (OPENAI_API_KEY 未設定の場合はスキップし Gemini のみで修正)
 
-  2. 修正 (Gemini i2i):
-     分析結果の違反リストを修正指示に変換し、Gemini i2i で適用する。
-     違反なし・分析スキップのラフはそのまま pass-through する。
+  2. 修正:
+     - 軽度違反 (< _SEVERE_VIOLATION_THRESHOLD): gpt-image-1 images.edit で外科的 i2i 修正。
+       OPENAI_CORRECTION_MODEL 未設定または失敗時は Gemini i2i にフォールバック。
+     - 重度違反 (≥ _SEVERE_VIOLATION_THRESHOLD): Gemini T2I でフル再生成 (形態リセット)。
+     - 違反なし・分析スキップ: pass-through。
 
 出力: stage4_correct/ に修正済み画像を保存。
 Stage 5 はここで生成された画像 (最大 5 枚) を受け取り、3 枚を仕上げる。
@@ -23,6 +25,7 @@ import base64
 import json
 import os
 import sys
+import time
 from pathlib import Path
 
 # 違反件数がこの値以上なら i2i ではなく T2I（フル再生成）に切り替える。
@@ -199,6 +202,79 @@ def _apply_correction_gemini(
 
 
 # ──────────────────────────────────────────
+# gpt-image-1 images.edit による外科的修正
+# ──────────────────────────────────────────
+
+def _apply_correction_openai(
+    record: dict,
+    form: str,
+    rough_path: Path,
+    analysis: dict,
+    stage_dir: Path,
+    work_key: str,
+    index: int,
+) -> list[Path]:
+    """gpt-image-1 images.edit で軽度違反を外科的修正する。
+
+    OPENAI_CORRECTION_MODEL が gpt-image-* 系、かつ OPENAI_API_KEY が設定されている
+    場合のみ動作する。修正は英語の最小化プロンプトで行い、元画像の作風・構図を最大限維持する。
+    失敗時は空リストを返し、呼び出し元が Gemini i2i にフォールバックする。
+    """
+    model = os.environ.get("OPENAI_CORRECTION_MODEL", "")
+    if not model.startswith("gpt-image"):
+        return []
+    if not os.environ.get("OPENAI_API_KEY"):
+        return []
+
+    from src.openai.generate import generate_image_dalle
+
+    violations = analysis.get("violations") or []
+    comp_issues = analysis.get("composition_issues") or []
+    hints = record.get("ai_hints") or {}
+    _common = hints.get("common") or {}
+    identity_tags = ", ".join((
+        (_common.get("identity_tags") or []) + (_common.get("immutable_traits") or [])
+    )[:6])
+    num_val = (record.get("data") or {}).get("Num", "?")
+
+    fix_parts = ["; ".join(violations)] if violations else []
+    if comp_issues:
+        fix_parts.append("; ".join(comp_issues) + " (composition fix)")
+    all_fixes = "; ".join(fix_parts)
+
+    correction_prompt = (
+        "[Surgical i2i correction — preserve all visual style, form, and composition from input image]\n"
+        f"Form: {form}, Character #{num_val}, Identity: {identity_tags}\n"
+        f"ONLY correct: {all_fixes}\n"
+        "Keep EVERYTHING else identical to the input image. No text or labels in the output."
+    )
+
+    correct_subdir = stage_dir / f"rough_{index:02d}_corrected"
+    correct_subdir.mkdir(parents=True, exist_ok=True)
+
+    inter_sleep = float(os.environ.get("OPENAI_IMAGE_SLEEP", "6"))
+    try:
+        print(f"[Stage4-OpenAI] rough_{index:02d}: {model} images.edit で修正中 ({inter_sleep:.0f}秒待機後)...")
+        time.sleep(inter_sleep)
+        path = generate_image_dalle(
+            num=num_val,
+            form=form,
+            work_key=work_key,
+            out_dir=str(correct_subdir),
+            prompt_override=correction_prompt,
+            iterate_from=str(rough_path),
+            model=model,
+        )
+        return [path] if path else []
+    except SystemExit as err:
+        print(f"[WARN] Stage4 OpenAI 修正 (rough_{index:02d}): {err}")
+        return []
+    except Exception as err:
+        print(f"[WARN] Stage4 OpenAI 修正に失敗 (rough_{index:02d}): {type(err).__name__}: {err}")
+        return []
+
+
+# ──────────────────────────────────────────
 # メイン関数
 # ──────────────────────────────────────────
 
@@ -239,7 +315,12 @@ def correct_rough_images(
     stage_dir = pipeline_dir / "stage4_correct"
     stage_dir.mkdir(parents=True, exist_ok=True)
 
-    rough_paths: list[Path] = rough_results.get("gemini") or []
+    # Gemini ラフ + OpenAI ラフ（gpt-image-1 ハイブリッド生成分）を合算する。
+    # "all" には Adobe 構図ガイドも含まれるため、生成物のみを対象にする。
+    rough_paths: list[Path] = (
+        list(rough_results.get("gemini") or []) +
+        list(rough_results.get("openai") or [])
+    )
     if not rough_paths:
         print("[Stage4] ラフ画像がありません。Stage 4 をスキップします。")
         return {"corrected": [], "passed": [], "needs_regen": [], "all": []}
@@ -283,7 +364,16 @@ def correct_rough_images(
                 )
                 needs_regen.append(rough_path)
             else:
-                mode_label = "T2I (形態リセット)" if use_t2i else "i2i (部分修正)"
+                openai_correction_ready = (
+                    os.environ.get("OPENAI_CORRECTION_MODEL", "").startswith("gpt-image")
+                    and bool(os.environ.get("OPENAI_API_KEY"))
+                )
+                if use_t2i:
+                    mode_label = "T2I/Gemini (形態リセット)"
+                elif openai_correction_ready:
+                    mode_label = "i2i/OpenAI (外科的修正) → Gemini fallback"
+                else:
+                    mode_label = "i2i/Gemini (部分修正)"
                 print(
                     f"[Stage4] rough_{i:02d}: 違反 {len(violations)}件・構図問題 {len(comp_issues)}件"
                     f" → {mode_label}"
@@ -291,16 +381,25 @@ def correct_rough_images(
                 for issue in issues[:5]:
                     print(f"           - {issue}")
 
-                corrected_paths = _apply_correction_gemini(
-                    record, form,
-                    rough_path=rough_path,
-                    analysis=analysis,
-                    prompts=prompts,
-                    stage_dir=stage_dir,
-                    work_key=work_key,
-                    index=i,
-                    use_t2i=use_t2i,
-                )
+                if use_t2i:
+                    corrected_paths = _apply_correction_gemini(
+                        record, form, rough_path=rough_path, analysis=analysis,
+                        prompts=prompts, stage_dir=stage_dir, work_key=work_key,
+                        index=i, use_t2i=True,
+                    )
+                else:
+                    corrected_paths = _apply_correction_openai(
+                        record, form, rough_path=rough_path, analysis=analysis,
+                        stage_dir=stage_dir, work_key=work_key, index=i,
+                    )
+                    if not corrected_paths:
+                        print(f"[INFO] Stage4 rough_{i:02d}: OpenAI 修正なし → Gemini i2i にフォールバック")
+                        corrected_paths = _apply_correction_gemini(
+                            record, form, rough_path=rough_path, analysis=analysis,
+                            prompts=prompts, stage_dir=stage_dir, work_key=work_key,
+                            index=i, use_t2i=False,
+                        )
+
                 if corrected_paths:
                     corrected.extend(corrected_paths)
                 else:

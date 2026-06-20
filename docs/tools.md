@@ -271,6 +271,51 @@ python -m src.tools.check_sync FILE --json                              # 機械
 - 活用例: 予約タスク `mount-sync-watch-stagecli`(30分毎)がこれを `--strict` で呼び、
   `stage_cli.py` の合同機能が完全反映されたら通知して自己停止する。
 
+## Canva トークン再取得 (`refresh_canva_token`)
+
+Canva の OAuth2 PKCE フローを Python だけで完結させ、取得したアクセストークンで `.env` を自動更新するツール。
+`CANVA_ACCESS_TOKEN` の有効期限は約4時間なので、Stage 5 で `401` が出たら実行する。
+
+### 前提
+
+`.env` に以下が設定されていること:
+
+```
+CANVA_CLIENT_ID=<your_client_id>
+CANVA_CLIENT_SECRET=<your_client_secret>
+```
+
+値は `E:/Visual Studio Code UserFile/canva-connect-api-starter-kit/demos/playground/.env` に記録済み（初回設定時に `.env` に追記）。
+
+### コマンド
+
+```powershell
+# ブラウザで Canva ログイン → .env の CANVA_ACCESS_TOKEN を自動更新
+python -m src.tools.refresh_canva_token
+
+# .env を書き換えず取得トークンを表示のみ
+python -m src.tools.refresh_canva_token --dry-run
+
+# 別の .env を指定
+python -m src.tools.refresh_canva_token --env path/to/.env
+
+# タイムアウトを延長 (デフォルト 120 秒)
+python -m src.tools.refresh_canva_token --timeout 180
+```
+
+### 手順
+
+1. スクリプトを実行すると認可 URL が表示される
+2. ブラウザでその URL を開き Canva にログイン・「許可」を押す
+3. ブラウザに「認証完了 ✅」が表示されたらターミナルに戻る
+4. `.env` の `CANVA_ACCESS_TOKEN` が自動更新される
+
+- トークンエンドポイント: `https://api.canva.com/rest/v1/oauth/token`（PKCE S256）
+- コールバックポート: `3001`（`http://127.0.0.1:3001/oauth/redirect`）— 他プロセスが使用中の場合は解放してから実行
+- 実装: [src/tools/refresh_canva_token.py](../src/tools/refresh_canva_token.py)
+
+---
+
 ## パーソナルスキル `numbertales-imagegen`
 
 `image_pipeline` / `batch_generate` を自然文依頼から実行するためのスキル一式。

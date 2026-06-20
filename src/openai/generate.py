@@ -79,8 +79,9 @@ def generate_image_dalle(
     iterate_from: str | None = None,
     revisions: list[str] | None = None,
     prompt_override: str | None = None,
+    model: str | None = None,
 ) -> Path | None:
-    """DALL-E 3 でキャラクター画像を生成して保存する。
+    """DALL-E 3 / gpt-image-1 でキャラクター画像を生成して保存する。
 
     Parameters
     ----------
@@ -92,6 +93,7 @@ def generate_image_dalle(
               実際の保存先はその配下に
               ``{YYYYMMDD_HHMMSS}_openai_{form}_num{NNN}/`` を切る。
     size:     画像サイズ ("1024x1024" / "1792x1024" / "1024x1792")
+    model:    モデル名を直接指定する場合に使用。省略時は DALLE_MODEL 環境変数を参照。
 
     Returns
     -------
@@ -109,7 +111,7 @@ def generate_image_dalle(
     if not api_key:
         sys.exit("[ERROR] OPENAI_API_KEY が設定されていません。.env を確認してください。")
 
-    model = os.environ.get("DALLE_MODEL", "dall-e-3")
+    model = model or os.environ.get("DALLE_MODEL", "dall-e-3")
     requested_quality = os.environ.get("OPENAI_IMAGE_QUALITY", "standard")
 
     # iterate-from を解決して suffix を決める。
