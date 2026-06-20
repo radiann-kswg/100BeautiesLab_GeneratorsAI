@@ -169,7 +169,11 @@ _ideas/
 `src/utils/dataset.py` の `collect_reference_images()` が以下を統合する。
 
 1. `ai_hints.*.reference_images[]` (AI 学習データ由来)
-2. レコードの `images[]` (DB 由来)
+2. レコードの `images` (DB 由来・新形式)
+   - `concept[]` / `concept_alt[]`: 文字列パスの配列
+   - `arts[]` / `design_alt[]`: `{path, form, characters:[id...]}` オブジェクトの配列
+     - `characters` フィールドで対象キャラを明示判定（合同構図にも対応）
+     - `form` フィールドがパスに反映されており、`_is_path_compatible_with_form()` で形態互換を確認
 3. `work_common.reference_images.{corefolder_reference[], humanoid_reference[]}` (作品共通設計図 `cnsp-fg_NTsCoreFolder.png` 等)
 
 ### URL → ローカル変換

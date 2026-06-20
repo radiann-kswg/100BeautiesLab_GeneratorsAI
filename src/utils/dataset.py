@@ -561,21 +561,59 @@ def collect_reference_images(
 
     local_values: list[str] = []
     local_candidates: list[str] = []
-    images_by_db = record.get("images") or {}
-    if isinstance(images_by_db, dict):
-        for db_name in ("DB_Primary", "DB_SemiPrimary", "DB_Secondary", "DB_SelfSecondary"):
-            entries = images_by_db.get(db_name) or []
-            if isinstance(entries, str):
-                entries = [entries]
-            if not isinstance(entries, list):
-                continue
-            for rel in entries:
-                if not isinstance(rel, str):
+    images_struct = record.get("images") or {}
+    if isinstance(images_struct, dict):
+        _new_fmt_keys = {"concept", "arts", "design_alt", "concept_alt"}
+        if _new_fmt_keys & images_struct.keys():
+            # 新形式: concept / concept_alt は文字列パスの配列
+            for key in ("concept", "concept_alt"):
+                for item in (images_struct.get(key) or []):
+                    if isinstance(item, str) and item:
+                        path = str(Path(creations_db_base) / item)
+                        if _allow_path(path):
+                            _append_unique(local_candidates, path)
+            # arts / design_alt は {path, form, characters:[id...]} オブジェクトの配列
+            for key in ("arts", "design_alt"):
+                for entry in (images_struct.get(key) or []):
+                    if not isinstance(entry, dict):
+                        continue
+                    rel = entry.get("path")
+                    if not isinstance(rel, str) or not rel:
+                        continue
+                    path = str(Path(creations_db_base) / rel)
+                    if not _is_path_compatible_with_form(path, form):
+                        continue
+                    chars = entry.get("characters")
+                    if chars is not None:
+                        if num_value is None:
+                            continue
+                        char_nums = {
+                            int(c) for c in chars
+                            if isinstance(c, (int, float)) or (isinstance(c, str) and c.isdigit())
+                        }
+                        try:
+                            if int(num_value) not in char_nums:
+                                continue
+                        except (TypeError, ValueError):
+                            continue
+                    elif not _looks_like_target_character(path, num_value):
+                        continue
+                    _append_unique(local_candidates, path)
+        else:
+            # 旧形式: DB_Primary / DB_SemiPrimary / DB_Secondary / DB_SelfSecondary
+            for db_name in ("DB_Primary", "DB_SemiPrimary", "DB_Secondary", "DB_SelfSecondary"):
+                entries = images_struct.get(db_name) or []
+                if isinstance(entries, str):
+                    entries = [entries]
+                if not isinstance(entries, list):
                     continue
-                path = str(Path(creations_db_base) / rel)
-                if not _allow_path(path):
-                    continue
-                _append_unique(local_candidates, path)
+                for rel in entries:
+                    if not isinstance(rel, str):
+                        continue
+                    path = str(Path(creations_db_base) / rel)
+                    if not _allow_path(path):
+                        continue
+                    _append_unique(local_candidates, path)
 
     for forced_path in _collect_forced_local_images(record, form, creations_db_base):
         if _allow_path(forced_path):
