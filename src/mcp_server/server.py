@@ -46,7 +46,9 @@ ISSUER_URL = os.getenv("MCP_ISSUER_URL", "").rstrip("/")
 DEFAULT_WORK_KEY = "#Works_NumberTales"
 
 _oauth_provider = SimpleOAuthProvider() if ISSUER_URL else None
-_auth_settings = AuthSettings(issuer_url=ISSUER_URL) if ISSUER_URL else None
+_auth_settings = (
+    AuthSettings(issuer_url=ISSUER_URL, resource_server_url=None) if ISSUER_URL else None
+)
 
 mcp = FastMCP(
     SERVER_NAME,
