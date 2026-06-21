@@ -65,7 +65,7 @@ OPENAI_API_KEY=your_openai_api_key
 
 # MCP サーバ設定（GCE 上は常に streamable-http）
 MCP_TRANSPORT=streamable-http
-MCP_HOST=127.0.0.1
+HOST=127.0.0.1
 PORT=8000
 
 # 出力シンク（GCE ローカルに保存する場合は local、Drive/GCS を使う場合は変更）
