@@ -38,6 +38,7 @@ job_status(job_id) → {"status": "succeeded", "result": {"outputs": [ {url …}
 | `MCP_TRANSPORT` | `stdio` | `stdio`（ローカル）/ `streamable-http`（リモート） |
 | `PORT` | `8080` | HTTP 待受ポート（Cloud Run が注入） |
 | `HOST` | `0.0.0.0` | 待受ホスト |
+| `MCP_ISSUER_URL` | — | HTTP 運用時の公開 URL（OAuth discovery issuer）。例: `https://mcp.numbertales-radiann.net` |
 | `OUTPUT_SINK` | `local` | `local` / `drive` / `gcs` |
 | `DRIVE_FOLDER_ID` | — | `OUTPUT_SINK=drive` 時のアップロード先フォルダ ID |
 | `GCS_BUCKET` | — | `OUTPUT_SINK=gcs` 時のバケット名 |
@@ -171,8 +172,9 @@ GCE では HTTP トランスポートを使います（Streamable HTTP）。
 
 ```
 MCP_TRANSPORT=streamable-http
-MCP_HOST=127.0.0.1
+HOST=127.0.0.1
 PORT=8000
+MCP_ISSUER_URL=https://mcp.numbertales-radiann.net
 OUTPUT_SINK=local          # GCE ローカル保存（または drive / gcs）
 ```
 

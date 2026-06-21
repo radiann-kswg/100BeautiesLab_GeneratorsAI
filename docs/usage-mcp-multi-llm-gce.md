@@ -67,6 +67,8 @@ OPENAI_API_KEY=your_openai_api_key
 MCP_TRANSPORT=streamable-http
 HOST=127.0.0.1
 PORT=8000
+# OAuth discovery の issuer URL（GCE のドメインに合わせる）
+MCP_ISSUER_URL=https://mcp.numbertales-radiann.net
 
 # 出力シンク（GCE ローカルに保存する場合は local、Drive/GCS を使う場合は変更）
 OUTPUT_SINK=local

@@ -29,18 +29,32 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from mcp.server.auth.settings import AuthSettings
 from mcp.server.fastmcp import FastMCP
 
 from src.mcp_server import output_sink
+from src.mcp_server.auth import SimpleOAuthProvider
 from src.mcp_server.jobs import MANAGER
 
 # ── サーバ設定 ──────────────────────────────────────────────────
 SERVER_NAME = "numbertales_mcp"
 HOST = os.getenv("HOST", "0.0.0.0")
 PORT = int(os.getenv("PORT", "8080"))
+# HTTP transport (GCE/Cloud Run) で OAuth を有効化する場合は公開 URL を設定する
+# 例: https://mcp.numbertales-radiann.net
+ISSUER_URL = os.getenv("MCP_ISSUER_URL", "").rstrip("/")
 DEFAULT_WORK_KEY = "#Works_NumberTales"
 
-mcp = FastMCP(SERVER_NAME, host=HOST, port=PORT)
+_oauth_provider = SimpleOAuthProvider() if ISSUER_URL else None
+_auth_settings = AuthSettings(issuer_url=ISSUER_URL) if ISSUER_URL else None
+
+mcp = FastMCP(
+    SERVER_NAME,
+    host=HOST,
+    port=PORT,
+    auth_server_provider=_oauth_provider,
+    auth=_auth_settings,
+)
 
 
 # ── 列挙・共通モデル ────────────────────────────────────────────
