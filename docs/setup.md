@@ -140,6 +140,16 @@ CANVA_EXPORT_FORMAT=png                # 書き出し形式 (png/jpg/pdf)
 # 出力先
 OUTPUT_BASE_DIR=output                 # 互換のため OUTPUT_DIR も読まれる
 
+# MCP サーバ出力シンク（GCE / Cloud Run でリモート実行する場合）
+OUTPUT_SINK=local                      # local / drive / gcs
+DRIVE_FOLDER_ID=                       # OUTPUT_SINK=drive 時: アップロード先 Drive フォルダ ID
+# Drive ユーザー OAuth — SA はストレージ容量 0 のため storageQuotaExceeded になる
+# GCP Console で OAuth クライアント ID（デスクトップ型）を作成し、
+# scripts/get_drive_token.py でリフレッシュトークンを取得して設定する
+DRIVE_CLIENT_ID=                       # GCP Console の OAuth クライアント ID
+DRIVE_CLIENT_SECRET=                   # OAuth クライアントシークレット
+DRIVE_REFRESH_TOKEN=                   # scripts/get_drive_token.py で取得
+
 # 形態共通データセット (作品別ファイルを上書きしたいときだけ)
 FORM_COMMON_DATASET_PATH=
 

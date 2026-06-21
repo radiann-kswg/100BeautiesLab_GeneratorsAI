@@ -41,14 +41,22 @@ job_status(job_id) → {"status": "succeeded", "result": {"outputs": [ {url …}
 | `MCP_ISSUER_URL` | — | HTTP 運用時の公開 URL（OAuth discovery issuer）。例: `https://mcp.numbertales-radiann.net` |
 | `OUTPUT_SINK` | `local` | `local` / `drive` / `gcs` |
 | `DRIVE_FOLDER_ID` | — | `OUTPUT_SINK=drive` 時のアップロード先フォルダ ID |
+| `DRIVE_CLIENT_ID` | — | Drive OAuth クライアント ID（GCP Console で発行） |
+| `DRIVE_CLIENT_SECRET` | — | Drive OAuth クライアントシークレット |
+| `DRIVE_REFRESH_TOKEN` | — | Drive OAuth リフレッシュトークン（`scripts/get_drive_token.py` で取得） |
 | `GCS_BUCKET` | — | `OUTPUT_SINK=gcs` 時のバケット名 |
 | `GCS_PREFIX` | `numbertales` | GCS オブジェクトキー接頭辞 |
 | `GCS_SIGNED_URL_TTL_SEC` | `604800` | 署名 URL の有効秒数（7 日） |
+| `GOOGLE_APPLICATION_CREDENTIALS` | — | SA キーファイルのパス（GCS 署名 URL 生成に必要） |
 | `GEMINI_API_KEY` / `OPENAI_API_KEY` / `CANVA_ACCESS_TOKEN` | — | パイプラインが使う API キー（`.env` 互換） |
 | `OUTPUT_BASE_DIR` | — | 生成画像のベースディレクトリ |
 
 > **重要**: リモート実行では `OUTPUT_SINK=local` だと生成画像がコンテナ内に残り手元に届きません。
 > 必ず `drive` か `gcs` を指定してください。
+>
+> **Drive 利用時の注意**: GCE のデフォルト SA は Drive ストレージ容量を持たないため
+> `storageQuotaExceeded (403)` が発生します。`DRIVE_REFRESH_TOKEN` を設定して
+> ユーザー OAuth 認証を使うことで解消します（詳細: [docs/setup.md](setup.md) §4）。
 
 ---
 

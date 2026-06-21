@@ -72,10 +72,21 @@ MCP_ISSUER_URL=https://mcp.numbertales-radiann.net
 
 # 出力シンク（GCE ローカルに保存する場合は local、Drive/GCS を使う場合は変更）
 OUTPUT_SINK=local
+# OUTPUT_SINK=drive にする場合は以下も設定する（Drive OAuth — SA はストレージ容量 0 のため必須）
+# DRIVE_FOLDER_ID=your_drive_folder_id
+# DRIVE_CLIENT_ID=your_oauth_client_id
+# DRIVE_CLIENT_SECRET=your_oauth_client_secret
+# DRIVE_REFRESH_TOKEN=your_refresh_token   # scripts/get_drive_token.py でローカル取得 → GCE に貼付
 ```
 
-> **ヒント**: `OUTPUT_SINK=drive` にすると生成画像を Google Drive にアップロードし URL を返してくれます。
-> Drive を使う場合は `DRIVE_FOLDER_ID` も設定し、サービスアカウントと Drive フォルダを共有してください。
+> **Drive 出力の設定手順**: GCE のデフォルト SA は Drive ストレージ容量を持たないため
+> `storageQuotaExceeded (403)` が発生します。以下の手順でユーザー OAuth を設定してください:
+>
+> 1. GCP Console → APIs & Services → 認証情報 → 「OAuth クライアント ID」作成（デスクトップ アプリ）
+> 2. ローカル PC で `pip install google-auth-oauthlib && python scripts/get_drive_token.py`
+> 3. 表示された `DRIVE_CLIENT_ID` / `DRIVE_CLIENT_SECRET` / `DRIVE_REFRESH_TOKEN` を GCE の `.env` に追記
+> 4. アップロード先フォルダの URL から `DRIVE_FOLDER_ID` を取得して設定
+> 5. `sudo systemctl restart numbertales-mcp`
 
 ---
 
