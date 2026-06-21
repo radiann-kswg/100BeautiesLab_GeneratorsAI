@@ -18,6 +18,7 @@
 | [`usage-iterate.md`](usage-iterate.md)       | `--iterate-from` / `--revisions` による i2i (前回画像をベースに改稿) のワークフロー         |
 | [`output-and-logs.md`](output-and-logs.md)   | `output/` の3階層レイアウト、`prompt.txt` / `run_meta.json` / `notes.md` の役割と書式       |
 | [`tools.md`](tools.md)                       | 画像 MIME チェック、output レイアウト移行、形態共通データセットの管理                       |
+| [`mcp-server.md`](mcp-server.md)             | パイプラインを MCP ツール化して公開する `src/mcp_server/`、ローカル/Cloud Run デプロイ、出力シンク(local/drive/gcs) |
 
 ---
 

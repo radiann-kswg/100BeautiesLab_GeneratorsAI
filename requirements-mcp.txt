@@ -1,0 +1,12 @@
+# MCP サーバ用依存（ベース依存 + MCP + 任意の出力シンク）
+-r requirements.txt
+
+# MCP Python SDK（FastMCP を含む）
+mcp>=1.2.0
+
+# ── 出力シンク（使うものだけ入れれば良い） ───────────────────────
+# OUTPUT_SINK=drive のとき
+google-api-python-client>=2.100.0
+google-auth>=2.23.0
+# OUTPUT_SINK=gcs のとき
+google-cloud-storage>=2.10.0

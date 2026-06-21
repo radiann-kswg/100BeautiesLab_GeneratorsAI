@@ -1,0 +1,17 @@
+# ビルドコンテキスト最小化
+.git
+.github
+output/
+**/__pycache__/
+*.pyc
+.env
+.env.*
+!.env.example
+_tasks/
+docs/
+*.md
+!README.md
+numbertales-imagegen.skill
+.venv/
+venv/
+node_modules/

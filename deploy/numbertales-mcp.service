@@ -1,0 +1,17 @@
+[Unit]
+Description=NumberTales Multi-LLM MCP server (Streamable HTTP)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mcp
+WorkingDirectory=/opt/100beautieslab
+EnvironmentFile=/opt/100beautieslab/.env
+ExecStart=/opt/100beautieslab/.venv/bin/python -m src.mcp_server
+Restart=on-failure
+RestartSec=3
+# stdout/stderr は journald へ (journalctl -u numbertales-mcp -f で確認)
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,195 @@
+"""生成画像の出力アダプタ（local / drive / gcs 切替）。
+
+環境変数 ``OUTPUT_SINK`` で送り先を選ぶ:
+
+- ``local`` (既定): ローカルパスをそのまま返す（リモート実行時は手元に届かない点に注意）
+- ``drive``       : Google Drive のフォルダにアップロードし webViewLink を返す
+- ``gcs``         : Google Cloud Storage バケットにアップロードし署名 URL を返す
+
+いずれのシンクも「使う時だけ」依存ライブラリを遅延 import する。
+依存やクレデンシャルが欠けている場合は例外で落とさず、local にフォールバックして
+``note`` に理由を記録する（サーバ全体が止まらないようにするため）。
+"""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+from typing import Any
+
+# ── 環境変数キー ───────────────────────────────────────────────
+ENV_SINK = "OUTPUT_SINK"               # local | drive | gcs
+ENV_DRIVE_FOLDER = "DRIVE_FOLDER_ID"   # アップロード先 Drive フォルダ ID
+ENV_GCS_BUCKET = "GCS_BUCKET"          # アップロード先 GCS バケット名
+ENV_GCS_PREFIX = "GCS_PREFIX"          # GCS オブジェクトキーの接頭辞（任意）
+ENV_SIGNED_TTL = "GCS_SIGNED_URL_TTL_SEC"  # 署名 URL の有効秒数（既定 7 日）
+
+_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+
+
+def current_sink() -> str:
+    """現在の出力シンク名を返す（小文字・未設定なら 'local'）。"""
+    return (os.getenv(ENV_SINK) or "local").strip().lower()
+
+
+def publish(paths: list[str], run_label: str = "") -> list[dict[str, Any]]:
+    """画像パス群を選択中のシンクへ公開し、参照情報のリストを返す。
+
+    Parameters
+    ----------
+    paths:      公開対象のローカル画像ファイルパス
+    run_label:  リモート格納時の整理用ラベル（run-dir 名など）
+
+    Returns
+    -------
+    list[dict] — 各要素は以下のスキーマ::
+
+        {
+            "name":       str,        # ファイル名
+            "local_path": str,        # 生成時のローカルパス
+            "url":        str | None, # 取得用 URL（local シンクでは None）
+            "sink":       str,        # 実際に使われたシンク (local|drive|gcs)
+            "note":       str,        # フォールバック理由など（無ければ空）
+        }
+    """
+    sink = current_sink()
+    files = [p for p in paths if p and Path(p).exists()]
+
+    if not files:
+        return []
+
+    if sink == "drive":
+        return _publish_drive(files, run_label)
+    if sink == "gcs":
+        return _publish_gcs(files, run_label)
+    return _publish_local(files)
+
+
+# ── local ───────────────────────────────────────────────────────
+def _publish_local(files: list[str]) -> list[dict[str, Any]]:
+    return [
+        {
+            "name": Path(p).name,
+            "local_path": str(p),
+            "url": None,
+            "sink": "local",
+            "note": "",
+        }
+        for p in files
+    ]
+
+
+def _fallback(files: list[str], reason: str) -> list[dict[str, Any]]:
+    out = _publish_local(files)
+    for item in out:
+        item["note"] = f"{reason} のため local にフォールバックしました。"
+    return out
+
+
+# ── Google Drive ────────────────────────────────────────────────
+def _publish_drive(files: list[str], run_label: str) -> list[dict[str, Any]]:
+    folder_id = os.getenv(ENV_DRIVE_FOLDER, "").strip()
+    if not folder_id:
+        return _fallback(files, f"{ENV_DRIVE_FOLDER} 未設定")
+
+    try:
+        from googleapiclient.discovery import build  # type: ignore
+        from googleapiclient.http import MediaFileUpload  # type: ignore
+        import google.auth  # type: ignore
+    except ImportError:
+        return _fallback(files, "google-api-python-client 未インストール")
+
+    try:
+        creds, _ = google.auth.default(
+            scopes=["https://www.googleapis.com/auth/drive.file"]
+        )
+        service = build("drive", "v3", credentials=creds, cache_discovery=False)
+    except Exception as e:  # noqa: BLE001 - 認証は多様な例外を投げる
+        return _fallback(files, f"Drive 認証失敗 ({type(e).__name__})")
+
+    results: list[dict[str, Any]] = []
+    for p in files:
+        path = Path(p)
+        try:
+            metadata = {"name": _remote_name(path, run_label), "parents": [folder_id]}
+            media = MediaFileUpload(str(path), resumable=False)
+            created = (
+                service.files()
+                .create(body=metadata, media_body=media, fields="id, webViewLink")
+                .execute()
+            )
+            results.append(
+                {
+                    "name": path.name,
+                    "local_path": str(path),
+                    "url": created.get("webViewLink"),
+                    "sink": "drive",
+                    "note": "",
+                }
+            )
+        except Exception as e:  # noqa: BLE001
+            item = _publish_local([str(path)])[0]
+            item["note"] = f"Drive アップロード失敗 ({type(e).__name__})。"
+            results.append(item)
+    return results
+
+
+# ── Google Cloud Storage ────────────────────────────────────────
+def _publish_gcs(files: list[str], run_label: str) -> list[dict[str, Any]]:
+    bucket_name = os.getenv(ENV_GCS_BUCKET, "").strip()
+    if not bucket_name:
+        return _fallback(files, f"{ENV_GCS_BUCKET} 未設定")
+
+    try:
+        from google.cloud import storage  # type: ignore
+    except ImportError:
+        return _fallback(files, "google-cloud-storage 未インストール")
+
+    try:
+        client = storage.Client()
+        bucket = client.bucket(bucket_name)
+    except Exception as e:  # noqa: BLE001
+        return _fallback(files, f"GCS クライアント初期化失敗 ({type(e).__name__})")
+
+    prefix = os.getenv(ENV_GCS_PREFIX, "numbertales").strip("/")
+    try:
+        ttl = int(os.getenv(ENV_SIGNED_TTL, str(7 * 24 * 3600)))
+    except ValueError:
+        ttl = 7 * 24 * 3600
+
+    results: list[dict[str, Any]] = []
+    for p in files:
+        path = Path(p)
+        object_key = f"{prefix}/{_remote_name(path, run_label)}"
+        try:
+            blob = bucket.blob(object_key)
+            blob.upload_from_filename(str(path))
+            try:
+                from datetime import timedelta
+
+                url = blob.generate_signed_url(
+                    version="v4", expiration=timedelta(seconds=ttl), method="GET"
+                )
+            except Exception:  # noqa: BLE001 - 署名不可な認証では gs:// で代替
+                url = f"gs://{bucket_name}/{object_key}"
+            results.append(
+                {
+                    "name": path.name,
+                    "local_path": str(path),
+                    "url": url,
+                    "sink": "gcs",
+                    "note": "",
+                }
+            )
+        except Exception as e:  # noqa: BLE001
+            item = _publish_local([str(path)])[0]
+            item["note"] = f"GCS アップロード失敗 ({type(e).__name__})。"
+            results.append(item)
+    return results
+
+
+# ── 共通ヘルパ ──────────────────────────────────────────────────
+def _remote_name(path: Path, run_label: str) -> str:
+    """リモート格納名を組み立てる（run ラベルでの衝突回避用プレフィックス付き）。"""
+    label = (run_label or "").strip().replace("/", "_").replace("\\", "_")
+    return f"{label}__{path.name}" if label else path.name

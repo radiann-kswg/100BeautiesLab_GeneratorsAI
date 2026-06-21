@@ -1,0 +1,21 @@
+# GCE リモート MCP サーバ用リバースプロキシ
+# Let's Encrypt 証明書を自動取得・自動更新する (ドメイン名が DNS に解決できること)
+#
+# 使い方:
+#   1. DNS の A レコードを GCE の静的外部 IP に向ける
+#   2. /etc/caddy/Caddyfile としてこのファイルを配置し、
+#      YOUR_DOMAIN を実際のサブドメイン（例: mcp.numbertales-radiann.net）に置き換える
+#   3. sudo systemctl enable --now caddy
+#
+# アプリ (FastMCP) は 127.0.0.1:8000 で待受。外部には直接公開しない。
+# 認証は FastMCP 側の Bearer 検証が担う (MCP_BEARER_TOKEN)。
+
+YOUR_DOMAIN {
+    reverse_proxy 127.0.0.1:8000
+
+    # ログ (オプション)
+    log {
+        output file /var/log/caddy/numbertales-mcp.log
+        format json
+    }
+}
