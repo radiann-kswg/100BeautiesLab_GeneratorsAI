@@ -524,10 +524,7 @@ def _normalize_transport(raw: Optional[str]) -> str:
 
 def main() -> None:
     transport = _normalize_transport(os.getenv("MCP_TRANSPORT"))
-    if transport == "stdio":
-        mcp.run(transport=transport)
-    else:
-        mcp.run(transport=transport, host=HOST, port=PORT)
+    mcp.run(transport=transport)
 
 
 if __name__ == "__main__":
