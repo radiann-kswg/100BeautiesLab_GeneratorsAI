@@ -20,6 +20,10 @@ from typing import Any
 # ── 環境変数キー ───────────────────────────────────────────────
 ENV_SINK = "OUTPUT_SINK"               # local | drive | gcs
 ENV_DRIVE_FOLDER = "DRIVE_FOLDER_ID"   # アップロード先 Drive フォルダ ID
+# Drive ユーザー OAuth（SA はストレージ容量 0 のため必須）
+ENV_DRIVE_CLIENT_ID     = "DRIVE_CLIENT_ID"
+ENV_DRIVE_CLIENT_SECRET = "DRIVE_CLIENT_SECRET"
+ENV_DRIVE_REFRESH_TOKEN = "DRIVE_REFRESH_TOKEN"
 ENV_GCS_BUCKET = "GCS_BUCKET"          # アップロード先 GCS バケット名
 ENV_GCS_PREFIX = "GCS_PREFIX"          # GCS オブジェクトキーの接頭辞（任意）
 ENV_SIGNED_TTL = "GCS_SIGNED_URL_TTL_SEC"  # 署名 URL の有効秒数（既定 7 日）
@@ -87,6 +91,34 @@ def _fallback(files: list[str], reason: str) -> list[dict[str, Any]]:
 
 
 # ── Google Drive ────────────────────────────────────────────────
+def _build_drive_creds():
+    """Drive 用認証情報を取得する。
+
+    DRIVE_REFRESH_TOKEN が設定されていればユーザー OAuth 認証（推奨）。
+    未設定の場合は ADC（SA 認証）にフォールバックするが、個人 SA は
+    Drive ストレージ容量がないため storageQuotaExceeded になることがある。
+    """
+    refresh_token = os.getenv(ENV_DRIVE_REFRESH_TOKEN, "").strip()
+    if refresh_token:
+        from google.oauth2.credentials import Credentials  # type: ignore
+        from google.auth.transport.requests import Request  # type: ignore
+        creds = Credentials(
+            token=None,
+            refresh_token=refresh_token,
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=os.getenv(ENV_DRIVE_CLIENT_ID, ""),
+            client_secret=os.getenv(ENV_DRIVE_CLIENT_SECRET, ""),
+            scopes=["https://www.googleapis.com/auth/drive.file"],
+        )
+        creds.refresh(Request())
+        return creds
+    import google.auth  # type: ignore
+    creds, _ = google.auth.default(
+        scopes=["https://www.googleapis.com/auth/drive.file"]
+    )
+    return creds
+
+
 def _publish_drive(files: list[str], run_label: str) -> list[dict[str, Any]]:
     folder_id = os.getenv(ENV_DRIVE_FOLDER, "").strip()
     if not folder_id:
@@ -95,14 +127,11 @@ def _publish_drive(files: list[str], run_label: str) -> list[dict[str, Any]]:
     try:
         from googleapiclient.discovery import build  # type: ignore
         from googleapiclient.http import MediaFileUpload  # type: ignore
-        import google.auth  # type: ignore
     except ImportError:
         return _fallback(files, "google-api-python-client 未インストール")
 
     try:
-        creds, _ = google.auth.default(
-            scopes=["https://www.googleapis.com/auth/drive.file"]
-        )
+        creds = _build_drive_creds()
         service = build("drive", "v3", credentials=creds, cache_discovery=False)
     except Exception as e:  # noqa: BLE001 - 認証は多様な例外を投げる
         return _fallback(files, f"Drive 認証失敗 ({type(e).__name__})")
