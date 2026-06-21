@@ -29,7 +29,7 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from mcp.server.auth.settings import AuthSettings
+from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions
 from mcp.server.fastmcp import FastMCP
 
 from src.mcp_server import output_sink
@@ -47,7 +47,12 @@ DEFAULT_WORK_KEY = "#Works_NumberTales"
 
 _oauth_provider = SimpleOAuthProvider() if ISSUER_URL else None
 _auth_settings = (
-    AuthSettings(issuer_url=ISSUER_URL, resource_server_url=None) if ISSUER_URL else None
+    AuthSettings(
+        issuer_url=ISSUER_URL,
+        resource_server_url=None,
+        client_registration_options=ClientRegistrationOptions(enabled=True),
+    )
+    if ISSUER_URL else None
 )
 
 mcp = FastMCP(
