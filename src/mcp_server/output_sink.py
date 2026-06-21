@@ -190,6 +190,16 @@ def _publish_gcs(files: list[str], run_label: str) -> list[dict[str, Any]]:
 
 # ── 共通ヘルパ ──────────────────────────────────────────────────
 def _remote_name(path: Path, run_label: str) -> str:
-    """リモート格納名を組み立てる（run ラベルでの衝突回避用プレフィックス付き）。"""
+    """リモート格納名を組み立てる（run ラベルでの衝突回避用プレフィックス付き）。
+
+    同一 run 内で複数ファイルの basename が衝突する場合（stage5 synth の 3 枚など）、
+    親ディレクトリ名（タイムスタンプ入り）を挿入して GCS 上書きを防ぐ。
+    """
     label = (run_label or "").strip().replace("/", "_").replace("\\", "_")
-    return f"{label}__{path.name}" if label else path.name
+    parent = path.parent.name
+    # 親が "." や run_label と同一のときはそのまま
+    if parent and parent != "." and parent != label:
+        unique_name = f"{parent}_{path.name}"
+    else:
+        unique_name = path.name
+    return f"{label}__{unique_name}" if label else unique_name
