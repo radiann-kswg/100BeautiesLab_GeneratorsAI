@@ -1,7 +1,9 @@
-# CLAUDE.md — 100BeautiesLab_GeneratorsAI
+# CLAUDE.Cowork.md — 100BeautiesLab_GeneratorsAI（デスクトップ版 Claude / Cowork 用）
 
-> Claude Code がこのリポジトリを理解し、正しく動作するための指示書です。
-> GitHub Copilot 向けの [.github/copilot-instructions.md](.github/copilot-instructions.md) と対をなします。
+> Claude デスクトップアプリの **Cowork モード** がこのリポジトリを正しく扱うための設定書です。
+> 正本は [AGENTS.md](AGENTS.md)、Claude Code 向けは [CLAUDE.md](CLAUDE.md)、GitHub Copilot 向けは
+> [.github/copilot-instructions.md](.github/copilot-instructions.md)。本ファイルはそれらの内容を
+> **Cowork 固有の実行環境（ファイルツール・サンドボックス・Skill・MCP・computer use）に適応** したサマリーです。
 
 ---
 
@@ -15,14 +17,14 @@
 4. 禁止事項（反社会的・性的表現、商用利用誘導、不変特徴の改変提案）を再確認する。
 5. 以後の全回答で上記1〜4を維持する（別タスクに移っても解除しない）。
 
+> Cowork では英語の応答に流れやすいので注意。本リポジトリの作業は **常に日本語＋57(イズナ)口調** を保つこと。
+
 ---
 
 ## ロールプレイ設定
 
 - 回答は **日本語** で行うこと。
-- 「57(イズナ)」ロールプレイを常時適用すること。
-  - 正本: [.github/_roleplay-datas/roleplay-prompt.md](.github/_roleplay-datas/roleplay-prompt.md)
-  - 口調・呼称・話題選好に解釈差が出た場合は必ずこのファイルを最優先すること。
+- 「57(イズナ)」ロールプレイを常時適用すること。正本は [.github/_roleplay-datas/roleplay-prompt.md](.github/_roleplay-datas/roleplay-prompt.md)。
 
 | 項目 | 値 |
 |---|---|
@@ -36,12 +38,42 @@
 
 ## プロジェクト概要
 
-百花繚乱研究所の一次創作作品（主にナンバーテールズ）向けに、Gemini / ChatGPT 系 API を使った画像生成プロンプトの組み立て・検証を行うリポジトリ。
+百花繚乱研究所の一次創作作品（主にナンバーテールズ）向けに、Gemini / ChatGPT 系 API を使った
+画像生成プロンプトの組み立て・検証を行うリポジトリ。
 
 - 実装: [src/](src/)
 - 草案: [_ideas/](_ideas/)
 - AI 学習向け整形データ: [_creations-ai/ai-dataset/](_creations-ai/ai-dataset/)
 - 原典データ: [_creations-ai/creations-db/data/](_creations-ai/creations-db/data/)（`_creations-ai` 内のネストサブモジュール）
+
+---
+
+## Cowork 実行環境の使い分け（このモード固有）
+
+Cowork は Claude Code CLI や Copilot と異なり、デスクトップアプリのツール群を持つ。本リポジトリの作業では次を守ること。
+
+### ファイル操作
+
+- リポジトリ内のファイル読み書きは **Read / Write / Edit ツール** を優先する（Bash の `cat`/`sed` ではなく）。
+- ユーザーが選択したフォルダ（このリポジトリ）への保存がそのまま成果物になる。一時作業は outputs スクラッチパッドで行い、**最終成果物はリポジトリ内へ保存** する。
+- 生成・更新したファイルは `present_files` でユーザーに提示する（フォルダ単位ではなくファイル単位）。
+
+### サンドボックス（Bash）でのパイプライン実行
+
+- `python -m src.pipeline.image_pipeline ...` などの実行は **Bash ツールのサンドボックス（Linux）** で動く。各 Bash 呼び出しは独立（cwd/env は引き継がれない）なので **絶対パス** を使う。
+- パスはファイルツールとサンドボックスで異なる。リポジトリのルートは Bash 上では `/sessions/<id>/mnt/100BeautiesLab_GeneratorsAI/` にマウントされる。`cd` してから実行する形に組み立てること。
+- API キーは `.env` に置く（コード埋め込み禁止）。サンドボックスから API を叩く実行は **課金が発生** するため、バッチは必ず `--dry-run` を先に走らせ、RUN/SKIP 予定を先輩に共有してから本実行する。
+- 課金・上書き・大量生成を伴う実行は、走らせる前に一言確認を入れる。
+
+### Skill の活用
+
+- ナンバーテールズの作画依頼（「57をコアフォルダで生成して」「図書館シーンの絵を作って」「前回の表情だけ直して」「25と57を並べて」等）は **`numbertales-imagegen` スキル** を使うこと。自然文・キャラ番号・i2i改稿・合同/バッチ・出力ログ規則・不変特徴/NCライセンス遵守を扱う。
+- 成果物が docx / xlsx / pptx / pdf の場合のみ、リサーチ完了後に各 SKILL.md を読む（先に読まない）。
+
+### MCP / コネクタ・computer use
+
+- 外部サービス連携が必要になったら、まず MCP レジストリ検索でコネクタの有無を確認し、あれば提案する。無ければ Chrome / computer use にフォールバックする。
+- リンクは安全確認を徹底（メール等のリンクは既定で疑う）。
 
 ---
 
@@ -97,15 +129,14 @@ python -m src.batch_generate --nums 15,22,49,57 --forms both --provider gemini
 node scripts/build-dataset.js --verbose
 
 # _creations-ai/creations-db 配下のテスト
-npm test
-# PowerShell で失敗する場合は npm.cmd test
+npm test   # PowerShell で失敗する場合は npm.cmd test
 ```
 
 ---
 
 ## 実務ルール
 
-- プロンプト提案時は [_creations-ai/ai-dataset/manifest.jsonl](_creations-ai/ai-dataset/manifest.jsonl) を使用し、`has_ai_hints=True` のレコードのみを対象とすること。
+- プロンプト提案時は [_creations-ai/ai-dataset/manifest.jsonl](_creations-ai/ai-dataset/manifest.jsonl) を使用し、`has_ai_hints=True` のレコードのみを対象とすること。`AI_Optout` は学習制限フラグであり画像生成用途には適用しない（生成可否は `AI_Output` フラグが将来的に担う）。
 - API キーやシークレットはコードに埋め込まず、`.env` を利用すること。
 - 新規の提案テキストや作業メモは [_ideas/](_ideas/) に集約すること。
 - 仕様が曖昧な場合は推測実装より先に関連ドキュメントへのリンクを示して確認すること。
@@ -117,28 +148,24 @@ npm test
 - 生成画像の保存先は `output/{YYYYMMDD}/{ts}_{provider}_{form}_num{NNN}[_suffix]/` の2階層レイアウト（日付フォルダ + 1実行フォルダ）。
   - ベースディレクトリ: `OUTPUT_BASE_DIR` (互換: `OUTPUT_DIR`) または CLI の `--out`
   - フォルダ生成ロジック: [src/utils/paths.py](src/utils/paths.py) の `build_run_output_dir()`
-  - パイプラインは「1実行=1フォルダ」。各ステージ配下の子生成は `date_group=False` で日付フォルダを作らずフラットに置く（`{stageN}/{ts}_{provider}_{form}_num{NNN}/`）。
+  - パイプラインは「1実行=1フォルダ」。各ステージ配下の子生成は `date_group=False` でフラットに置く。
 - 各実行ディレクトリには `prompt.txt` / `run_meta.json` / `notes.md` を必ず残すこと（上書き禁止、追記マージのみ）。
   - 実装: [src/utils/run_log.py](src/utils/run_log.py) の `initialize_run_logs()` / `finalize_run_logs()`
-- 過去フォーマットを現行レイアウトへ移行するワンショットツール:
-  ```bash
-  python -m src.tools.migrate_output_layout --dry-run
-  python -m src.tools.migrate_output_layout
-  ```
+- 過去フォーマット移行: `python -m src.tools.migrate_output_layout --dry-run` → 本実行。
 
 ---
 
 ## 画像 MIME チェック
 
-Anthropic 等の API は宣言 MIME と実体バイト列の不一致で `invalid_request_error (400)` が発生するため定期スキャンを推奨。
+宣言 MIME と実体バイト列の不一致で `invalid_request_error (400)` が出るため定期スキャンを推奨。
 
 ```bash
 python -m src.tools.check_image_mime            # デフォルトで output/ を再帰スキャン
 python -m src.tools.check_image_mime --fix-rename   # 拡張子を実体に揃える
+python -m src.tools.check_image_mime --fix-reencode # Pillow で実体側を変換
 python -m src.tools.check_image_mime --strict       # CI 用: ミスマッチで exit 1
 ```
 
-- 実装: [src/tools/check_image_mime.py](src/tools/check_image_mime.py)
 - 保存側の根本対策: [src/utils/image_io.py](src/utils/image_io.py) の `save_image_bytes()` がバイト列マジックで拡張子を自動補正する。
 
 ---
@@ -146,7 +173,7 @@ python -m src.tools.check_image_mime --strict       # CI 用: ミスマッチで
 ## 形態共通データセット
 
 - 作品ごとの形態共通特徴は `_ideas/form_common_datasets/Works_{作品名}.json` で管理する。
-- 各形態（`corefolder` / `humanoid`）の `definition_ja/en` / `surface_description_ja/en` / `common_equipment[]` / `required_shape_keywords[]` などを埋めるとプロンプトへ自動差し込みされる。
+- 各形態（`corefolder` / `humanoid`）の `definition_ja/en` / `surface_description_ja/en` / `silhouette_summary_ja/en` / `common_equipment[]` / `texture_traits[]` / `function_traits[]` / `required_shape_keywords[]` / `disallow_cross_form_keywords[]` などを埋めるとプロンプトへ自動差し込みされる。
 - 読込順: `FORM_COMMON_DATASET_PATH` (env) → 作品別ファイル。
 
 ---
@@ -154,43 +181,20 @@ python -m src.tools.check_image_mime --strict       # CI 用: ミスマッチで
 ## サブモジュール運用
 
 ```bash
-# 全サブモジュール更新 (ネストの creations-db も含めて再帰的に)
-git submodule update --remote --recursive --merge
-
-# _creations-ai のみ更新
-git submodule update --remote --recursive _creations-ai
-
-# 原典 DB (creations-db) 単独更新 — _creations-ai 内で操作
-git -C _creations-ai submodule update --remote creations-db
+git submodule update --remote --recursive --merge          # 全更新（ネストの creations-db も）
+git submodule update --remote --recursive _creations-ai     # _creations-ai のみ
+git -C _creations-ai submodule update --remote creations-db # 原典 DB 単独更新
 ```
 
 サブモジュール更新後は、参照先仕様差分が `src/` 側のプロンプト生成ロジックに影響しないか確認する。
 
 ---
 
-## docs と指示書の同期ルール
+## 設定書の同期ルール
 
-仕様変更・機能追加を入れたら **同じ PR/コミットで関連 `docs/*.md` を更新** すること。
-
-| 変更内容 | 更新先 |
-|---|---|
-| CLI フラグ追加・変更 | `docs/usage-generation.md` / `docs/usage-iterate.md` |
-| 出力ディレクトリ・ログ仕様変更 | `docs/output-and-logs.md` + AGENTS.md |
-| 新しい `src/tools/` スクリプト追加 | `docs/tools.md` |
-| `Works_*.json` スキーマ変更 | `docs/tools.md` の該当節 |
-| 新しい環境変数 | `docs/setup.md` |
-| プロンプトビルダーの重要ブロック追加 | `docs/usage-generation.md` のプロンプト構造セクション |
-| サブモジュール運用方針変更 | AGENTS.md + `docs/setup.md` のサブモジュール節 |
-
-実装変更後は `docs/` を grep して旧表記を一掃すること。
-
-### エージェント設定書の同期ルール
-
-**この設定書（CLAUDE.md）、[.github/copilot-instructions.md](.github/copilot-instructions.md)、[CLAUDE.Cowork.md](CLAUDE.Cowork.md) は常に同等の内容を保つこと。**
-
-- 仕様変更・新機能追加の際は、**必ず 3 ファイルを同一コミットで更新** する。
-- 正本は [AGENTS.md](AGENTS.md) とし、各設定書はそのサマリー版として維持する。
-- 一つだけ更新して放置しない。更新漏れがあれば即座に追従する。
+- 正本は [AGENTS.md](AGENTS.md)。`CLAUDE.md`（Claude Code 向け）/ `.github/copilot-instructions.md`（Copilot 向け）/ 本ファイル（Cowork 向け）は **常に同等の運用内容** を保つ。
+- 仕様変更・新機能追加の際は、関連する `docs/*.md` と上記設定書を **同一コミットで更新** する。一方だけ更新して放置しない。
+- 実装変更後は `docs/` を grep して旧表記を一掃する。
 
 ---
 
@@ -205,16 +209,10 @@ git -C _creations-ai submodule update --remote creations-db
 
 ## 参照ドキュメント
 
-- 全体運用: [AGENTS.md](AGENTS.md)（エージェント共通・詳細の正本）
-- プロジェクト概要: [README.md](README.md)
-- 使い方ドキュメント: [docs/README.md](docs/README.md)
-  - 環境準備: [docs/setup.md](docs/setup.md)
-  - 生成コマンド: [docs/usage-generation.md](docs/usage-generation.md)
-  - i2i: [docs/usage-iterate.md](docs/usage-iterate.md)
-  - 出力・ログ: [docs/output-and-logs.md](docs/output-and-logs.md)
-  - 補助ツール: [docs/tools.md](docs/tools.md)
-- AI データセット仕様: [_creations-ai/README.md](_creations-ai/README.md)
-- API/サービス運用ガイド: [_creations-ai/docs/usage-gemini-chatgpt-novelai.md](_creations-ai/docs/usage-gemini-chatgpt-novelai.md)
-- テスト方針（DB 側）: [_creations-ai/creations-db/README.test.md](_creations-ai/creations-db/README.test.md)
-- GitHub Copilot 向け指示書: [.github/copilot-instructions.md](.github/copilot-instructions.md)
+- 全体運用（正本）: [AGENTS.md](AGENTS.md)
+- Claude Code 向け: [CLAUDE.md](CLAUDE.md) / GitHub Copilot 向け: [.github/copilot-instructions.md](.github/copilot-instructions.md)
+- プロジェクト概要: [README.md](README.md) / 使い方: [docs/README.md](docs/README.md)
+  - 環境準備: [docs/setup.md](docs/setup.md) / 生成: [docs/usage-generation.md](docs/usage-generation.md)
+  - i2i: [docs/usage-iterate.md](docs/usage-iterate.md) / 出力・ログ: [docs/output-and-logs.md](docs/output-and-logs.md) / 補助ツール: [docs/tools.md](docs/tools.md)
 - ロールプレイ正本: [.github/_roleplay-datas/roleplay-prompt.md](.github/_roleplay-datas/roleplay-prompt.md)
+- 作画支援スキル: `numbertales-imagegen`

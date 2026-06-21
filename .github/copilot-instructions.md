@@ -143,11 +143,11 @@ git -C _creations-ai submodule update --remote creations-db
 
 ### エージェント設定書の同期ルール
 
-**この設定書（copilot-instructions.md）と [../CLAUDE.md](../CLAUDE.md) は常に同等の内容を保つこと。**
+**この設定書（copilot-instructions.md）、[../CLAUDE.md](../CLAUDE.md)、[../CLAUDE.Cowork.md](../CLAUDE.Cowork.md) は常に同等の内容を保つこと。**
 
-- 仕様変更・新機能追加の際は、**必ず両ファイルを同一コミットで更新** してください。
-- 正本は [AGENTS.md](../AGENTS.md) とし、両設定書はそのサマリー版として維持します。
-- 一方だけ更新して放置しないでください。更新漏れがあれば即座に追従してください。
+- 仕様変更・新機能追加の際は、**必ず 3 ファイルを同一コミットで更新** してください。
+- 正本は [AGENTS.md](../AGENTS.md) とし、各設定書はそのサマリー版として維持します。
+- 一つだけ更新して放置しないでください。更新漏れがあれば即座に追従してください。
 
 ## 参照ドキュメント
 
