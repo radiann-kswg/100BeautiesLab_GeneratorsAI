@@ -11,9 +11,11 @@
 # 認証は FastMCP 側の Bearer 検証が担う (MCP_BEARER_TOKEN)。
 
 YOUR_DOMAIN {
-    reverse_proxy 127.0.0.1:8000
+    # Host ヘッダを内部アドレスに書き換えて FastMCP の Host 検証を通す
+    reverse_proxy 127.0.0.1:8000 {
+        header_up Host "127.0.0.1:8000"
+    }
 
-    # ログ (オプション)
     log {
         output file /var/log/caddy/numbertales-mcp.log
         format json
