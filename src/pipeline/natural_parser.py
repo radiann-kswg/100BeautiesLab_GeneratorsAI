@@ -532,25 +532,18 @@ def parse_generation_request(
         print(f"[NaturalParser] 名前引き当て (特殊ID): "
               + ", ".join(f'"{a}"→{ns}' for a, ns in special_ids.items()))
 
-    # ── 特殊 ID のダイアログ処理 ──
-    # 現パイプラインは整数 num のみ対応。特殊 ID はユーザーに代替を選ばせる。
-    extra_from_dialog: list[dict] = []
-    chars_with_images = _get_chars_with_images()
+    # ── 特殊 ID の処理: 文字列 num のままパイプラインへ直接渡す ──
+    extra_from_special: list[dict] = []
     for alias, num_str in special_ids.items():
-        print(f"[NaturalParser] '{alias}' (Num: {num_str}) は現在のパイプライン未対応のキャラクターです。")
-        chosen_num_str = _confirm_character_dialog(alias, chars_with_images)
-        if chosen_num_str and chosen_num_str.isdigit():
-            chosen_num = int(chosen_num_str)
-            # フォームはテキストからキャラ周辺の文脈で判定
-            form = _detect_form_for_alias(text, alias)
-            extra_from_dialog.append({
-                "num": chosen_num,
-                "form": form,
-                "scene": "",
-                "style": "", "composition": "", "background": "",
-                "work_key": "#Works_NumberTales",
-            })
-            print(f"  → #{chosen_num:03d} / {form} に置き換えます。")
+        form = _detect_form_for_alias(text, alias)
+        print(f"[NaturalParser] '{alias}' → Num={num_str!r} / {form} をパイプラインへ追加します。")
+        extra_from_special.append({
+            "num": num_str,
+            "form": form,
+            "scene": "",
+            "style": "", "composition": "", "background": "",
+            "work_key": "#Works_NumberTales",
+        })
 
     # ── LLM パース (名前ヒントを注入) ──
     system_prompt = _build_system_prompt(integer_hints or None)
@@ -569,15 +562,15 @@ def parse_generation_request(
 
     # ── 正規化 ──
     results: list[dict] = []
-    seen_nums: set[int] = set()
+    seen_nums: set[int | str] = set()
     for entry in raw:
         normalized = _normalize_entry(entry)
         if normalized and normalized["num"] not in seen_nums:
             results.append(normalized)
             seen_nums.add(normalized["num"])
 
-    # ダイアログで選ばれたキャラを追加（重複チェック）
-    for entry in extra_from_dialog:
+    # 特殊IDキャラを追加（重複チェック）
+    for entry in extra_from_special:
         if entry["num"] not in seen_nums:
             results.append(entry)
             seen_nums.add(entry["num"])
@@ -608,7 +601,8 @@ def parse_generation_request(
         print(f"[NaturalParser] 抽出完了: {len(results)} 件")
         for r in results:
             scene_preview = r["scene"][:40] + ("..." if len(r["scene"]) > 40 else "")
-            print(f"  -> #{r['num']:03d} / {r['form']} / シーン: {scene_preview}")
+            num_d = f"{r['num']:03d}" if isinstance(r["num"], int) else r["num"]
+            print(f"  -> #{num_d} / {r['form']} / シーン: {scene_preview}")
 
     return results
 
