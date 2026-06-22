@@ -17,7 +17,7 @@ env:
   REGION: ${{ secrets.GCP_REGION }}
   REPOSITORY: ${{ secrets.GCP_AR_REPOSITORY }}   # Artifact Registry リポジトリ名
   SERVICE: ${{ secrets.CLOUD_RUN_SERVICE }}        # Cloud Run サービス名
-  IMAGE: ${{ secrets.GCP_REGION }}.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ secrets.GCP_AR_REPOSITORY }}/numbertales-mcp
+  IMAGE: ${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ secrets.GCP_AR_REPOSITORY }}/numbertales-mcp
 
 jobs:
   build-and-deploy:
@@ -42,7 +42,7 @@ jobs:
 
       # ── Docker: Artifact Registry 認証 ──────────────────────────
       - name: Configure Docker for Artifact Registry
-        run: gcloud auth configure-docker ${{ env.REGION }}.pkg.dev --quiet
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
 
       # ── Docker イメージビルド & プッシュ ────────────────────────
       - name: Build Docker image
