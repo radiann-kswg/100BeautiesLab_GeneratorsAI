@@ -35,19 +35,20 @@ jobs:
 
       # ── GCP 認証 (Workload Identity Federation) ─────────────────
       - name: Authenticate to Google Cloud
+        id: auth
         uses: google-github-actions/auth@v2
         with:
           workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+          token_format: access_token
 
       # ── Docker: Artifact Registry 認証 ──────────────────────────
       - name: Configure Docker for Artifact Registry
-        run: |
-          gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
-          gcloud auth print-access-token | docker login \
-            -u oauth2accesstoken \
-            --password-stdin \
-            ${{ env.REGION }}-docker.pkg.dev
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGION }}-docker.pkg.dev
+          username: oauth2accesstoken
+          password: ${{ steps.auth.outputs.access_token }}
 
       # ── Docker イメージビルド & プッシュ ────────────────────────
       - name: Build Docker image
