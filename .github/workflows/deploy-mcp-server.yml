@@ -42,7 +42,12 @@ jobs:
 
       # ── Docker: Artifact Registry 認証 ──────────────────────────
       - name: Configure Docker for Artifact Registry
-        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+        run: |
+          gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+          gcloud auth print-access-token | docker login \
+            -u oauth2accesstoken \
+            --password-stdin \
+            ${{ env.REGION }}-docker.pkg.dev
 
       # ── Docker イメージビルド & プッシュ ────────────────────────
       - name: Build Docker image
