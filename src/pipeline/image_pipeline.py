@@ -82,11 +82,25 @@ _ROUGH_COUNT = 5             # Stage 3 (単体): ラフ生成枚数
 _MULTI_ROUGH_PER_CHAR = 3   # Stage 3 (合同): キャラクターごとのラフ枚数
 
 
+def _fmt_num(num: int | str | None) -> str:
+    """num を 3 桁表示 or そのまま文字列に変換する。
+    22 → "022"  "2-alt" → "2-alt"  None → "000"
+    """
+    if num is None:
+        return "000"
+    if isinstance(num, float):
+        return f"{int(num):03d}"
+    if isinstance(num, int):
+        return f"{num:03d}"
+    s = str(num).strip()
+    return f"{int(s):03d}" if s.isdigit() else s
+
+
 @dataclass
 class MultiCharPipelineResult:
     """複数キャラクターを1枚に合同生成するパイプラインの結果。"""
-    nums: list[int]
-    form: str
+    nums: list[int | str]
+    forms: list[str]      # キャラ別形態リスト (nums と同順)
     work_key: str
     pipeline_dir: str
     scene_used: str = ""
@@ -102,7 +116,7 @@ class MultiCharPipelineResult:
 
 @dataclass
 class PipelineResult:
-    num: int
+    num: int | str
     form: str
     work_key: str
     pipeline_dir: str
@@ -118,7 +132,7 @@ class PipelineResult:
 
 
 def run_image_pipeline(
-    num: int,
+    num: int | str,
     form: str = "corefolder",
     work_key: str = "#Works_NumberTales",
     out_dir: str | None = None,
@@ -126,6 +140,7 @@ def run_image_pipeline(
     style: str = "",
     composition: str = "",
     background: str = "",
+    costume: str = "",
     skip_canva: bool = False,
     correction_mode: str = "t2i",
     iterate_from: str | None = None,
@@ -143,11 +158,12 @@ def run_image_pipeline(
     style:           作風ヒント
     composition:     構図ヒント
     background:      背景ヒント
+    costume:         衣装差分の説明 (例: '黒いワンピース姿の差分')。空ならデフォルト衣装。
     skip_canva:      True なら Stage 5 の Canva フィニッシングをスキップ
     correction_mode: 重度違反時の対処モード ("t2i" | "stage3")
                      "t2i"    — Stage 4 内で T2I フル再生成 (デフォルト)
                      "stage3" — Stage 3 に差し戻してラフを再生成
-    iterate_from:    前回生成画像のパス (ファイルまたはrun-dir)。
+    iterate_from:    前回生成画像のパス (ファイルまたはrun-dir、またはGCS URL)。
                      指定時は Stage 3 が i2i モードになる。Stage 4/5 は通常通り実行。
     revisions:       修正指示 (";"/改行区切り文字列 or list)。iterate_from と組み合わせて使用。
 
@@ -164,7 +180,7 @@ def run_image_pipeline(
         base_dir=out_dir,
         timestamp=start_time,
     )
-    print(f"\n[Pipeline] start - #{num:03d} {form} / out: {pipeline_dir}")
+    print(f"\n[Pipeline] start - #{_fmt_num(num)} {form} / out: {pipeline_dir}")
     print(f"[Pipeline] skip_canva={skip_canva}")
 
     result = PipelineResult(
@@ -199,6 +215,7 @@ def run_image_pipeline(
     prompts = refine_prompt_dual(
         _pre_record, form,
         scene=scene, style=style, composition=composition, background=background,
+        costume=costume,
     )
     result.scene_used = scene
     result.stage1_prompts = {
@@ -337,35 +354,86 @@ def run_image_pipeline(
 
 def _build_multi_char_composition_prompt(
     records: list[dict],
-    form: str,
+    forms_map: dict[int | str, str],
     scene: str,
+    has_comp_rough: bool = False,
 ) -> str:
-    """Stage 5 合成用: キャラクター単体レンダーをもとに1枚に合成するプロンプトを生成する。
+    """Stage 3 comp rough / Stage 5 合成用: キャラクター単体レンダーをもとに1枚に合成するプロンプトを生成する。
     skip_db_refs=True と組み合わせて使用し、実際のキャラクターレンダーのみを参照させる。
+    forms_map は {キャラ番号: "corefolder" | "humanoid"} のマッピング。
+    has_comp_rough=True のとき、参照1 を構図ガイドとして扱い参照2以降をキャラデザインに割り当てる。
     """
     def _char_label(r: dict) -> str:
         d = r.get("data") or {}
-        name = d.get("Name") or f"#{int(d.get('Num', 0)):03d}"
+        raw_num = d.get("Num")
+        name = d.get("Name") or f"#{_fmt_num(raw_num)}"
         return name
 
-    char_list = "\n".join(
-        f"- 参照{i + 1}: {_char_label(r)} の完成イラスト"
-        for i, r in enumerate(records)
-    )
-    lines = [
-        "[マルチキャラクター合成 — 添付レンダーをもとに全員を 1 枚に]",
-        "添付の参照画像（各キャラクターの完成イラスト）を参考に、",
-        "全員が同じシーンに自然に配置された 1 枚の画像を生成してください。",
+    def _get_num_key(r: dict) -> int | str:
+        d = r.get("data") or {}
+        raw = d.get("Num")
+        if isinstance(raw, float):
+            return int(raw)
+        return raw
+
+    form_rules: list[str] = []
+    for r in records:
+        n = _get_num_key(r)
+        char_form = forms_map.get(n, "corefolder")
+        label = _char_label(r)
+        if char_form == "humanoid":
+            form_rules.append(
+                f"- {label}: humanoid 形態（人型シルエット）、腕は2本・手は2つ"
+            )
+        else:
+            form_rules.append(
+                f"- {label}: corefolder 形態（球体クッション型シルエット）、人型の腕・手・脚・足を描かない"
+            )
+
+    if has_comp_rough:
+        # 参照1=構図ガイド、参照2以降=各キャラデザイン という役割分担を明示
+        char_list = "\n".join(
+            f"- 参照{i + 2}: {_char_label(r)} の完成イラスト（キャラクターデザインの正解）"
+            for i, r in enumerate(records)
+        )
+        lines = [
+            "[Stage 5 合成 — 構図ラフを採用してキャラクターデザインを反映した完成画像を生成]",
+            "添付の参照画像を使い、1 枚の完成イラストを生成してください。",
+            "",
+            "[参照画像の役割と優先度]",
+            "- 参照1 (構図ガイド): 全キャラクターの空間配置・サイズ比・ポーズ関係・画角のガイド。",
+            "  この画像の構図・レイアウトを最優先で採用してください。",
+            char_list,
+            "",
+            "[合成指示]",
+            "- 参照1の構図（各キャラの位置・サイズ比・ポーズ・画角）を忠実に維持する",
+            "- 各キャラクターの外見・色・識別要素は参照2以降のデザインに忠実に描く",
+            "- 全員が画面内に完全に収まること（頭・胴・下半身のいずれもフレームアウト禁止）",
+            "- 作風・線画・塗りスタイルは全参照画像に揃えること",
+        ]
+    else:
+        char_list = "\n".join(
+            f"- 参照{i + 1}: {_char_label(r)} の完成イラスト"
+            for i, r in enumerate(records)
+        )
+        lines = [
+            "[マルチキャラクター合成 — 添付レンダーをもとに全員を 1 枚に]",
+            "添付の参照画像（各キャラクターの完成イラスト）を参考に、",
+            "全員が同じシーンに自然に配置された 1 枚の画像を生成してください。",
+            "",
+            "[添付参照画像の内訳]",
+            char_list,
+            "",
+            "[合成指示]",
+            "- 全員を 1 枚の構図に自然に収める（全員が画面内に完全に収まること）",
+            "- 各キャラクターの形態・番号・識別要素を添付参照に忠実に維持する",
+            "- 作風・線画・塗りスタイルは添付参照画像に揃えること",
+        ]
+
+    lines += [
         "",
-        "[添付参照画像の内訳]",
-        char_list,
-        "",
-        "[合成指示]",
-        "- 全員を 1 枚の構図に自然に収める",
-        "- 各キャラクターの形態・番号・識別要素を添付参照に忠実に維持する",
-        "- 作風・線画・塗りスタイルは添付参照画像に揃えること",
-        f"- {form} 形態（球体クッション型シルエット）を維持する",
-        "- 人型の腕・手・脚・足を描かない",
+        "[キャラクター別形態ルール]",
+        *form_rules,
         "",
         "[共通作風]",
         "Cute, Deformed, Chibi, Thick lines, Pastel colors, Cel shading, Simple background",
@@ -426,14 +494,16 @@ def _compose_multi_char(
 
 
 def run_combined_pipeline(
-    nums: list[int],
+    nums: list[int | str],
     form: str = "corefolder",
+    forms: "list[str] | None" = None,
     work_key: str = "#Works_NumberTales",
     out_dir: str | None = None,
     scene: str = "",
     style: str = "",
     composition: str = "",
     background: str = "",
+    costume: str = "",
     skip_canva: bool = False,
     correction_mode: str = "t2i",
     iterate_from: str | None = None,
@@ -447,7 +517,11 @@ def run_combined_pipeline(
     Parameters
     ----------
     nums:            キャラクター番号リスト (2 件以上)
-    form:            形態
+    form:            全キャラ共通の形態 (forms 未指定時のフォールバック)
+    forms:           キャラ別形態リスト (nums と同順)。指定時は form より優先。
+                     長さが nums より短い場合は末尾を form で補完する。
+                     例: nums=[X, 20], forms=["corefolder", "humanoid"] で
+                     Xをコアフォルダ・ハツカをヒューマノイドにして1枚合成できる。
     work_key:        作品キー
     out_dir:         出力ベースディレクトリ
     scene:           シーン (空の場合は先頭キャラから自動生成)
@@ -461,6 +535,7 @@ def run_combined_pipeline(
       char_NNN/stage3_rough/   — キャラクターごとのラフ (各 _MULTI_ROUGH_PER_CHAR 枚)
       char_NNN/stage2_db/      — キャラクターごとの DB サマリー
       char_NNN/stage4_correct/ — キャラクターごとの違反修正結果
+      stage3_comp_rough/       — 全キャラ構図ラフ (Stage3 と同時に 1 枚生成)
       stage5_final/            — 全キャラ合成完成画像 3 枚
 
     Returns
@@ -470,28 +545,40 @@ def run_combined_pipeline(
     from src.utils import find_character
     from src.gemini.generate import generate_image
 
+    # キャラ別形態マップを構築する。forms が指定されていればそれを優先し、
+    # 不足分は form で補完する。
+    _resolved_forms: list[str] = []
+    for i in range(len(nums)):
+        if forms and i < len(forms):
+            _resolved_forms.append(str(forms[i]).strip().lower() or form)
+        else:
+            _resolved_forms.append(form)
+    forms_map: dict[int | str, str] = {n: _resolved_forms[i] for i, n in enumerate(nums)}
+
     start_time = datetime.now()
+    primary_form = _resolved_forms[0]
     pipeline_dir = build_run_output_dir(
         provider="pipeline",
         num=nums[0],
-        form=form,
+        form=primary_form,
         base_dir=out_dir,
         timestamp=start_time,
         nums=nums,
     )
-    nums_label = "+".join(f"#{n:03d}" for n in nums)
-    print(f"\n[CombinedPipeline] start - {nums_label} {form} → 1 枚合同生成 / out: {pipeline_dir}")
+    nums_label = "+".join(f"#{_fmt_num(n)}" for n in nums)
+    forms_label = "+".join(_resolved_forms)
+    print(f"\n[CombinedPipeline] start - {nums_label} ({forms_label}) → 1 枚合同生成 / out: {pipeline_dir}")
     print(f"[CombinedPipeline] skip_canva={skip_canva} / correction_mode={correction_mode}")
 
     result = MultiCharPipelineResult(
-        nums=nums, form=form, work_key=work_key,
+        nums=nums, forms=_resolved_forms, work_key=work_key,
         pipeline_dir=str(pipeline_dir),
     )
 
     # ── Stage 2: 全キャラクターのレコード + スペック収集 ──
     print(f"\n[=] Stage 2: {len(nums)} キャラクターのレコード + DB データ収集")
     records: list[dict] = []
-    char_data_map: dict[int, dict] = {}
+    char_data_map: dict[int | str, dict] = {}
     for n in nums:
         rec = find_character(n, work_key)
         if rec is None:
@@ -500,15 +587,15 @@ def run_combined_pipeline(
             _save_summary(pipeline_dir, result, start_time)
             return result
         records.append(rec)
-        char_dir = pipeline_dir / f"char_{n:03d}"
-        char_data = collect_character_data(n, form, char_dir, work_key)
+        char_dir = pipeline_dir / f"char_{_fmt_num(n)}"
+        char_data = collect_character_data(n, forms_map[n], char_dir, work_key)
         if char_data is None:
             result.status = "failed"
             result.errors.append(f"Stage 2: #{n} DB データ取得に失敗しました。")
             _save_summary(pipeline_dir, result, start_time)
             return result
         char_data_map[n] = char_data
-        print(f"  [Stage2] #{n:03d} {rec['data'].get('Name', '')} — OK")
+        print(f"  [Stage2] #{_fmt_num(n)} {rec['data'].get('Name', '')} ({forms_map[n]}) — OK")
 
     result.stage2_summary = {
         "char_names": [r["data"].get("Name", "") for r in records],
@@ -518,7 +605,7 @@ def run_combined_pipeline(
     # ── Stage 1: シーン補完 + キャラクターごとのプロンプト生成 ──
     print("\n[=] Stage 1: シーン補完 + キャラクターごとのプロンプト生成")
     if not scene:
-        scene = generate_random_scene(records[0], form) or ""
+        scene = generate_random_scene(records[0], forms_map[nums[0]]) or ""
         if scene:
             print(f"[Stage1] シーン: {scene} (先頭キャラから自動生成)")
 
@@ -526,8 +613,9 @@ def run_combined_pipeline(
     for rec in records:
         n = rec["data"]["Num"]
         prompts = refine_prompt_dual(
-            rec, form, scene=scene, style=style,
+            rec, forms_map[n], scene=scene, style=style,
             composition=composition, background=background,
+            costume=costume,
         )
         per_char_prompts[n] = prompts
 
@@ -547,7 +635,7 @@ def run_combined_pipeline(
     stage1_dir.mkdir(parents=True, exist_ok=True)
     for rec in records:
         n = rec["data"]["Num"]
-        char_stage1_dir = stage1_dir / f"char_{n:03d}"
+        char_stage1_dir = stage1_dir / f"char_{_fmt_num(n)}"
         char_stage1_dir.mkdir(parents=True, exist_ok=True)
         _save_stage1(char_stage1_dir, per_char_prompts[n])
     print(f"[Stage1] done - {len(records)} キャラクター分のプロンプト生成完了")
@@ -569,26 +657,29 @@ def run_combined_pipeline(
         )
         _rev_block = _build_revision_block(_rev_items)
 
-    per_char_roughs: dict[int, list[Path]] = {}
+    per_char_roughs: dict[int | str, list[Path]] = {}
     inter_char_sleep = float(os.environ.get("GEMINI_IMAGE_SLEEP", "6"))
 
     for i, rec in enumerate(records):
         n = rec["data"]["Num"]
+        if isinstance(n, float):
+            n = int(n)
         if i > 0:
             # 直前キャラクターの生成直後にスタートするとレートリミットで失敗するため待機する
             print(f"  [Stage3] キャラクター切り替え待機: {inter_char_sleep:.0f}秒...")
             time.sleep(inter_char_sleep)
 
-        rough_dir = pipeline_dir / f"char_{n:03d}" / "stage3_rough"
+        rough_dir = pipeline_dir / f"char_{_fmt_num(n)}" / "stage3_rough"
         rough_dir.mkdir(parents=True, exist_ok=True)
         base_prompt = (per_char_prompts[n].get("base_gemini", "")
                        or per_char_prompts[n].get("gemini", ""))
         if _rev_block and base_prompt:
             base_prompt = _rev_block + "\n\n" + base_prompt
-        print(f"  [Stage3] #{n:03d} ラフ {_MULTI_ROUGH_PER_CHAR} 枚生成中...")
+        char_form = forms_map[n]
+        print(f"  [Stage3] #{_fmt_num(n)} ({char_form}) ラフ {_MULTI_ROUGH_PER_CHAR} 枚生成中...")
         try:
             paths = generate_image(
-                num=n, form=form, work_key=work_key,
+                num=n, form=char_form, work_key=work_key,
                 out_dir=str(rough_dir),
                 count=_MULTI_ROUGH_PER_CHAR,
                 prompt_override=base_prompt,
@@ -603,19 +694,48 @@ def run_combined_pipeline(
             result.errors.append(
                 f"Stage 3 char#{n}: ラフ 0 枚 — API エラーまたはレートリミットの可能性"
             )
-        print(f"  [Stage3] #{n:03d} — {len(paths)} 枚生成完了")
+        print(f"  [Stage3] #{_fmt_num(n)} — {len(paths)} 枚生成完了")
 
     all_stage3 = [p for paths in per_char_roughs.values() for p in paths]
     result.stage3_paths = {
-        f"char_{n:03d}": [str(p) for p in per_char_roughs.get(n, [])] for n in nums
+        f"char_{_fmt_num(n)}": [str(p) for p in per_char_roughs.get(n, [])] for n in nums
     }
     result.stage3_paths["all"] = [str(p) for p in all_stage3]
     print(f"[Stage3] done - 合計 {len(all_stage3)} 枚")
 
+    # ── Stage 3 続き: 全キャラクターが揃う構図ラフを 1 枚同時生成 ──
+    # 単体ラフとは別に全員が同じシーンに収まる構図を先行確認するためのラフ。
+    # Stage 5 最終合成の前段として i2i の起点にも使える。
+    # 全員の単体ラフが 1 枚以上揃っている場合のみ実行する。
+    comp_rough_paths: list[Path] = []
+    all_have_rough = all(bool(per_char_roughs.get(n)) for n in nums)
+    if all_have_rough:
+        print(f"\n  [Stage3-CompRough] 全キャラ構図ラフを同時生成 (1 枚)...")
+        time.sleep(inter_char_sleep)  # レートリミット対策
+        comp_rough_dir = pipeline_dir / "stage3_comp_rough"
+        comp_rough_dir.mkdir(parents=True, exist_ok=True)
+        comp_ref_images = [per_char_roughs[n][0] for n in nums]
+        comp_rough_prompt = _build_multi_char_composition_prompt(records, forms_map, scene)
+        try:
+            comp_rough_paths = _compose_multi_char(
+                records[0], primary_form,
+                char_renders=comp_ref_images,
+                composition_prompt=comp_rough_prompt,
+                synth_dir=comp_rough_dir,
+                work_key=work_key,
+                count=1,
+            )
+            print(f"  [Stage3-CompRough] {len(comp_rough_paths)} 枚生成完了")
+        except Exception as err:
+            print(f"  [WARN] Stage3-CompRough: {type(err).__name__}: {err}")
+    else:
+        print(f"\n  [Stage3-CompRough] 一部キャラのラフが未生成のためスキップ")
+    result.stage3_paths["composition_rough"] = [str(p) for p in comp_rough_paths]
+
     # マルチキャラ合成には全キャラのラフが必要。1 人でも欠けたら中断する。
     failed_chars = [n for n in nums if not per_char_roughs.get(n)]
     if failed_chars:
-        failed_label = " / ".join(f"#{n:03d}" for n in failed_chars)
+        failed_label = " / ".join(f"#{_fmt_num(n)}" for n in failed_chars)
         result.errors.append(
             f"Stage 3: {failed_label} のラフ生成に失敗しました。"
             " 全キャラクターのラフが揃わないと合同合成ができません。"
@@ -631,15 +751,17 @@ def run_combined_pipeline(
 
     for rec in records:
         n = rec["data"]["Num"]
+        if isinstance(n, float):
+            n = int(n)
         rough_paths = per_char_roughs.get(n) or []
         if not rough_paths:
-            print(f"  [Stage4] #{n:03d}: ラフなしのためスキップ")
+            print(f"  [Stage4] #{_fmt_num(n)}: ラフなしのためスキップ")
             continue
 
-        char_dir = pipeline_dir / f"char_{n:03d}"
+        char_dir = pipeline_dir / f"char_{_fmt_num(n)}"
         rough_results = {"gemini": rough_paths, "adobe_guide": [], "all": rough_paths}
         corrected = correct_rough_images(
-            rec, form,
+            rec, forms_map[n],
             rough_results=rough_results,
             char_spec=char_data_map[n]["spec"],
             prompts=per_char_prompts[n],
@@ -647,29 +769,35 @@ def run_combined_pipeline(
             work_key=work_key,
             correction_mode=correction_mode,
         )
-        all_stage4_paths[f"char_{n:03d}"] = [str(p) for p in corrected.get("all") or []]
+        all_stage4_paths[f"char_{_fmt_num(n)}"] = [str(p) for p in corrected.get("all") or []]
 
         # ベスト 1 枚: 違反なし通過画像を優先、なければ修正済みの先頭
         best = (corrected.get("passed") or [])[:1] or (corrected.get("corrected") or [])[:1]
         if best:
             per_char_best.extend(best)
-            print(f"  [Stage4] #{n:03d}: ベスト 1 枚選定 → {best[0].name}")
+            print(f"  [Stage4] #{_fmt_num(n)}: ベスト 1 枚選定 → {best[0].name}")
         else:
             # 修正も通過もなければ元ラフの先頭をフォールバック
             per_char_best.extend(rough_paths[:1])
-            print(f"  [Stage4] #{n:03d}: フォールバック → {rough_paths[0].name}")
+            print(f"  [Stage4] #{_fmt_num(n)}: フォールバック → {rough_paths[0].name}")
 
     result.stage4_paths = all_stage4_paths
     result.stage4_paths["best_per_char"] = [str(p) for p in per_char_best]
     print(f"[Stage4] done - 合成用ベスト: {len(per_char_best)} 枚 ({', '.join(p.name for p in per_char_best)})")
 
     # ── Stage 5: ベストレンダーを Gemini マルチ参照で 1 枚に合成 ──
-    print(f"\n[=] Stage 5: キャラクター完成レンダー {len(per_char_best)} 枚を合成 (3 枚固定)")
-    composition_prompt = _build_multi_char_composition_prompt(records, form, scene)
+    # comp_rough があれば先頭参照として差し込み、構図ガイドとして Gemini に渡す。
+    has_comp_rough = bool(comp_rough_paths)
+    stage5_refs = ([comp_rough_paths[0]] if has_comp_rough else []) + per_char_best
+    _comp_note = " + 構図ラフ参照あり" if has_comp_rough else ""
+    print(f"\n[=] Stage 5: キャラクター完成レンダー {len(per_char_best)} 枚を合成 (3 枚固定){_comp_note}")
+    composition_prompt = _build_multi_char_composition_prompt(
+        records, forms_map, scene, has_comp_rough=has_comp_rough
+    )
     stage5_dir = pipeline_dir / "stage5_final"
     synth_images = _compose_multi_char(
-        records[0], form,
-        char_renders=per_char_best,
+        records[0], primary_form,
+        char_renders=stage5_refs,
         composition_prompt=composition_prompt,
         synth_dir=stage5_dir / "synth",
         work_key=work_key,
@@ -716,7 +844,7 @@ def run_multi_pipeline(
 
     for i, cp in enumerate(char_params, 1):
         print(f"\n{'=' * 60}")
-        print(f"[MultiPipeline] {i}/{len(char_params)}: #{cp['num']:03d} / {cp['form']}")
+        print(f"[MultiPipeline] {i}/{len(char_params)}: #{_fmt_num(cp['num'])} / {cp['form']}")
         print(f"{'=' * 60}")
         result = run_image_pipeline(
             num=cp["num"],
@@ -780,6 +908,28 @@ def _save_summary(
 # CLI エントリポイント
 # ──────────────────────────────────────────
 
+def _resolve_num_arg(raw: str) -> int | str:
+    """--num / --nums 引数をキャラクター ID に変換する。
+    "57" → 57  "2-alt" → "2-alt"  "バイナ" → "2-alt"  "フジ" → 22
+    名前解決に失敗した場合は文字列 ID として返す。
+    """
+    raw = raw.strip()
+    if raw.isdigit():
+        return int(raw)
+    try:
+        from src.pipeline.natural_parser import _build_name_lookup
+        lookup = _build_name_lookup()
+        if raw in lookup:
+            num_str = lookup[raw]
+            return int(num_str) if num_str.isdigit() else num_str
+    except Exception:
+        pass
+    try:
+        return int(raw)
+    except ValueError:
+        return raw
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
@@ -796,8 +946,8 @@ def main() -> None:
     # キャラクター指定 (いずれか)
     char_group = parser.add_mutually_exclusive_group()
     char_group.add_argument(
-        "--num", type=int,
-        help="キャラクター番号 (例: 57)。シーン未指定時はランダム生成。",
+        "--num", type=str,
+        help="キャラクター番号・特殊ID・キャラ名 (例: 57 / '2-alt' / 'バイナ')。シーン未指定時はランダム生成。",
     )
     char_group.add_argument(
         "--nums",
@@ -836,6 +986,13 @@ def main() -> None:
     parser.add_argument("--style", default="", help="作風ヒント (例: 'watercolor')")
     parser.add_argument("--composition", default="", help="構図ヒント (例: 'bust shot')")
     parser.add_argument("--background", default="", help="背景ヒント")
+    parser.add_argument(
+        "--costume", default="",
+        help=(
+            "衣装差分の説明。デフォルト衣装から変更する場合に指定する。\n"
+            "例: '黒いワンピース姿の差分' / 'summer school uniform variation'"
+        ),
+    )
     parser.add_argument(
         "--skip-canva", action="store_true",
         help="Stage 5 の Canva フィニッシングをスキップ (CANVA_ACCESS_TOKEN 不要)",
@@ -904,17 +1061,14 @@ def main() -> None:
                 cp["composition"] = args.composition
             if args.background and not cp.get("background"):
                 cp["background"] = args.background
+            if args.costume and not cp.get("costume"):
+                cp["costume"] = args.costume
             if args.form != "corefolder":
                 cp["form"] = args.form
 
     elif args.nums:
         raw_nums = [s.strip() for s in args.nums.split(",") if s.strip()]
-        nums: list[int] = []
-        for s in raw_nums:
-            try:
-                nums.append(int(s))
-            except ValueError:
-                print(f"[WARN] 番号 '{s}' が無効です。スキップします。")
+        nums: list[int | str] = [_resolve_num_arg(s) for s in raw_nums]
         if not nums:
             sys.exit("[ERROR] --nums に有効な番号がありません。")
         for n in nums:
@@ -925,17 +1079,19 @@ def main() -> None:
                 "style": args.style,
                 "composition": args.composition,
                 "background": args.background,
+                "costume": args.costume,
                 "work_key": args.work,
             })
 
     elif args.num:
         char_params.append({
-            "num": args.num,
+            "num": _resolve_num_arg(args.num),
             "form": args.form,
             "scene": args.scene,
             "style": args.style,
             "composition": args.composition,
             "background": args.background,
+            "costume": args.costume,
             "work_key": args.work,
         })
 
@@ -955,6 +1111,7 @@ def main() -> None:
             style=cp.get("style", ""),
             composition=cp.get("composition", ""),
             background=cp.get("background", ""),
+            costume=cp.get("costume", args.costume),
             skip_canva=args.skip_canva,
             correction_mode=args.correction_mode,
             iterate_from=args.iterate_from,
@@ -980,21 +1137,24 @@ def main() -> None:
         # 2 件以上の --nums → 全員を 1 枚に合同生成
         combined_nums = [cp["num"] for cp in char_params]
         combined_scene = char_params[0].get("scene", "") or args.scene
+        combined_forms = [cp.get("form", args.form) for cp in char_params]
         res = run_combined_pipeline(
             nums=combined_nums,
-            form=char_params[0].get("form", args.form),
+            forms=combined_forms,
+            form=combined_forms[0],
             work_key=char_params[0].get("work_key", args.work),
             out_dir=args.out,
             scene=combined_scene,
             style=char_params[0].get("style", args.style),
             composition=char_params[0].get("composition", args.composition),
             background=char_params[0].get("background", args.background),
+            costume=char_params[0].get("costume", args.costume),
             skip_canva=args.skip_canva,
             correction_mode=args.correction_mode,
             iterate_from=args.iterate_from,
             revisions=args.revisions,
         )
-        nums_label = "+".join(f"#{n:03d}" for n in res.nums)
+        nums_label = "+".join(f"#{_fmt_num(n)}" for n in res.nums)
         scene_preview = (res.scene_used[:24] + "...") if len(res.scene_used) > 24 else res.scene_used
         print(f"\n[完了] {nums_label} / ステータス: {res.status} / シーン: {scene_preview}")
         if res.errors:

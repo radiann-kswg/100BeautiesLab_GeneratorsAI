@@ -35,7 +35,19 @@ if str(_PROJECT_ROOT) not in sys.path:
 from dotenv import load_dotenv
 load_dotenv()
 
-_SYSTEM_PROMPT = """\
+# ──────────────────────────────────────────────────────────────
+# DB パス
+# ──────────────────────────────────────────────────────────────
+_DB_PRIMARY_PATH = (
+    _PROJECT_ROOT / "_creations-ai" / "creations-db" / "data"
+    / "Works_NumberTales" / "DataBases" / "db_Primary.json"
+)
+_MANIFEST_PATH = _PROJECT_ROOT / "_creations-ai" / "ai-dataset" / "manifest.jsonl"
+
+# ──────────────────────────────────────────────────────────────
+# システムプロンプト (ベース)
+# ──────────────────────────────────────────────────────────────
+_SYSTEM_PROMPT_BASE = """\
 あなたは「ナンバーテールズ」キャラクターイラスト生成システムのパラメータ抽出AIです。
 ユーザーの自然文・短編ストーリーから、画像生成パイプラインに渡すパラメータを抽出してください。
 
@@ -81,6 +93,219 @@ _NUM_PATTERNS = [
     re.compile(r'#\s*(\d{1,2})(?!\d)'),  # #57
 ]
 
+# ──────────────────────────────────────────────────────────────
+# 名前 → Num DB 引き当て
+# ──────────────────────────────────────────────────────────────
+_NAME_LOOKUP_CACHE: dict[str, str] | None = None
+_CHARS_WITH_IMAGES_CACHE: list[dict] | None = None
+
+
+def _extract_name_aliases(name_field: str) -> list[str]:
+    """Name / SPCodeName フィールドから検索可能な別名を抽出する。
+
+    "バイナ\\n2(ツギ)"  → ["バイナ", "ツギ"]
+    "22(フジ)"         → ["フジ"]
+    "バイナリ,二進"     → ["バイナリ", "二進"]
+    """
+    aliases: list[str] = []
+    for part in re.split(r'[\n,、]', name_field):
+        part = part.strip()
+        if not part:
+            continue
+        # 括弧内の名前を抽出（先頭が非数字のものだけ）
+        for m in re.finditer(r'[（(]([^\d）)][^）)]*)[)）]', part):
+            inner = m.group(1).strip()
+            if inner and len(inner) >= 2:
+                aliases.append(inner)
+        # 括弧・先頭番号を除いた純名称部分
+        bare = re.sub(r'^\d[\d\-]*\s*', '', part).strip()
+        bare = re.sub(r'[（(][^）)]*[)）]', '', bare).strip()
+        if bare and len(bare) >= 2 and not bare.isdigit():
+            aliases.append(bare)
+    return list(dict.fromkeys(aliases))  # dedup, preserve order
+
+
+def _build_name_lookup() -> dict[str, str]:
+    """DB から「名前エイリアス → Num文字列」の辞書を構築する（キャッシュ付き）。
+
+    Returns: e.g. {"バイナ": "2-alt", "フジ": "22", "イズナ": "57", ...}
+    """
+    global _NAME_LOOKUP_CACHE
+    if _NAME_LOOKUP_CACHE is not None:
+        return _NAME_LOOKUP_CACHE
+
+    lookup: dict[str, str] = {}
+    if not _DB_PRIMARY_PATH.exists():
+        _NAME_LOOKUP_CACHE = lookup
+        return lookup
+
+    try:
+        records = json.loads(_DB_PRIMARY_PATH.read_bytes().decode("utf-8"))
+        if isinstance(records, dict):
+            records = records.get("records", [])
+        for r in records:
+            num = r.get("Num")
+            if num is None:
+                continue
+            num_str = str(num)
+            for field in ("Name", "SPCodeName"):
+                val = r.get(field) or ""
+                for alias in _extract_name_aliases(val):
+                    if alias not in lookup:
+                        lookup[alias] = num_str
+    except Exception as err:
+        print(f"[WARN] キャラクター名辞書の構築に失敗: {err}")
+
+    _NAME_LOOKUP_CACHE = lookup
+    return lookup
+
+
+def _find_name_matches(text: str, lookup: dict[str, str]) -> dict[str, str]:
+    """テキスト中に含まれる既知のキャラ名を検索する。
+
+    同じ Num への複数マッチは最長エイリアスを採用。
+    Returns: {alias: num_str}
+    """
+    matched_per_num: dict[str, str] = {}  # num_str → alias (最長を保持)
+    for alias in sorted(lookup, key=len, reverse=True):
+        if len(alias) < 2:
+            continue
+        if alias in text:
+            num_str = lookup[alias]
+            # 同一 num_str に対して、より長いエイリアスを優先
+            existing = matched_per_num.get(num_str, "")
+            if len(alias) > len(existing):
+                matched_per_num[num_str] = alias
+    return {alias: num_str for num_str, alias in matched_per_num.items()}
+
+
+def _get_chars_with_images() -> list[dict]:
+    """manifest から画像を持つキャラクター一覧を返す (キャッシュ付き)。
+
+    Returns: [{"Num": str, "Name": str}, ...] (Num の数値順)
+    """
+    global _CHARS_WITH_IMAGES_CACHE
+    if _CHARS_WITH_IMAGES_CACHE is not None:
+        return _CHARS_WITH_IMAGES_CACHE
+
+    chars: list[dict] = []
+    if not _MANIFEST_PATH.exists():
+        _CHARS_WITH_IMAGES_CACHE = chars
+        return chars
+
+    try:
+        for line in _MANIFEST_PATH.read_bytes().decode("utf-8").splitlines():
+            r = json.loads(line)
+            if r.get("_type") != "character":
+                continue
+            if not r.get("images"):
+                continue
+            d = r.get("data") or {}
+            num = d.get("Num")
+            name = d.get("Name") or ""
+            name_en = d.get("Name_EN") or ""
+            if num is not None:
+                chars.append({"Num": str(num), "Name": name, "Name_EN": name_en})
+    except Exception as err:
+        print(f"[WARN] 画像ありキャラクター一覧の取得に失敗: {err}")
+
+    # Num が整数のものを先に、文字列 ID を後に並べる
+    def _sort_key(c: dict) -> tuple[int, str]:
+        try:
+            return (0, f"{int(c['Num']):05d}")
+        except ValueError:
+            return (1, c["Num"])
+
+    chars.sort(key=_sort_key)
+    _CHARS_WITH_IMAGES_CACHE = chars
+    return chars
+
+
+def _confirm_character_dialog(name_hint: str, chars: list[dict]) -> str | None:
+    """不明 / 未対応のキャラクター名をユーザーに確認する（TTY のみインタラクティブ）。
+
+    Returns: 選択された Num 文字列、またはスキップ時は None
+    """
+    print(f"\n[確認] '{name_hint}' の対象キャラクターを特定できませんでした。")
+    if not chars:
+        print("  候補なし。スキップします。")
+        return None
+
+    # Num が 1〜100 の整数で画像ありのものだけ表示 (最大 30 件)
+    int_chars = [
+        c for c in chars
+        if str(c["Num"]).isdigit() and 1 <= int(c["Num"]) <= 100
+    ][:30]
+    if not int_chars:
+        print("  画像ありキャラクターが見つかりません。スキップします。")
+        return None
+
+    print("  画像が存在するキャラクターの中から選択してください:")
+    for i, c in enumerate(int_chars, 1):
+        name_jp = (c.get("Name") or "").strip()
+        name_en = (c.get("Name_EN") or "").strip()
+        name_disp = f"{name_jp} / {name_en}" if name_jp and name_en else name_en or name_jp
+        line = f"    {i:2d}. #{int(c['Num']):>3}  {name_disp}"
+        try:
+            print(line)
+        except UnicodeEncodeError:
+            enc = sys.stdout.encoding or "utf-8"
+            print(line.encode(enc, errors="replace").decode(enc))
+    print("     0. スキップ（このキャラクターを除外）")
+
+    if not sys.stdin.isatty():
+        print("  [非インタラクティブ] 自動スキップします。")
+        return None
+
+    try:
+        raw = input("  番号を入力 > ").strip()
+        idx = int(raw)
+        if idx == 0:
+            return None
+        if 1 <= idx <= len(int_chars):
+            selected = int_chars[idx - 1]
+            sel_jp = (selected.get("Name") or "").strip()
+            sel_en = (selected.get("Name_EN") or "").strip()
+            sel_name = f"{sel_jp} / {sel_en}" if sel_jp and sel_en else sel_en or sel_jp
+            sel_line = f"  選択: #{selected['Num']} {sel_name}"
+            try:
+                print(sel_line)
+            except UnicodeEncodeError:
+                enc = sys.stdout.encoding or "utf-8"
+                print(sel_line.encode(enc, errors="replace").decode(enc))
+            return selected["Num"]
+    except (ValueError, KeyboardInterrupt, EOFError):
+        pass
+
+    print("  スキップします。")
+    return None
+
+
+# ──────────────────────────────────────────────────────────────
+# システムプロンプト構築（名前ヒント注入）
+# ──────────────────────────────────────────────────────────────
+
+def _build_system_prompt(integer_name_hints: dict[str, str] | None = None) -> str:
+    """システムプロンプトを構築する。integer_name_hints がある場合は優先マッピングを注入する。
+
+    integer_name_hints: {alias: num_str (整数のみ)} e.g. {"ハツカ": "20", "フジ": "22"}
+    """
+    if not integer_name_hints:
+        return _SYSTEM_PROMPT_BASE
+
+    lines = [
+        _SYSTEM_PROMPT_BASE,
+        "\n[重要: テキスト内で確認されたキャラクター名と番号の対応 — 必ずこれを使用してください]",
+    ]
+    for alias, num_str in integer_name_hints.items():
+        lines.append(f'- "{alias}" → num: {num_str}')
+
+    return "\n".join(lines)
+
+
+# ──────────────────────────────────────────────────────────────
+# LLM パーサー
+# ──────────────────────────────────────────────────────────────
 
 def _detect_form(text: str) -> str:
     lower = text.lower()
@@ -96,7 +321,6 @@ def _detect_form(text: str) -> str:
 def _strip_markdown_json(raw: str) -> str:
     raw = re.sub(r"^```(?:json|JSON)?\s*", "", raw.strip(), flags=re.MULTILINE)
     raw = re.sub(r"\s*```$", "", raw, flags=re.MULTILINE).strip()
-    # 前後に余分なテキストがある場合、最初の [ or { から最後の ] or } まで抽出
     for open_c, close_c in (("[", "]"), ("{", "}")):
         start = raw.find(open_c)
         end = raw.rfind(close_c)
@@ -105,7 +329,7 @@ def _strip_markdown_json(raw: str) -> str:
     return raw
 
 
-def _parse_with_openai(text: str) -> list[dict] | None:
+def _parse_with_openai(text: str, system_prompt: str) -> list[dict] | None:
     try:
         from openai import OpenAI
     except ImportError:
@@ -121,7 +345,7 @@ def _parse_with_openai(text: str) -> list[dict] | None:
         response = client.chat.completions.create(
             model=model,
             messages=[
-                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": text},
             ],
             max_tokens=1000,
@@ -134,7 +358,7 @@ def _parse_with_openai(text: str) -> list[dict] | None:
         return None
 
 
-def _parse_with_gemini(text: str) -> list[dict] | None:
+def _parse_with_gemini(text: str, system_prompt: str) -> list[dict] | None:
     try:
         from google import genai
         from google.genai import types as genai_types
@@ -152,7 +376,7 @@ def _parse_with_gemini(text: str) -> list[dict] | None:
             model=model,
             contents=text,
             config=genai_types.GenerateContentConfig(
-                system_instruction=_SYSTEM_PROMPT,
+                system_instruction=system_prompt,
                 max_output_tokens=1000,
             ),
         )
@@ -165,14 +389,12 @@ def _parse_with_gemini(text: str) -> list[dict] | None:
 
 
 def _extract_characters_list(parsed: object) -> list[dict] | None:
-    """GPT/Gemini の返却値から characters リストを取り出す。"""
     if isinstance(parsed, list):
         return parsed
     if isinstance(parsed, dict):
         for key in ("characters", "result", "results", "items"):
             if isinstance(parsed.get(key), list):
                 return parsed[key]
-        # 値がリストである最初のキーを使う
         for v in parsed.values():
             if isinstance(v, list):
                 return v
@@ -232,6 +454,44 @@ def _normalize_entry(entry: object) -> dict | None:
     }
 
 
+def _correct_llm_results(
+    raw: list[dict],
+    integer_hints: dict[str, str],
+) -> list[dict]:
+    """LLM 結果の num が name lookup の解決結果と食い違う場合に修正する。
+
+    integer_hints: {alias: num_str (整数)} — テキスト内で確認されたマッピング
+    """
+    if not integer_hints:
+        return raw
+
+    # 期待される num_str のセット
+    expected: dict[int, str] = {int(ns): alias for alias, ns in integer_hints.items() if ns.isdigit()}
+    actual_nums = {int(e.get("num", 0)) for e in raw if isinstance(e.get("num"), (int, float))}
+
+    corrected = []
+    for entry in raw:
+        corrected.append(entry)
+
+    # 期待される num が LLM に含まれていなければ追加 (form はテキストから推定済み)
+    for expected_num, alias in expected.items():
+        if expected_num not in actual_nums:
+            print(f"  [NameCorrect] '{alias}' → #{expected_num:03d} を LLM 結果に追加")
+            corrected.append({
+                "num": expected_num,
+                "form": "corefolder",  # 後で form 修正ロジックに任せる
+                "scene": "",
+                "style": "", "composition": "", "background": "",
+                "work_key": "#Works_NumberTales",
+            })
+
+    return corrected
+
+
+# ──────────────────────────────────────────────────────────────
+# メイン
+# ──────────────────────────────────────────────────────────────
+
 def parse_generation_request(
     text: str,
     prefer_gemini: bool = False,
@@ -252,20 +512,95 @@ def parse_generation_request(
     snippet = text[:80] + ("..." if len(text) > 80 else "")
     print(f"[NaturalParser] 入力: {snippet}")
 
+    # ── 名前引き当て ──
+    lookup = _build_name_lookup()
+    name_matches = _find_name_matches(text, lookup)  # {alias: num_str}
+
+    # 整数 ID と特殊 ID (2-alt 等) に分類
+    integer_hints: dict[str, str] = {}   # {alias: num_str}  — LLM プロンプトに注入
+    special_ids: dict[str, str] = {}     # {alias: num_str}  — ダイアログ処理
+    for alias, num_str in name_matches.items():
+        if num_str.isdigit() and 1 <= int(num_str) <= 100:
+            integer_hints[alias] = num_str
+        else:
+            special_ids[alias] = num_str
+
+    if integer_hints:
+        print(f"[NaturalParser] 名前引き当て (整数ID): "
+              + ", ".join(f'"{a}"→#{ns}' for a, ns in integer_hints.items()))
+    if special_ids:
+        print(f"[NaturalParser] 名前引き当て (特殊ID): "
+              + ", ".join(f'"{a}"→{ns}' for a, ns in special_ids.items()))
+
+    # ── 特殊 ID のダイアログ処理 ──
+    # 現パイプラインは整数 num のみ対応。特殊 ID はユーザーに代替を選ばせる。
+    extra_from_dialog: list[dict] = []
+    chars_with_images = _get_chars_with_images()
+    for alias, num_str in special_ids.items():
+        print(f"[NaturalParser] '{alias}' (Num: {num_str}) は現在のパイプライン未対応のキャラクターです。")
+        chosen_num_str = _confirm_character_dialog(alias, chars_with_images)
+        if chosen_num_str and chosen_num_str.isdigit():
+            chosen_num = int(chosen_num_str)
+            # フォームはテキストからキャラ周辺の文脈で判定
+            form = _detect_form_for_alias(text, alias)
+            extra_from_dialog.append({
+                "num": chosen_num,
+                "form": form,
+                "scene": "",
+                "style": "", "composition": "", "background": "",
+                "work_key": "#Works_NumberTales",
+            })
+            print(f"  → #{chosen_num:03d} / {form} に置き換えます。")
+
+    # ── LLM パース (名前ヒントを注入) ──
+    system_prompt = _build_system_prompt(integer_hints or None)
+
     if prefer_gemini:
-        raw = _parse_with_gemini(text) or _parse_with_openai(text)
+        raw = _parse_with_gemini(text, system_prompt) or _parse_with_openai(text, system_prompt)
     else:
-        raw = _parse_with_openai(text) or _parse_with_gemini(text)
+        raw = _parse_with_openai(text, system_prompt) or _parse_with_gemini(text, system_prompt)
 
     if raw is None:
         print("[NaturalParser] LLM パース失敗。正規表現フォールバックを使用します。")
         raw = _simple_extract(text)
 
+    # ── LLM 結果の名前整合性チェック ──
+    raw = _correct_llm_results(raw or [], integer_hints)
+
+    # ── 正規化 ──
     results: list[dict] = []
-    for entry in (raw or []):
+    seen_nums: set[int] = set()
+    for entry in raw:
         normalized = _normalize_entry(entry)
-        if normalized:
+        if normalized and normalized["num"] not in seen_nums:
             results.append(normalized)
+            seen_nums.add(normalized["num"])
+
+    # ダイアログで選ばれたキャラを追加（重複チェック）
+    for entry in extra_from_dialog:
+        if entry["num"] not in seen_nums:
+            results.append(entry)
+            seen_nums.add(entry["num"])
+
+    # ── 未解決名前のダイアログ (DB に存在しない名前が疑われる場合) ──
+    # 数値的に特定できず name_matches にも含まれないキャラクターが
+    # LLM によって hallucinate された可能性を検出し、ユーザーに確認する。
+    if integer_hints:
+        expected_nums = {int(ns) for ns in integer_hints.values()}
+        actual_nums = {r["num"] for r in results}
+        missing = expected_nums - actual_nums
+        if missing:
+            for num in missing:
+                alias = next((a for a, ns in integer_hints.items() if int(ns) == num), str(num))
+                print(f"[NaturalParser] '{alias}' (#{num:03d}) が結果に含まれていません。追加します。")
+                form = _detect_form_for_alias(text, alias)
+                results.append({
+                    "num": num,
+                    "form": form,
+                    "scene": "",
+                    "style": "", "composition": "", "background": "",
+                    "work_key": "#Works_NumberTales",
+                })
 
     if not results:
         print("[NaturalParser] キャラクターパラメータを抽出できませんでした。")
@@ -276,6 +611,20 @@ def parse_generation_request(
             print(f"  -> #{r['num']:03d} / {r['form']} / シーン: {scene_preview}")
 
     return results
+
+
+def _detect_form_for_alias(text: str, alias: str) -> str:
+    """テキスト中でエイリアス周辺の形態を判定する。
+
+    「コアフォルダ姿のバイナ」→ "corefolder"
+    「ヒューマノイド姿のバイナ」→ "humanoid"
+    """
+    # エイリアスの前後 20 文字程度を取り出して形態判定
+    idx = text.find(alias)
+    if idx == -1:
+        return _detect_form(text)
+    window = text[max(0, idx - 20): idx + len(alias) + 10]
+    return _detect_form(window)
 
 
 def main() -> None:

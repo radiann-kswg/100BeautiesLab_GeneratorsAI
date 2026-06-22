@@ -17,13 +17,28 @@ License: [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/)
 ## 前提条件
 
 - 回答言語は日本語。
-- Copilot は 57(イズナ) のロールプレイ設定に従う。
+- すべてのエージェントは 57(イズナ) のロールプレイ設定に従う。
   - 参照: [`.github/_roleplay-datas/roleplay-prompt.md`](.github/_roleplay-datas/roleplay-prompt.md)
   - ロールプレイの正本（Single Source of Truth）は [`.github/_roleplay-datas/roleplay-prompt.md`](.github/_roleplay-datas/roleplay-prompt.md) とし、口調・呼称・話題選好に解釈差が出た場合はこのファイルを最優先してください。
   - VS Code Copilot は [`.github/instructions/roleplay-izuna.instructions.md`](.github/instructions/roleplay-izuna.instructions.md) を `applyTo: '**'` で自動ロードします (口調・呼称・禁止事項のコア要点)。
 - 毎セッション開始時、最初の回答前に必ず `.github/_roleplay-datas/roleplay-prompt.md` を再確認し、全回答で「私(わたし) / 君 / 先輩」の呼称と明るい口調を維持する。
 - 本リポジトリは創作補助用途（非商用前提）であり、ライセンスは CC BY-NC 4.0 に従う。
 - 反社会的・性的コンテンツの生成支援は行わない。
+
+### ロールプレイ維持の強制ルール（全エージェント共通）
+
+**ロールプレイの一時停止は存在しません。** どの作業中でも 57(イズナ) の口調・呼称を維持してください。
+
+| 剥がれやすい場面 | 対処 |
+|---|---|
+| ファイル編集・ツール呼び出しを連続して行うとき | 各作業の合間の説明文は必ず 57(イズナ) 口調で書く |
+| 純技術的な回答になるとき | コードブロック外の地の文はすべて 57(イズナ) 口調。「先輩」「私」を必ず 1 回以上使う |
+| エラー対処・デバッグ中 | 「エラーは出たけど一緒に切り分けよう」精神で維持する |
+| 長大な回答 | コードや出力ログが長くても地の文は 57(イズナ) 口調を崩さない |
+| 連続タスクで話題が切り替わったとき | キャラクターは切り替わらない。同じ 57(イズナ) が引き続き対応する |
+
+**毎回答前の内部チェック:** 「私(わたし)」か / 「先輩」か / 前向きな一言があるか / 事務的文体になっていないか  
+**口調が外れたとき:** 次の回答冒頭で自然に戻す（謝罪不要）。
 
 ---
 
@@ -63,11 +78,16 @@ python -m src.pipeline.image_pipeline --num 57 --form corefolder
 python -m src.pipeline.image_pipeline --num 57 --form corefolder \
     --scene "図書館で本を読んでいるシーン" --skip-canva
 # 合同キャラ: Stage 3-4 をキャラ別に実行 → Stage 5 で全員を 1 枚に合成
+# (Stage 3 終了時点で全体構図ラフ 1 枚を同時生成 → stage3_comp_rough/ に保存)
 python -m src.pipeline.image_pipeline --nums 25,57 --form corefolder \
     --scene "自信に満ちた表情で並んでいるシーン"
 python -m src.pipeline.image_pipeline \
     --natural "コアフォルダ姿の25(フィズ)がチョコレートを咥えている絵"
+# 衣装差分: --costume で Stage 1 のデフォルト衣装を上書きしてプロンプト生成
+python -m src.pipeline.image_pipeline --num 57 --form corefolder \
+    --costume "黒いワンピース姿の差分" --skip-canva
 # i2i 改稿: --iterate-from で前回 run を起点に Stage 3〜5 を改稿モードで実行
+# GCS URL (MCP の numbertales_get_run_logs が返す intermediate URL) も直接渡せる
 python -m src.pipeline.image_pipeline --num 57 --form corefolder --skip-canva \
     --iterate-from "output/20260609/20260609_15/20260609_150049_gemini_corefolder_num057" \
     --revisions "尻尾は元のまま; 表情だけ笑顔にして"
@@ -161,6 +181,19 @@ git -C _creations-ai submodule update --remote creations-db
 ```
 
 サブモジュール更新後は、参照先仕様差分が `src/` 側のプロンプト生成ロジックに影響しないか確認する。
+
+### 創作 DB 実物 API
+
+`addon-ai-tag` ブランチで公開している Cloudflare Workers API を src 側から参照できる。
+
+| エンドポイント | 認証 | 用途 |
+|---|---|---|
+| `/api/v1/{work}/{db}/records/{num}?idxKey=Num` | 不要 | キャラクター基本データ取得 |
+| `/api/ai/{work}/{db}/aihints/{num}` | Bearer トークン必須 | AI ヒント (ai_hints) 取得 |
+
+`.env` に `CREATIONS_DB_API_TOKEN` と `CREATIONS_DB_API_BASE_URL` を設定することで
+`src/utils/dataset.py` の `find_character()` がローカル JSONL 照合後のフォールバックとして自動利用する。
+設定がない場合はローカルデータのみで動作する (API 失敗は無視)。
 
 ---
 

@@ -11,12 +11,13 @@
 
 | ツール名 | 対応する入口 | 概要 |
 |---|---|---|
-| `numbertales_generate_character` | `run_image_pipeline` | 単体キャラ生成（Stage 1〜5） |
-| `numbertales_generate_joint` | `run_combined_pipeline` | 複数キャラを 1 枚に合同生成 |
+| `numbertales_generate_character` | `run_image_pipeline` | 単体キャラ生成（Stage 1〜5）。`costume` フィールドで衣装差分指定可 |
+| `numbertales_generate_joint` | `run_combined_pipeline` | 複数キャラを 1 枚に合同生成。Stage 3 で単体ラフ + 全体構図ラフを同時生成 |
 | `numbertales_generate_from_natural` | `parse_generation_request` → 上記 | 自然文からディスパッチ |
-| `numbertales_iterate` | `run_image_pipeline(iterate_from=…)` | i2i 改稿 |
+| `numbertales_iterate` | `run_image_pipeline(iterate_from=…)` | i2i 改稿。GCS URL を `iterate_from` に直接渡せる |
 | `numbertales_job_status` | — | ジョブ進捗・完成画像リンク照会（読取専用） |
 | `numbertales_list_runs` | — | 直近ジョブ一覧（読取専用） |
+| `numbertales_get_run_logs` | — | 各ステージの中間ログ・プロンプト・画像 URL 照会（読取専用） |
 
 ### 非同期ジョブ方式
 
@@ -57,6 +58,17 @@ job_status(job_id) → {"status": "succeeded", "result": {"outputs": [ {url …}
 > **Drive 利用時の注意**: GCE のデフォルト SA は Drive ストレージ容量を持たないため
 > `storageQuotaExceeded (403)` が発生します。`DRIVE_REFRESH_TOKEN` を設定して
 > ユーザー OAuth 認証を使うことで解消します（詳細: [docs/setup.md](setup.md) §4）。
+
+### Stage 別シンク分離
+
+`OUTPUT_SINK=drive` を設定していても、Stage 3/4 の中間生成物は **GCS のみ**に保存します。
+Drive へは Stage 5 完成画像のみアップロードし、Drive が中間画像で埋まることを防ぎます。
+
+| Stage | 保存先 | 説明 |
+|---|---|---|
+| Stage 3/4 中間画像 | **GCS のみ** | `numbertales_get_run_logs` で署名 URL を取得してチャット上で確認・i2i に使う |
+| Stage 3 構図ラフ (合同生成) | **GCS のみ** | `stage_summary.stage3.composition_rough.intermediate` で返す |
+| Stage 5 完成画像 | 設定シンク (Drive / GCS) | Drive に上げるのはこの完成画像だけ |
 
 ---
 

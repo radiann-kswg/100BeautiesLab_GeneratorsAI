@@ -6,6 +6,10 @@
 - ``drive``       : Google Drive のフォルダにアップロードし webViewLink を返す
 - ``gcs``         : Google Cloud Storage バケットにアップロードし署名 URL を返す
 
+Stage 別シンクの挙動:
+  - Stage3/4 (中間画像): ``publish_intermediate()`` → GCS のみ（Drive には上げない）
+  - Stage5 (完成画像):   ``publish()`` → 設定シンクへ通常アップロード
+
 いずれのシンクも「使う時だけ」依存ライブラリを遅延 import する。
 依存やクレデンシャルが欠けている場合は例外で落とさず、local にフォールバックして
 ``note`` に理由を記録する（サーバ全体が止まらないようにするため）。
@@ -37,7 +41,7 @@ def current_sink() -> str:
 
 
 def publish(paths: list[str], run_label: str = "") -> list[dict[str, Any]]:
-    """画像パス群を選択中のシンクへ公開し、参照情報のリストを返す。
+    """完成画像（Stage5）を選択中のシンクへ公開し、参照情報のリストを返す。
 
     Parameters
     ----------
@@ -65,6 +69,33 @@ def publish(paths: list[str], run_label: str = "") -> list[dict[str, Any]]:
     if sink == "drive":
         return _publish_drive(files, run_label)
     if sink == "gcs":
+        return _publish_gcs(files, run_label)
+    return _publish_local(files)
+
+
+def publish_intermediate(paths: list[str], run_label: str = "") -> list[dict[str, Any]]:
+    """Stage3/4 の中間画像を GCS のみに公開する（Drive へはアップしない）。
+
+    ``OUTPUT_SINK=drive`` の場合でも中間画像は GCS にのみ保存し、
+    Claude チャット上で URL として表示できるようにする。
+    ``OUTPUT_SINK=local`` の場合は local フォールバックになる。
+
+    Parameters
+    ----------
+    paths:      公開対象のローカル画像ファイルパス
+    run_label:  リモート格納時の整理用ラベル
+
+    Returns
+    -------
+    list[dict] — ``publish()`` と同じスキーマ
+    """
+    sink = current_sink()
+    files = [p for p in paths if p and Path(p).exists()]
+
+    if not files:
+        return []
+
+    if sink in ("gcs", "drive"):
         return _publish_gcs(files, run_label)
     return _publish_local(files)
 

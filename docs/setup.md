@@ -156,6 +156,12 @@ FORM_COMMON_DATASET_PATH=
 # 創作 DB パッケージ参照を一時的に無効化したい場合
 CREATIONS_DB_PACKAGE_ENABLE=1
 
+# 創作 DB 実物 API (database.numbertales-radiann.net)
+# addon-ai-tag ブランチで公開している AIHints エンドポイント等にアクセスする際に必要。
+# 通常の公開エンドポイント (/api/v1/works/…) はトークン不要。
+CREATIONS_DB_API_TOKEN=
+CREATIONS_DB_API_BASE_URL=https://database.numbertales-radiann.net/api/v1
+
 # パス・実行系 (任意。パーソナルスキル/ランチャーから任意 cwd で実行する場合に使う)
 NUMBERTALES_REPO=                       # ランチャーが使うリポジトリルートの明示指定 (最優先)
 PROJECT_ROOT=                           # src 側の基準ルート。manifest/creations-db/形態共通データの解決に使用

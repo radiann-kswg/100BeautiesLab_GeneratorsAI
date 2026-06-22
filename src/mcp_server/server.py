@@ -25,7 +25,7 @@ from __future__ import annotations
 import json
 import os
 from enum import Enum
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -89,12 +89,23 @@ class _Base(BaseModel):
 class GenerateCharacterInput(_Base):
     """単体キャラ生成の入力。"""
 
-    num: int = Field(..., description="キャラクター番号 (1-100、例: 57)", ge=1, le=100)
+    num: Union[int, str] = Field(
+        ...,
+        description="キャラクター番号 (1-100 の整数)、特殊ID ('2-alt' 等)、またはキャラ名 (例: 57 / '2-alt' / 'バイナ')",
+    )
+
+    @field_validator("num")
+    @classmethod
+    def _validate_num(cls, v: Union[int, str]) -> Union[int, str]:
+        if isinstance(v, int) and not (1 <= v <= 100):
+            raise ValueError(f"整数 num は 1-100 の範囲で指定してください: {v}")
+        return v
     form: Form = Field(default=Form.COREFOLDER, description="形態 (corefolder / humanoid)")
     scene: str = Field(default="", description="シーン・ポーズ説明。空ならランダム自動生成 (例: '図書館で本を読んでいるシーン')", max_length=600)
     style: str = Field(default="", description="作風ヒント (例: 'watercolor')", max_length=200)
     composition: str = Field(default="", description="構図ヒント (例: 'bust shot')", max_length=200)
     background: str = Field(default="", description="背景ヒント", max_length=200)
+    costume: str = Field(default="", description="衣装差分の説明 (例: '黒いワンピース姿の差分')。空ならデフォルト衣装", max_length=400)
     skip_canva: bool = Field(default=False, description="True で Stage 5 の Canva フィニッシングをスキップ")
     correction_mode: CorrectionMode = Field(default=CorrectionMode.T2I, description="重度違反時の対処モード")
     work_key: str = Field(default=DEFAULT_WORK_KEY, description="作品キー", max_length=100)
@@ -103,22 +114,31 @@ class GenerateCharacterInput(_Base):
 class GenerateJointInput(_Base):
     """合同生成（複数キャラを 1 枚に）の入力。"""
 
-    nums: list[int] = Field(..., description="キャラクター番号のリスト (例: [25, 57])", min_length=2, max_length=6)
-    form: Form = Field(default=Form.COREFOLDER, description="形態 (corefolder / humanoid)")
+    nums: list[Union[int, str]] = Field(..., description="キャラクター番号のリスト (例: [25, 57] / ['25', '2-alt'])", min_length=2, max_length=6)
+    forms: Optional[list[str]] = Field(
+        default=None,
+        description=(
+            "キャラクターごとの形態リスト。nums と同じ長さで指定。"
+            "例: ['corefolder', 'humanoid'] で nums[0] が corefolder、nums[1] が humanoid になる。"
+            "省略時は form を全員に適用。"
+        ),
+    )
+    form: Form = Field(default=Form.COREFOLDER, description="全員共通の形態 (forms 未指定時のフォールバック)")
     scene: str = Field(default="", description="共通シーン説明 (例: '自信に満ちた表情で並んでいるシーン')", max_length=600)
     style: str = Field(default="", description="作風ヒント", max_length=200)
     composition: str = Field(default="", description="構図ヒント", max_length=200)
     background: str = Field(default="", description="背景ヒント", max_length=200)
+    costume: str = Field(default="", description="衣装差分の説明（全キャラ共通）。空ならデフォルト衣装", max_length=400)
     skip_canva: bool = Field(default=False, description="True で Stage 5 をスキップ")
     correction_mode: CorrectionMode = Field(default=CorrectionMode.T2I, description="重度違反時の対処モード")
     work_key: str = Field(default=DEFAULT_WORK_KEY, description="作品キー", max_length=100)
 
     @field_validator("nums")
     @classmethod
-    def _validate_nums(cls, v: list[int]) -> list[int]:
+    def _validate_nums(cls, v: list[Union[int, str]]) -> list[Union[int, str]]:
         for n in v:
-            if not (1 <= n <= 100):
-                raise ValueError(f"キャラクター番号は 1-100 の範囲です: {n}")
+            if isinstance(n, int) and not (1 <= n <= 100):
+                raise ValueError(f"整数キャラクター番号は 1-100 の範囲です: {n}")
         return v
 
 
@@ -134,13 +154,23 @@ class GenerateFromNaturalInput(_Base):
 class IterateInput(_Base):
     """i2i 改稿の入力（前回 run を起点に Stage 3〜5 を改稿モードで再実行）。"""
 
-    num: int = Field(..., description="キャラクター番号 (1-100)", ge=1, le=100)
+    num: Union[int, str] = Field(
+        ...,
+        description="キャラクター番号 (1-100 の整数)、特殊ID ('2-alt' 等)、またはキャラ名",
+    )
     iterate_from: str = Field(..., description="前回生成画像のパスまたは run-dir (例: 'output/20260609/20260609_15/..._num057')", min_length=1, max_length=600)
     revisions: str = Field(..., description="修正指示（';' または改行区切り。例: '尻尾は元のまま; 表情だけ笑顔にして'）", min_length=1, max_length=1000)
     form: Form = Field(default=Form.COREFOLDER, description="形態 (corefolder / humanoid)")
     skip_canva: bool = Field(default=False, description="True で Stage 5 をスキップ")
     correction_mode: CorrectionMode = Field(default=CorrectionMode.T2I, description="重度違反時の対処モード")
     work_key: str = Field(default=DEFAULT_WORK_KEY, description="作品キー", max_length=100)
+
+    @field_validator("num")
+    @classmethod
+    def _validate_num(cls, v: Union[int, str]) -> Union[int, str]:
+        if isinstance(v, int) and not (1 <= v <= 100):
+            raise ValueError(f"整数 num は 1-100 の範囲で指定してください: {v}")
+        return v
 
 
 class JobStatusInput(_Base):
@@ -153,6 +183,19 @@ class ListRunsInput(_Base):
     """直近ジョブ一覧の入力。"""
 
     limit: int = Field(default=20, description="返す最大件数", ge=1, le=100)
+
+
+class GetRunLogsInput(_Base):
+    """ステージ別中間ログ照会の入力。"""
+
+    job_id: str = Field(..., description="照会対象の job_id（numbertales_list_runs で確認）", min_length=1, max_length=64)
+    stage: str = Field(
+        default="all",
+        description="表示するステージ (all | stage1 | stage2 | stage3 | stage4 | stage5)",
+        pattern=r"^(all|stage[1-5])$",
+    )
+    include_prompts: bool = Field(default=True, description="True で Stage1 のプロンプトテキストを含める")
+    include_image_urls: bool = Field(default=True, description="True で中間画像の URL を含める")
 
 
 # ── 結果整形ヘルパ ──────────────────────────────────────────────
@@ -188,23 +231,66 @@ def _result_to_dict(result: Any) -> dict[str, Any]:
 
 
 def _run_and_publish(result: Any) -> dict[str, Any]:
-    """パイプライン結果を要約し、出力画像をシンクへ公開した要約 dict を返す。"""
+    """パイプライン結果を要約し、出力画像をシンクへ公開した要約 dict を返す。
+
+    - Stage5 完成画像: 設定シンク（drive / gcs / local）へ公開
+    - Stage3/4 中間画像: GCS のみ（drive 設定でも Drive へは上げない）
+    """
     rd = _result_to_dict(result)
     run_dir = rd.get("pipeline_dir", "")
     run_label = os.path.basename(run_dir.rstrip("/\\")) if run_dir else ""
-    image_paths = _extract_output_paths(rd)
-    outputs = output_sink.publish(image_paths, run_label=run_label)
+
+    s5 = rd.get("stage5_paths") or {}
+    s4 = rd.get("stage4_paths") or {}
+    s3 = rd.get("stage3_paths") or {}
+
+    # Stage5 完成画像 → 通常シンク（drive / gcs）
+    stage5_all = list(s5.get("all") or [])
+    outputs = output_sink.publish(stage5_all, run_label=run_label)
+
+    # Stage3/4 中間画像 → GCS のみ（チャット上での照会用 URL）
+    stage3_all = list(s3.get("all") or s3.get("gemini") or [])
+    stage3_comp_rough = list(s3.get("composition_rough") or [])
+    stage4_all = list(s4.get("all") or [])
+    inter_stage3 = output_sink.publish_intermediate(stage3_all, run_label=f"{run_label}_s3")
+    inter_stage3_comp = (
+        output_sink.publish_intermediate(stage3_comp_rough, run_label=f"{run_label}_s3comp")
+        if stage3_comp_rough else []
+    )
+    inter_stage4 = output_sink.publish_intermediate(stage4_all, run_label=f"{run_label}_s4")
+
+    image_count = len(stage5_all) or len(stage4_all) or len(stage3_all)
+
     return {
         "status": rd.get("status", "unknown"),
         "pipeline_dir": run_dir,
         "scene_used": rd.get("scene_used", ""),
         "errors": rd.get("errors", []),
-        "image_count": len(image_paths),
+        "image_count": image_count,
         "outputs": outputs,
         "sink": output_sink.current_sink(),
         "stage_summary": {
             "stage1": rd.get("stage1_prompts", {}),
             "stage2": rd.get("stage2_summary", {}),
+            "stage3": {
+                "count": len(stage3_all),
+                "paths": stage3_all,
+                "intermediate": inter_stage3,
+                "composition_rough": {
+                    "count": len(stage3_comp_rough),
+                    "paths": stage3_comp_rough,
+                    "intermediate": inter_stage3_comp,
+                },
+            },
+            "stage4": {
+                "count": len(stage4_all),
+                "paths": stage4_all,
+                "intermediate": inter_stage4,
+            },
+            "stage5": {
+                "count": len(stage5_all),
+                "paths": stage5_all,
+            },
         },
     }
 
@@ -259,6 +345,7 @@ async def numbertales_generate_character(params: GenerateCharacterInput) -> str:
             style=p.style,
             composition=p.composition,
             background=p.background,
+            costume=p.costume,
             skip_canva=p.skip_canva,
             correction_mode=p.correction_mode.value,
         )
@@ -299,14 +386,17 @@ async def numbertales_generate_joint(params: GenerateJointInput) -> str:
     def _job() -> dict[str, Any]:
         from src.pipeline.image_pipeline import run_combined_pipeline
 
+        resolved_forms = [f.lower() for f in p.forms] if p.forms else None
         result = run_combined_pipeline(
             nums=list(p.nums),
-            form=p.form.value,
+            forms=resolved_forms,
+            form=resolved_forms[0] if resolved_forms else p.form.value,
             work_key=p.work_key,
             scene=p.scene,
             style=p.style,
             composition=p.composition,
             background=p.background,
+            costume=p.costume,
             skip_canva=p.skip_canva,
             correction_mode=p.correction_mode.value,
         )
@@ -374,9 +464,11 @@ async def numbertales_generate_from_natural(params: GenerateFromNaturalInput) ->
                 correction_mode=p.correction_mode.value,
             )
         else:
+            nat_forms = [cp.get("form", "corefolder") for cp in char_params]
             result = run_combined_pipeline(
                 nums=[cp["num"] for cp in char_params],
-                form=char_params[0].get("form", "corefolder"),
+                forms=nat_forms,
+                form=nat_forms[0],
                 work_key=char_params[0].get("work_key", DEFAULT_WORK_KEY),
                 scene=char_params[0].get("scene", ""),
                 style=char_params[0].get("style", ""),
@@ -517,6 +609,115 @@ async def numbertales_list_runs(params: ListRunsInput) -> str:
         for j in jobs
     ]
     return json.dumps({"count": len(rows), "jobs": rows}, ensure_ascii=False, indent=2)
+
+
+# ── ツール: ステージ別中間ログ照会 ────────────────────────────────
+@mcp.tool(
+    name="numbertales_get_run_logs",
+    annotations={
+        "title": "ナンバーテールズ ステージ別中間ログ照会",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def numbertales_get_run_logs(params: GetRunLogsInput) -> str:
+    """完了ジョブの各ステージ中間ログ・プロンプト・中間画像 URL を照会する（読み取り専用）。
+
+    Stage3/4 の中間画像は GCS に保存されており、返却される URL でチャット上から
+    確認できる。i2i 改稿の ``iterate_from`` にそのまま渡すことも可能。
+
+    Args:
+        params (GetRunLogsInput):
+            - job_id (str): 照会する job_id
+            - stage (str): "all" | "stage1" ～ "stage5"
+            - include_prompts (bool): Stage1 のプロンプトテキストを含めるか
+            - include_image_urls (bool): 中間画像の URL を含めるか
+
+    Returns:
+        str: JSON 文字列。スキーマ::
+            {
+              "job_id": str,
+              "kind": str,
+              "status": str,
+              "pipeline_dir": str,
+              "scene_used": str,
+              "stages": {
+                "stage1": { "prompts": {...} } | null,
+                "stage2": { "char_name": str, ... } | null,
+                "stage3": { "count": int, "images": [{name, url, ...}] } | null,
+                "stage4": { "count": int, "images": [{name, url, ...}] } | null,
+                "stage5": { "count": int, "outputs": [{name, url, ...}] } | null,
+              },
+              "error": str
+            }
+    """
+    job = MANAGER.get(params.job_id)
+    if job is None:
+        return json.dumps(
+            {"error": f"job_id '{params.job_id}' が見つかりません。numbertales_list_runs で確認してください。"},
+            ensure_ascii=False,
+        )
+
+    base = {
+        "job_id": job.job_id,
+        "kind": job.kind,
+        "status": job.status,
+        "pipeline_dir": "",
+        "scene_used": "",
+        "stages": {},
+        "error": job.error if job.status == "failed" else "",
+    }
+
+    if job.status != "succeeded" or not job.result:
+        return json.dumps(base, ensure_ascii=False, indent=2)
+
+    result = job.result
+    base["pipeline_dir"] = result.get("pipeline_dir", "")
+    base["scene_used"] = result.get("scene_used", "")
+    ss = result.get("stage_summary") or {}
+    want_all = params.stage == "all"
+
+    def _want(s: str) -> bool:
+        return want_all or params.stage == s
+
+    stages: dict[str, Any] = {}
+
+    if _want("stage1"):
+        s1 = ss.get("stage1") or {}
+        entry: dict[str, Any] = {"raw": s1}
+        if not params.include_prompts:
+            entry.pop("raw", None)
+            entry["available_keys"] = list(s1.keys())
+        stages["stage1"] = entry
+
+    if _want("stage2"):
+        stages["stage2"] = ss.get("stage2") or {}
+
+    if _want("stage3"):
+        s3 = ss.get("stage3") or {}
+        entry = {"count": s3.get("count", 0)}
+        if params.include_image_urls:
+            entry["images"] = s3.get("intermediate") or []
+        stages["stage3"] = entry
+
+    if _want("stage4"):
+        s4 = ss.get("stage4") or {}
+        entry = {"count": s4.get("count", 0)}
+        if params.include_image_urls:
+            entry["images"] = s4.get("intermediate") or []
+        stages["stage4"] = entry
+
+    if _want("stage5"):
+        s5 = ss.get("stage5") or {}
+        entry = {"count": s5.get("count", 0)}
+        if params.include_image_urls:
+            entry["outputs"] = result.get("outputs") or []
+        stages["stage5"] = entry
+
+    base["stages"] = stages
+    return json.dumps(base, ensure_ascii=False, indent=2)
 
 
 # ── 共通: 登録レスポンス ────────────────────────────────────────

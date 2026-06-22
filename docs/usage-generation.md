@@ -19,7 +19,7 @@ MCP (Adobe / Canva) との連携は [`usage-mcp-canva-adobe.md`](usage-mcp-canva
 |---|---|---|
 | Stage 1 | コマンド解析 + ベースプロンプト生成 (シーン未指定時はキャラクターに合ったシーンを自動生成) | OpenAI GPT-4o + Gemini Flash |
 | Stage 2 | キャラクター選定 + 創作 DB から原典画像・特徴を取得 | manifest.jsonl + 参照画像索引 |
-| Stage 3 | ラフ生成 (単体: **5 案** / 合同: キャラ別 **3 枚×N 人**) | Adobe 非 Firefly (構図ガイド) + Gemini Imagen |
+| Stage 3 | ラフ生成 (単体: **5 案** / 合同: キャラ別 **3 枚×N 人** + **全体構図ラフ 1 枚**) | Adobe 非 Firefly (構図ガイド) + Gemini Imagen |
 | Stage 4 | 違反特徴の除去 + 構図修正 (単体・合同ともキャラ別に実行) | OpenAI Vision (違反分析) + Gemini i2i (修正適用) |
 | Stage 5 | 完成画像 **3 枚**生成 → Canva 仕上げ | Gemini (マルチ参照合成) + Canva Connect API |
 
@@ -58,6 +58,7 @@ python -m src.pipeline.image_pipeline --num 57 --form corefolder --skip-canva
 | `--scene` | `""` | シーン説明。**省略時は Stage 1 でキャラクターに合ったシーンを自動生成** |
 | `--style` / `--composition` / `--background` | `""` | 作風・構図・背景ヒント |
 | `--skip-canva` | false | Stage 5 の Canva をスキップ |
+| `--costume TEXT` | `""` | 衣装差分の説明 (例: `"黒いワンピース姿の差分"`)。指定時は Stage 1 でデフォルト衣装を上書きしてプロンプト生成する。不変特徴（耳・尻尾・髪色・瞳色）は維持される |
 | `--correction-mode` | `t2i` | Stage 4 重度違反時の対処モード。`t2i`: Stage 4 内で T2I 再生成 / `stage3`: Stage 3 に差し戻してラフを再生成 |
 | `--iterate-from PATH` | None | 前回生成画像を起点に Stage 3 を **i2i モード**で実行。Stage 4/5 は通常通り走る。詳細は [`usage-iterate.md`](usage-iterate.md) |
 | `--revisions TEXT` | None | 修正指示（`; `/改行区切り）。`--iterate-from` と組み合わせて使用 |
@@ -87,6 +88,8 @@ python -m src.pipeline.image_pipeline --num 57 --form corefolder --skip-canva
   char_{BBB}/
     stage3_rough/
     stage4_correct/
+  stage3_comp_rough/          — 全キャラ単体ラフをもとに全員が揃う構図ラフ (1 枚)
+                                 Stage 5 最終合成の確認・i2i 起点に活用できる
   stage5_final/
     synth/                    — 全キャラ画像を参照して 1 枚に合成 (3 案)
     canva/

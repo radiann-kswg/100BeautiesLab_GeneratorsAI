@@ -30,6 +30,18 @@ def _sanitize_token(value: str) -> str:
     return text or "x"
 
 
+def _format_num_for_path(num: int | str) -> str:
+    """num をディレクトリ名用の文字列に変換する。
+    22 → "022"  "2-alt" → "2-alt"  整数文字列 "22" → "022"
+    """
+    if isinstance(num, int):
+        return f"{num:03d}"
+    s = str(num).strip()
+    if s.isdigit():
+        return f"{int(s):03d}"
+    return _sanitize_token(s)
+
+
 def default_output_base() -> Path:
     """ルートの出力ベースディレクトリ (デフォルト: ``output``)。
 
@@ -42,14 +54,14 @@ def default_output_base() -> Path:
 
 def build_run_output_dir(
     provider: str,
-    num: int,
+    num: int | str,
     form: str,
     base_dir: str | os.PathLike[str] | None = None,
     *,
     timestamp: datetime | None = None,
     suffix: str | None = None,
     create: bool = True,
-    nums: list[int] | None = None,
+    nums: list[int | str] | None = None,
     date_group: bool = True,
 ) -> Path:
     """実行 1 回ぶんの保存先ディレクトリを作って返す。
@@ -80,9 +92,9 @@ def build_run_output_dir(
     date_str = ts_dt.strftime("%Y%m%d")
     ts = ts_dt.strftime("%Y%m%d_%H%M%S")
     if nums and len(nums) > 1:
-        num_part = "nums" + "_".join(f"{n:03d}" for n in nums)
+        num_part = "nums" + "_".join(_format_num_for_path(n) for n in nums)
     else:
-        num_part = f"num{int(num):03d}"
+        num_part = f"num{_format_num_for_path(num)}"
     parts = [ts, _sanitize_token(provider), _sanitize_token(form), num_part]
     if suffix:
         parts.append(_sanitize_token(suffix))

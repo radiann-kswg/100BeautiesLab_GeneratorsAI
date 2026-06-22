@@ -587,15 +587,20 @@ def collect_reference_images(
                     if chars is not None:
                         if num_value is None:
                             continue
-                        char_nums = {
-                            int(c) for c in chars
-                            if isinstance(c, (int, float)) or (isinstance(c, str) and c.isdigit())
-                        }
+                        char_ids: set[object] = set()
+                        for _c in chars:
+                            if isinstance(_c, (int, float)):
+                                char_ids.add(int(_c))
+                            elif isinstance(_c, str) and _c.isdigit():
+                                char_ids.add(int(_c))
+                            elif isinstance(_c, str) and _c.strip():
+                                char_ids.add(_c.strip())
                         try:
-                            if int(num_value) not in char_nums:
+                            if int(num_value) not in char_ids:
                                 continue
                         except (TypeError, ValueError):
-                            continue
+                            if str(num_value) not in char_ids:
+                                continue
                     elif not _looks_like_target_character(path, num_value):
                         continue
                     _append_unique(local_candidates, path)
@@ -754,30 +759,70 @@ def get_characters(manifest_path: str | None = None) -> list[dict[str, Any]]:
     ]
 
 
+def _num_matches(stored_num: Any, target: int | str) -> bool:
+    """DB の Num フィールドと検索対象を型を跨いで比較する。
+    int 57 は DB Num 57 (int) / "57" (str) / 57.0 (float) にマッチ。
+    str "2-alt" は DB Num "2-alt" (str) にのみマッチ。
+    """
+    if stored_num is None:
+        return False
+    if isinstance(target, int):
+        try:
+            return int(stored_num) == target
+        except (ValueError, TypeError):
+            return False
+    return str(stored_num) == str(target)
+
+
 def find_character(
-    num: int,
+    num: int | str,
     work_key: str = "#Works_NumberTales",
     manifest_path: str | None = None,
 ) -> dict[str, Any] | None:
-    """番号と作品キーでキャラクターを検索して返す。見つからない場合は None。
+    """番号・特殊IDと作品キーでキャラクターを検索して返す。見つからない場合は None。
 
-    `_creations-ai/creations-db/pkg/python` の `CreationsDBClient` が利用可能な場合、
-    取得したレコードに原典DBレコードを `db_record` として統合する。
+    優先順:
+      1. ローカル manifest.jsonl から検索
+      2. `_creations-ai/creations-db/pkg/python` の CreationsDBClient で原典 DB レコードを取得
+      3. 実物 API (CREATIONS_DB_API_BASE_URL) からフォールバック取得
+         - ローカルで見つかっても ai_hints が欠けている場合は API から ai_hints を補完
+         - ローカルで見つからない場合は API から全データを取得して manifest 相当に整形
     """
     target: dict[str, Any] | None = None
     for r in get_characters(manifest_path):
         data = r.get("data", {})
-        if r.get("work_key") == work_key and data.get("Num") == num:
+        if r.get("work_key") == work_key and _num_matches(data.get("Num"), num):
             target = r
             break
-    if target is None:
-        return None
 
+    # ── pkg/python 経由で原典 DB レコードを取得してマージ ──
     db_record = _fetch_db_record_via_creations_db_pkg(num=num, work_key=work_key)
-    if db_record is not None:
+    if db_record is not None and target is not None:
         merged = dict(target)
         merged["db_record"] = db_record
+        target = merged
+
+    if target is not None and target.get("ai_hints"):
+        # ai_hints が揃っていれば完結
+        return target
+
+    # ── 実物 API フォールバック ──
+    api_data = _fetch_record_via_api(num=num, work_key=work_key)
+    if api_data is None:
+        return target  # API も失敗 → ローカル結果をそのまま返す（None の場合もある）
+
+    if target is None:
+        # ローカルに無い → API データで manifest 相当のレコードを構成
+        return _build_record_from_api(api_data, num=num, work_key=work_key)
+
+    # ローカルにあるが ai_hints が欠けている → API の ai_hints で補完
+    ai_hints_from_api = api_data.get("ai_hints") or api_data.get("_aihints")
+    if ai_hints_from_api:
+        merged = dict(target)
+        merged["ai_hints"] = ai_hints_from_api
+        merged["has_ai_hints"] = True
         return merged
+
     return target
 
 
@@ -845,7 +890,7 @@ def _get_creationdb_client() -> Any | None:
 
 
 def _fetch_db_record_via_creations_db_pkg(
-    num: int, work_key: str
+    num: int | str, work_key: str
 ) -> dict[str, Any] | None:
     """原典DBレコードを `pkg/python` 経由で取得する。"""
     client = _get_creationdb_client()
@@ -859,6 +904,79 @@ def _fetch_db_record_via_creations_db_pkg(
         return None
 
     return record if isinstance(record, dict) else None
+
+
+def _fetch_record_via_api(
+    num: int | str,
+    work_key: str,
+    db_name: str = "Primary",
+) -> dict[str, Any] | None:
+    """実物 API (Cloudflare Workers) からキャラクターレコードを取得する。
+
+    通常レコード: GET /api/v1/{work}/{db}/records/{num}?idxKey=Num
+    AIHints:      GET /api/ai/{work}/{db}/aihints/{num}  (Bearer 認証必要)
+
+    環境変数:
+        CREATIONS_DB_API_BASE_URL   ベース URL (デフォルト: https://database.numbertales-radiann.net/api/v1)
+        CREATIONS_DB_API_TOKEN      Bearer トークン (AIHints 取得に必要)
+    """
+    base_url = (
+        os.environ.get("CREATIONS_DB_API_BASE_URL", "").rstrip("/")
+        or "https://database.numbertales-radiann.net/api/v1"
+    )
+    token = os.environ.get("CREATIONS_DB_API_TOKEN", "").strip()
+    work_id = work_key[1:] if work_key.startswith("#") else work_key
+
+    try:
+        import urllib.request as _urllib_request
+        import urllib.error as _urllib_error
+    except ImportError:
+        return None
+
+    def _get_json(url: str, headers: dict | None = None) -> dict | None:
+        req = _urllib_request.Request(url, headers=headers or {})
+        try:
+            with _urllib_request.urlopen(req, timeout=10) as resp:  # noqa: S310
+                body = resp.read().decode("utf-8")
+                return json.loads(body)
+        except (_urllib_error.HTTPError, _urllib_error.URLError, json.JSONDecodeError, OSError):
+            return None
+
+    # 通常レコード取得
+    record_url = f"{base_url}/{work_id}/{db_name}/records/{num}?idxKey=Num"
+    record = _get_json(record_url)
+
+    if record is None:
+        return None
+
+    # AIHints 取得（トークンがある場合のみ）
+    if token:
+        ai_base = base_url.replace("/api/v1", "/api/ai")
+        hints_url = f"{ai_base}/{work_id}/{db_name}/aihints/{num}"
+        hints = _get_json(hints_url, headers={"Authorization": f"Bearer {token}"})
+        if isinstance(hints, dict):
+            record["ai_hints"] = hints
+            record["_aihints"] = hints
+
+    return record
+
+
+def _build_record_from_api(
+    api_data: dict[str, Any],
+    num: int | str,
+    work_key: str,
+) -> dict[str, Any]:
+    """実物 API レスポンスを manifest.jsonl 相当の構造に整形する。"""
+    ai_hints = api_data.pop("ai_hints", None) or api_data.pop("_aihints", None)
+    return {
+        "_type": "character",
+        "work_key": work_key,
+        "has_ai_hints": bool(ai_hints),
+        "data": api_data,
+        "ai_hints": ai_hints or {},
+        "db_record": api_data,
+        "_source": "api",
+    }
 
 
 def _extract_work_dir_from_work_key(work_key: str) -> str:

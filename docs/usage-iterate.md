@@ -41,6 +41,11 @@
 - 値が **ディレクトリ** なら配下の `num*.{png,jpg,jpeg,webp}` を mtime 降順で 1 件選ぶ。
   - 見つからない場合は `*.{png,jpg,jpeg,webp}` まで広げてフォールバック。
   - それでも 0 件なら `FileNotFoundError` で異常終了する。
+- 値が **GCS URL** (`gs://` または `https://storage.googleapis.com/...`) なら
+  一時ファイルに自動ダウンロードして起点として採用する。
+  - `gs://` スキーム → `google-cloud-storage` ライブラリで取得
+  - `https://` 署名 URL → `urllib.request` で取得
+  - MCP スキルの `numbertales_get_run_logs` が返す `intermediate` URL をそのまま渡せる。
 - サポート拡張子: `.png` / `.jpg` / `.jpeg` / `.webp`。
 
 ### `iter` ラベルの自動計算 (`next_iteration_label`)

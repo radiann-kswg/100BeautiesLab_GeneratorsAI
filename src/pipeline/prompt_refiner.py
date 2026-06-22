@@ -88,10 +88,21 @@ def _system_instruction(char_name: str, form: str) -> str:
     )
 
 
-def _user_message(base_prompt: str, scene: str, style: str,
-                  composition: str, background: str) -> str:
+def _user_message(
+    base_prompt: str,
+    scene: str,
+    style: str,
+    composition: str,
+    background: str,
+    costume: str = "",
+) -> str:
     lines = ["Refine this image generation prompt for maximum quality:\n", base_prompt]
     extras: list[str] = []
+    if costume:
+        extras.append(
+            f"Costume variation: {costume} "
+            "(override the default outfit while keeping all immutable traits)"
+        )
     if scene:
         extras.append(f"Scene/pose: {scene}")
     if style:
@@ -113,6 +124,7 @@ def refine_with_openai(
     style: str = "",
     composition: str = "",
     background: str = "",
+    costume: str = "",
 ) -> str:
     """GPT-4o でプロンプトを加工して返す。失敗時はベースプロンプト (DALL-E 形式) を返す。"""
     try:
@@ -140,7 +152,7 @@ def refine_with_openai(
             messages=[
                 {"role": "system", "content": _system_instruction(char_name, form)},
                 {"role": "user", "content": _user_message(
-                    base_prompt, scene, style, composition, background)},
+                    base_prompt, scene, style, composition, background, costume)},
             ],
             max_tokens=600,
         )
@@ -158,6 +170,7 @@ def refine_with_gemini(
     style: str = "",
     composition: str = "",
     background: str = "",
+    costume: str = "",
 ) -> str:
     """Gemini テキストモデルでプロンプトを加工して返す。失敗時はベースプロンプト (Gemini 形式) を返す。"""
     try:
@@ -184,7 +197,7 @@ def refine_with_gemini(
     try:
         response = client.models.generate_content(
             model=text_model,
-            contents=_user_message(base_prompt, scene, style, composition, background),
+            contents=_user_message(base_prompt, scene, style, composition, background, costume),
             config=genai_types.GenerateContentConfig(
                 system_instruction=_system_instruction(char_name, form),
                 max_output_tokens=600,
@@ -204,8 +217,14 @@ def refine_prompt_dual(
     style: str = "",
     composition: str = "",
     background: str = "",
+    costume: str = "",
 ) -> dict[str, str | list]:
     """OpenAI + Gemini の両方でプロンプトを加工し、各結果を返す。
+
+    Parameters
+    ----------
+    costume: 衣装差分の説明（例: '黒いワンピース姿の差分'）。
+             空の場合はデフォルト衣装でプロンプトを生成する。
 
     Returns
     -------
@@ -216,8 +235,12 @@ def refine_prompt_dual(
         "base_gemini": str — Gemini ベースプロンプト (加工前)
         "ref_urls":    list[str] — DB 参照画像 URL
         "ref_locals":  list[str] — DB 参照画像ローカルパス
+        "costume":     str — 指定衣装差分（デバッグ確認用）
     }
     """
+    if costume:
+        print(f"[Stage1] 衣装差分指定: {costume}")
+
     base_dalle = build_dalle_prompt(
         record, form, scene=scene, style=style,
         composition=composition, background=background,
@@ -232,12 +255,14 @@ def refine_prompt_dual(
     openai_prompt = refine_with_openai(
         record, form, scene=scene, style=style,
         composition=composition, background=background,
+        costume=costume,
     )
 
     print("[Stage1] Gemini でプロンプトを加工中...")
     gemini_prompt = refine_with_gemini(
         record, form, scene=scene, style=style,
         composition=composition, background=background,
+        costume=costume,
     )
 
     return {
@@ -247,4 +272,5 @@ def refine_prompt_dual(
         "base_gemini": base_gemini,
         "ref_urls": base_gemini_data.get("reference_image_urls") or [],
         "ref_locals": base_gemini_data.get("reference_local_paths") or [],
+        "costume": costume,
     }
