@@ -78,8 +78,10 @@ from src.pipeline.rough_generator import generate_rough_images, retry_rough_imag
 from src.pipeline.correction_generator import correct_rough_images  # noqa: E402
 from src.pipeline.final_generator import generate_final_images  # noqa: E402
 
-_ROUGH_COUNT = 5             # Stage 3 (単体): ラフ生成枚数
-_MULTI_ROUGH_PER_CHAR = 3   # Stage 3 (合同): キャラクターごとのラフ枚数
+_ROUGH_COUNT = 5               # Stage 3 (単体): ラフ生成枚数
+_MULTI_ROUGH_PER_CHAR = 3     # Stage 3 (合同): キャラクターごとのラフ枚数
+_STAGE3_COMP_ROUGH_COUNT = 2   # Stage 3 comp rough: 全体構図ラフ枚数（探索フェーズ）
+_STAGE5_SYNTH_COUNT = 2        # Stage 5: 最終合成バリアント枚数（仕上げフェーズ）
 
 
 def _fmt_num(num: int | str | None) -> str:
@@ -535,8 +537,8 @@ def run_combined_pipeline(
       char_NNN/stage3_rough/   — キャラクターごとのラフ (各 _MULTI_ROUGH_PER_CHAR 枚)
       char_NNN/stage2_db/      — キャラクターごとの DB サマリー
       char_NNN/stage4_correct/ — キャラクターごとの違反修正結果
-      stage3_comp_rough/       — 全キャラ構図ラフ (Stage3 と同時に 1 枚生成)
-      stage5_final/            — 全キャラ合成完成画像 3 枚
+      stage3_comp_rough/       — 全キャラ構図ラフ (Stage3 と同時に _STAGE3_COMP_ROUGH_COUNT 枚, 探索)
+      stage5_final/            — 全キャラ合成完成画像 _STAGE5_SYNTH_COUNT 枚 (仕上げ)
 
     Returns
     -------
@@ -710,7 +712,7 @@ def run_combined_pipeline(
     comp_rough_paths: list[Path] = []
     all_have_rough = all(bool(per_char_roughs.get(n)) for n in nums)
     if all_have_rough:
-        print(f"\n  [Stage3-CompRough] 全キャラ構図ラフを同時生成 (1 枚)...")
+        print(f"\n  [Stage3-CompRough] 全キャラ構図ラフを同時生成 ({_STAGE3_COMP_ROUGH_COUNT} 枚, 探索)...")
         time.sleep(inter_char_sleep)  # レートリミット対策
         comp_rough_dir = pipeline_dir / "stage3_comp_rough"
         comp_rough_dir.mkdir(parents=True, exist_ok=True)
@@ -723,7 +725,7 @@ def run_combined_pipeline(
                 composition_prompt=comp_rough_prompt,
                 synth_dir=comp_rough_dir,
                 work_key=work_key,
-                count=1,
+                count=_STAGE3_COMP_ROUGH_COUNT,
             )
             print(f"  [Stage3-CompRough] {len(comp_rough_paths)} 枚生成完了")
         except Exception as err:
@@ -790,7 +792,7 @@ def run_combined_pipeline(
     has_comp_rough = bool(comp_rough_paths)
     stage5_refs = ([comp_rough_paths[0]] if has_comp_rough else []) + per_char_best
     _comp_note = " + 構図ラフ参照あり" if has_comp_rough else ""
-    print(f"\n[=] Stage 5: キャラクター完成レンダー {len(per_char_best)} 枚を合成 (3 枚固定){_comp_note}")
+    print(f"\n[=] Stage 5: キャラクター完成レンダー {len(per_char_best)} 枚を合成 ({_STAGE5_SYNTH_COUNT} 枚, 仕上げ){_comp_note}")
     composition_prompt = _build_multi_char_composition_prompt(
         records, forms_map, scene, has_comp_rough=has_comp_rough
     )
@@ -801,7 +803,7 @@ def run_combined_pipeline(
         composition_prompt=composition_prompt,
         synth_dir=stage5_dir / "synth",
         work_key=work_key,
-        count=3,
+        count=_STAGE5_SYNTH_COUNT,
     )
     print(f"[Stage5] done - {len(synth_images)} 枚合成完了")
 

@@ -612,13 +612,26 @@ def _detect_form_for_alias(text: str, alias: str) -> str:
 
     「コアフォルダ姿のバイナ」→ "corefolder"
     「ヒューマノイド姿のバイナ」→ "humanoid"
+
+    前方優先: エイリアス前の 25 文字を先にチェックし、そこで確定しなければ
+    直後 5 文字のみを補助的に参照する。隣接キャラの形態記述を誤検知しにくい。
     """
-    # エイリアスの前後 20 文字程度を取り出して形態判定
     idx = text.find(alias)
     if idx == -1:
         return _detect_form(text)
-    window = text[max(0, idx - 20): idx + len(alias) + 10]
-    return _detect_form(window)
+
+    before = text[max(0, idx - 25): idx]
+    lower_before = before.lower()
+    for word in _HUMANOID_WORDS:
+        if word.lower() in lower_before:
+            return "humanoid"
+    for word in _COREFOLDER_WORDS:
+        if word.lower() in lower_before:
+            return "corefolder"
+
+    # 前方で確定しなければ後方 5 文字のみ（隣接キャラの記述を拾わないよう短く）
+    after = text[idx + len(alias): idx + len(alias) + 5]
+    return _detect_form(after)
 
 
 def main() -> None:

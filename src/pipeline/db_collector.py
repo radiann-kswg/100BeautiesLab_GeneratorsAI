@@ -25,7 +25,7 @@ from src.utils.dataset import collect_reference_images, _filter_immutable_traits
 
 
 def collect_character_data(
-    num: int,
+    num: int | str,
     form: str,
     pipeline_dir: Path,
     work_key: str = "#Works_NumberTales",
@@ -34,7 +34,7 @@ def collect_character_data(
 
     Parameters
     ----------
-    num:          キャラクター番号
+    num:          キャラクター番号 (整数または文字列 ID e.g. "2-alt")
     form:         形態 ("corefolder" / "humanoid")
     pipeline_dir: パイプライン出力ルートディレクトリ
     work_key:     作品キー
@@ -56,7 +56,8 @@ def collect_character_data(
         print(f"[Stage2] ERROR: キャラクター #{num} ({work_key}) が見つかりません。")
         return None
 
-    char_name = record["data"].get("Name", f"#{num:03d}")
+    _num_label = f"#{num:03d}" if isinstance(num, int) else f"#{num}"
+    char_name = record["data"].get("Name", _num_label)
     print(f"[Stage2] キャラクター選定: {char_name} / 形態: {form}")
 
     references = collect_reference_images(record, form=form)
@@ -123,7 +124,11 @@ def _build_character_spec(record: dict, form: str) -> dict:
         "violation_features": violation_features,
         "correction_instruction": correction_instruction,
         "form": form,
-        "char_name": record["data"].get("Name", f"#{record['data']['Num']:03d}"),
+        "char_name": record["data"].get("Name", (
+            f"#{record['data']['Num']:03d}"
+            if isinstance(record["data"]["Num"], int)
+            else f"#{record['data']['Num']}"
+        )),
         "char_num": record["data"]["Num"],
     }
 
