@@ -10,6 +10,7 @@ on:
       - "requirements.txt"
       - "requirements-mcp.txt"
       - "Dockerfile"
+  workflow_dispatch:  # GitHub UI から手動実行できるようにする
 
 env:
   PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
@@ -65,8 +66,19 @@ jobs:
           service: ${{ env.SERVICE }}
           region: ${{ env.REGION }}
           image: ${{ env.IMAGE }}:${{ github.sha }}
-          # 既存サービスの環境変数を引き継ぎ、シークレット系は Cloud Run Secrets から注入
-          # (GEMINI_API_KEY 等は Cloud Run の Secret Manager 連携で管理すること)
+          flags: >-
+            --port=8080
+            --allow-unauthenticated
+            --min-instances=0
+            --max-instances=1
+            --memory=1Gi
+            --timeout=3600
+          env_vars: |
+            MCP_TRANSPORT=streamable-http
+            OUTPUT_SINK=drive
+          secrets: |
+            GEMINI_API_KEY=GEMINI_API_KEY:latest
+            OPENAI_API_KEY=OPENAI_API_KEY:latest
 
       - name: Show deployed URL
         run: |
