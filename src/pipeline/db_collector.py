@@ -57,7 +57,7 @@ def collect_character_data(
         return None
 
     _num_label = f"#{num:03d}" if isinstance(num, int) else f"#{num}"
-    char_name = record["data"].get("Name", _num_label)
+    char_name = record["data"].get("Name_JP") or record["data"].get("Name") or _num_label
     print(f"[Stage2] キャラクター選定: {char_name} / 形態: {form}")
 
     references = collect_reference_images(record, form=form)
@@ -124,11 +124,13 @@ def _build_character_spec(record: dict, form: str) -> dict:
         "violation_features": violation_features,
         "correction_instruction": correction_instruction,
         "form": form,
-        "char_name": record["data"].get("Name", (
-            f"#{record['data']['Num']:03d}"
-            if isinstance(record["data"]["Num"], int)
-            else f"#{record['data']['Num']}"
-        )),
+        "char_name": (
+            record["data"].get("Name_JP") or record["data"].get("Name") or (
+                f"#{record['data']['Num']:03d}"
+                if isinstance(record["data"]["Num"], int)
+                else f"#{record['data']['Num']}"
+            )
+        ),
         "char_num": record["data"]["Num"],
     }
 
@@ -138,7 +140,7 @@ def _save_db_summary(
 ) -> None:
     summary = {
         "num": record["data"]["Num"],
-        "name": record["data"].get("Name", ""),
+        "name": record["data"].get("Name_JP") or record["data"].get("Name") or "",
         "form": form,
         "reference_url_count": len(references["urls"]),
         "reference_local_count": len(references["local_paths"]),

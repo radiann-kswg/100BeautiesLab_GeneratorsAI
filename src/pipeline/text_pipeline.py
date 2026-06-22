@@ -122,7 +122,7 @@ def _build_char_summary(record: dict) -> str:
     common = hints.get("common") or {}
 
     lines: list[str] = []
-    name = data.get("Name")
+    name = data.get("Name_JP") or data.get("Name")
     num = data.get("Num")
     if name:
         lines.append(f"名前: {name}" + (f" (#{num})" if num else ""))

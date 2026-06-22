@@ -202,7 +202,7 @@ def _get_chars_with_images() -> list[dict]:
                 continue
             d = r.get("data") or {}
             num = d.get("Num")
-            name = d.get("Name") or ""
+            name = d.get("Name_JP") or d.get("Name") or ""
             name_en = d.get("Name_EN") or ""
             if num is not None:
                 chars.append({"Num": str(num), "Name": name, "Name_EN": name_en})
@@ -242,7 +242,7 @@ def _confirm_character_dialog(name_hint: str, chars: list[dict]) -> str | None:
 
     print("  画像が存在するキャラクターの中から選択してください:")
     for i, c in enumerate(int_chars, 1):
-        name_jp = (c.get("Name") or "").strip()
+        name_jp = (c.get("Name_JP") or c.get("Name") or "").strip()
         name_en = (c.get("Name_EN") or "").strip()
         name_disp = f"{name_jp} / {name_en}" if name_jp and name_en else name_en or name_jp
         line = f"    {i:2d}. #{int(c['Num']):>3}  {name_disp}"
@@ -264,7 +264,7 @@ def _confirm_character_dialog(name_hint: str, chars: list[dict]) -> str | None:
             return None
         if 1 <= idx <= len(int_chars):
             selected = int_chars[idx - 1]
-            sel_jp = (selected.get("Name") or "").strip()
+            sel_jp = (selected.get("Name_JP") or selected.get("Name") or "").strip()
             sel_en = (selected.get("Name_EN") or "").strip()
             sel_name = f"{sel_jp} / {sel_en}" if sel_jp and sel_en else sel_en or sel_jp
             sel_line = f"  選択: #{selected['Num']} {sel_name}"

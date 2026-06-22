@@ -368,7 +368,7 @@ def _build_multi_char_composition_prompt(
     def _char_label(r: dict) -> str:
         d = r.get("data") or {}
         raw_num = d.get("Num")
-        name = d.get("Name") or f"#{_fmt_num(raw_num)}"
+        name = d.get("Name_JP") or d.get("Name") or f"#{_fmt_num(raw_num)}"
         return name
 
     def _get_num_key(r: dict) -> int | str:

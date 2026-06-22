@@ -1383,7 +1383,7 @@ def _build_form_common_dataset_block(
         tails_unit_en = str(_data_src.get("TailsUnit_EN") or _db_src.get("TailsUnit_EN") or "").strip()
         tails_unit = str(_data_src.get("TailsUnit") or _db_src.get("TailsUnit") or "").strip()
         race_type = str(_data_src.get("RaceType") or _db_src.get("RaceType") or "").strip()
-        formal_name = str(_data_src.get("FormalName") or _db_src.get("FormalName") or "").strip()
+        formal_name = str(_data_src.get("FormalName_JP") or _data_src.get("FormalName") or _db_src.get("FormalName_JP") or _db_src.get("FormalName") or "").strip()
         formal_name_en = str(_data_src.get("FormalName_EN") or _db_src.get("FormalName_EN") or "").strip()
         if tails_unit_en:
             db_lines.append(f"- DB原典/尾の構造(en): {tails_unit_en}")
