@@ -1,0 +1,74 @@
+name: Deploy MCP Server to Cloud Run
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "src/pipeline/**"
+      - "src/mcp_server/**"
+      - "src/utils/**"
+      - "requirements.txt"
+      - "requirements-mcp.txt"
+      - "Dockerfile"
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  REGION: ${{ secrets.GCP_REGION }}
+  REPOSITORY: ${{ secrets.GCP_AR_REPOSITORY }}   # Artifact Registry リポジトリ名
+  SERVICE: ${{ secrets.CLOUD_RUN_SERVICE }}        # Cloud Run サービス名
+  IMAGE: ${{ secrets.GCP_REGION }}.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ secrets.GCP_AR_REPOSITORY }}/numbertales-mcp
+
+jobs:
+  build-and-deploy:
+    name: Build & Deploy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write   # Workload Identity Federation に必要
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # ── GCP 認証 (Workload Identity Federation) ─────────────────
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      # ── Docker: Artifact Registry 認証 ──────────────────────────
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGION }}.pkg.dev --quiet
+
+      # ── Docker イメージビルド & プッシュ ────────────────────────
+      - name: Build Docker image
+        run: |
+          docker build \
+            --tag "${{ env.IMAGE }}:${{ github.sha }}" \
+            --tag "${{ env.IMAGE }}:latest" \
+            --cache-from "${{ env.IMAGE }}:latest" \
+            --build-arg BUILDKIT_INLINE_CACHE=1 \
+            .
+
+      - name: Push Docker image
+        run: |
+          docker push "${{ env.IMAGE }}:${{ github.sha }}"
+          docker push "${{ env.IMAGE }}:latest"
+
+      # ── Cloud Run デプロイ ───────────────────────────────────────
+      - name: Deploy to Cloud Run
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: ${{ env.SERVICE }}
+          region: ${{ env.REGION }}
+          image: ${{ env.IMAGE }}:${{ github.sha }}
+          # 既存サービスの環境変数を引き継ぎ、シークレット系は Cloud Run Secrets から注入
+          # (GEMINI_API_KEY 等は Cloud Run の Secret Manager 連携で管理すること)
+
+      - name: Show deployed URL
+        run: |
+          echo "MCP server deployed!"
+          echo "Cloud Run URL: $(gcloud run services describe ${{ env.SERVICE }} --region ${{ env.REGION }} --format='value(status.url)')"
