@@ -1,3 +1,7 @@
+# Archive / Private Files
+*.archive/
+*.private/
+
 # Secrets / Environment
 .env
 .env.*
