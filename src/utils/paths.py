@@ -32,14 +32,16 @@ def _sanitize_token(value: str) -> str:
 
 def format_num(num: int | str) -> str:
     """num をファイル名・ディレクトリ名用の文字列に変換する。
-    22 → "022"  "2-alt" → "2-alt"  整数文字列 "22" → "022"
+
+    int 型のみゼロパディング: 22 → "022", 0 → "000"
+    str 型は特殊IDとしてそのまま保持: "2-alt" → "2-alt", "0" → "0", "00" → "00"
+    float は int に丸めてパディング: 22.0 → "022"
     """
     if isinstance(num, int):
         return f"{num:03d}"
-    s = str(num).strip()
-    if s.isdigit():
-        return f"{int(s):03d}"
-    return _sanitize_token(s)
+    if isinstance(num, float):
+        return f"{int(num):03d}"
+    return _sanitize_token(str(num).strip())
 
 
 # 後方互換エイリアス
