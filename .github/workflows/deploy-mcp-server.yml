@@ -4,9 +4,7 @@ on:
   push:
     branches: [master]
     paths:
-      - "src/pipeline/**"
-      - "src/mcp_server/**"
-      - "src/utils/**"
+      - "src/**"
       - "requirements.txt"
       - "requirements-mcp.txt"
       - "Dockerfile"
