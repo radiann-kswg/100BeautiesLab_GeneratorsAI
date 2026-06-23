@@ -416,7 +416,7 @@ python -m src.batch_generate --nums 15,22,49,57 --forms both --provider both --s
 | 6.5  | `[形態共通データセット]`                              | 形態定義・シルエット要約・共通装備 + **DB原典/識別モチーフ(en)** (両形態) / **DB原典/尾の構造(en)** (humanoid 限定) | `_ideas/form_common_datasets/{Work}.json` + `db_record.IdentityMotif.Motif_EN` / `db_record.TailsUnit_EN` |
 | 9    | `[シーン・追加要望]`                                  | `--scene` / `--style` / `--composition` / `--background` の指定値                                             | CLI フラグ                                                                     |
 
-> **重要**: 番号印字ブロック (5) と禁止語ブロック (8) は2026-06-09に再強化済み。詳細は [`AGENTS.md`](../AGENTS.md) の `output レイアウト規約` セクションと、リポジトリメモリの A7 ノートを参照。
+> **重要**: 番号印字ブロック (5) と禁止語ブロック (8) は2026-06-09に再強化済み。詳細は [`AGENTS.md`](../AGENTS.md) の `output レイアウト規約` セクションを参照。
 
 > **2026-06-13 更新**: `[形態共通データセット]` (ブロック 6.5) に `_creations-db` 英語フィールド拡張対応の DB原典補足行を追加。`IdentityMotif.Motif_EN`（形態別英語モチーフタグ、89キャラ対応）は両形態で注入。humanoid 形態には `TailsUnit_EN`（英語表記の尾構造、32キャラ対応）を優先使用し、未設定時は日本語版にフォールバック。corefolder 形態の Motif_EN には humanoid 衣装フィルタを通してから注入する。
 

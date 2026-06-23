@@ -1,109 +1,102 @@
 # src ディレクトリ
 
-画像生成スクリプト群を配置しています。
+画像生成・テキスト生成パイプラインおよびユーティリティ群を配置しています。
+コマンドの詳細は [`docs/`](../docs/README.md) を参照してください。
 
 ## 構成
 
-- `gemini/generate.py` — Google Imagen 3 による画像生成
-- `openai/generate.py` — DALL-E 3 による画像生成 / GPT-4o によるプロンプト補助
-- `adobe/generate.py` — Adobe Firefly Services によるテキスト→画像生成 (provider: adobe)
-- `canva/generate.py` — Canva Connect API による生成済み画像のデザイン化・書き出し (provider: canva, `--from-image` 必須)
-- `utils/dataset.py` — `manifest.jsonl` 読み込み・プロンプト組み立てユーティリティ
-- `utils/paths.py` — 実行ごとの出力ディレクトリ生成ユーティリティ
-- `utils/run_log.py` — 実行ごとの `prompt.txt` / `run_meta.json` / `notes.md` 保存ユーティリティ
-- `tools/check_image_mime.py` — 画像ファイルの拡張子と実体フォーマット (PNG/JPEG/GIF/WEBP/BMP/TIFF) の不一致を検出・修正する CLI ツール
+### パイプライン
+
+- `pipeline/image_pipeline.py` — マルチ LLM 5 ステージ画像生成パイプライン（推奨）
+- `pipeline/stage_cli.py` — 5 ステージを 1 ステージずつ分割実行する CLI（時間制約環境向け）
+- `pipeline/text_pipeline.py` — GPT-4o 生成 → Gemini クロスレビューのテキスト生成パイプライン
+- `pipeline/natural_parser.py` — 自然文からキャラクター番号・形態・シーン等を LLM 抽出
+
+### 単体プロバイダ
+
+- `gemini/generate.py` — Google Imagen 3/4 および Gemini multimodal による画像生成
+- `openai/generate.py` — DALL-E 3 / gpt-image-1 による画像生成 / GPT-4o によるプロンプト補助
+- `adobe/generate.py` — Adobe Firefly Services によるテキスト→画像生成
+- `adobe/image_ops.py` — Adobe Lightroom/Photoshop API で構図ガイドを生成（Stage 3 内部利用）
+- `canva/generate.py` — Canva Connect API による生成済み画像のデザイン化・書き出し（`--from-image` 必須）
+- `batch_generate.py` — 複数キャラクター × 形態 × プロバイダのバッチラッパー
+
+### MCP サーバ
+
+- `mcp_server/server.py` — パイプラインを MCP ツールとして公開（stdio / Streamable HTTP）
+
+### ユーティリティ
+
+- `utils/dataset.py` — `manifest.jsonl` 読み込み・プロンプト組み立て
+- `utils/paths.py` — 実行ごとの出力ディレクトリ生成 (`build_run_output_dir()`)
+- `utils/run_log.py` — `prompt.txt` / `run_meta.json` / `notes.md` 保存
+- `utils/image_io.py` — バイト列マジックによる MIME 自動補正付き画像保存
+- `utils/iterate.py` — `--iterate-from` の起点解決（ファイル / ディレクトリ / GCS URL 対応）
+
+### 補助ツール (`src/tools/`)
+
+- `tools/check_image_mime.py` — 拡張子と実体 MIME の不一致を検出・修正する CLI
+- `tools/migrate_output_layout.py` — 旧出力レイアウトを現行 2 階層形式へ移行するワンショットツール
+- `tools/refresh_canva_token.py` — Canva の OAuth2 PKCE トークンを取得し `.env` を自動更新
+- `tools/check_sync.py` — FUSE マウント等での同期完了を確認する汎用ツール
+
+---
 
 ## セットアップ
 
-```bash
+```powershell
+# 仮想環境作成（初回のみ）
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+
 # 依存パッケージのインストール
 pip install -r requirements.txt
 
 # .env を作成して API キーを設定
-copy .env.example .env
-# .env を編集して GEMINI_API_KEY / OPENAI_API_KEY を入力
+cp .env.example .env
+# .env を編集して GEMINI_API_KEY / OPENAI_API_KEY などを入力
 ```
+
+詳細は [`docs/setup.md`](../docs/setup.md) を参照。
+
+---
 
 ## 使用例
 
-```bash
-# Imagen 3 で 57(イズナ) のコアフォルダ形態を生成
+```powershell
+# マルチ LLM パイプライン（推奨）
+python -m src.pipeline.image_pipeline --num 57 --form corefolder
+python -m src.pipeline.image_pipeline --nums 25,57 --form corefolder --scene "並んでいるシーン"
+
+# Gemini 単体
 python -m src.gemini.generate --num 57 --form corefolder
 
-# DALL-E 3 で生成
+# OpenAI 単体
 python -m src.openai.generate --num 57 --form corefolder
 
 # GPT-4o でプロンプト改善提案を取得
 python -m src.openai.generate --num 57 --mode prompt-assist --scene "図書館で本を読んでいるシーン"
-```
 
-## 出力パス規則
-
-- 生成画像は実行ごとに `output/{YYYYMMDD_HHMMSS}_{provider}_{form}_num{NNN}/` へ保存されるようになったよ。
-  - 例: `output/20260608_174532_gemini_corefolder_num057/num057_corefolder_01.png`
-  - 例: `output/20260608_174604_openai_humanoid_num057/num057_humanoid_dalle.png`
-- ベースディレクトリは `OUTPUT_BASE_DIR` (なければ `OUTPUT_DIR`、それもなければ `output`) を読む。
-- `--out <dir>` を指定してもその配下にタイムスタンプ付きサブフォルダを切るため、上書き事故は起きないよ。
-
-## 参照画像の扱い
-
-- `manifest.jsonl` の `ai_hints.*.reference_images` と、レコード内の `images` (創作DB由来ローカル画像) を自動収集します。
-- Gemini 生成では、参照画像 URL/ローカルパスをプロンプトに明示して作風合わせを強化します。
-- OpenAI の `prompt-assist` では、既存画像を GPT-4o へマルチモーダル入力として添付します（URL + ローカル画像）。
-
-## 形態共通データセット (作品別)
-
-- 作品ごとの形態共通特徴は `_ideas/form_common_datasets/{Works_XXX}.json` に置きます。
-  - 例: `_ideas/form_common_datasets/Works_NumberTales.json`
-- 読み込み優先順位は `FORM_COMMON_DATASET_PATH` (環境変数) → 作品別ファイル → (フォールバックなし)。
-- corefolder / humanoid 双方について、`definition_*` / `surface_description_*` / `texture_traits[]` / `common_equipment[]` / `required_shape_keywords[]` / `disallow_cross_form_keywords[]` などを定義しておくと、プロンプト本文に自動で差し込まれます。
-
-## 実行ログ
-
-- 各実行ごとに `output/{ts}_{provider}_{form}_numNNN/` の中に次の 3 ファイルを保存します。
-  - `prompt.txt` — モデルに渡したプロンプト本文
-  - `run_meta.json` — 実行メタ（provider/model/参照画像/生成結果/エラー要旨など）
-  - `notes.md` — 手書きレビュー用テンプレ（成功度・気になった点・改善案）
-- 失敗時もログは残るので、成功プロンプトと失敗プロンプトを後から見比べやすくしています。
-
-## 画像 MIME チェック (再発防止)
-
-API 側 (Anthropic 等) は画像 base64 の宣言 MIME と実体バイト列が一致しないと
-`invalid_request_error (400)` で弾きます。Gemini が JPEG を返しているのに
-`.png` で保存しているケースがあるため、定期的に下記でスキャンしてください。
-
-```bash
-# output/ を再帰スキャンしてミスマッチを一覧表示
-python -m src.tools.check_image_mime
-
-# 拡張子を実体に合わせてリネーム (.png → .jpg など)
-python -m src.tools.check_image_mime --fix-rename
-
-# 実体を拡張子に合わせて Pillow で再エンコード
-python -m src.tools.check_image_mime --fix-reencode
-
-# CI 用: ミスマッチがあれば exit 1
+# 画像 MIME チェック
 python -m src.tools.check_image_mime --strict
 ```
 
-### 保存時の MIME 自動判定
+---
 
-`src/utils/image_io.py` の `save_image_bytes()` がバイト列の先頭を見て
-正しい拡張子を選びます。`gemini/generate.py` と `openai/generate.py` の保存処理は
-このユーティリティ経由になっているので、Gemini が JPEG を返してきても
-拡張子は `.jpg` で保存され、後段の MIME ミスマッチが発生しません。
+## 出力パス規則
 
-## output レイアウト整理 (一回限り)
+生成画像は **日付フォルダ + 実行フォルダの 2 階層** に保存される。
 
-旧フォーマット (`output/{date}/{provider}/...`、`output/{ts}_..._num...` の日付階層なし、
-旧 3 階層 `output/{date}/{date}_{HH}/{run}/`) を、現行 2 階層レイアウト
-`output/{YYYYMMDD}/{ts}_{provider}_{form}_num{NNN}/` に
-寄せるためのツールも用意しています。
-
-```bash
-# 計画だけ確認
-python -m src.tools.migrate_output_layout --dry-run
-
-# 本実行
-python -m src.tools.migrate_output_layout
 ```
+output/{YYYYMMDD}/{YYYYMMDD_HHMMSS}_{provider}_{form}_num{NNN}/
+    ├── num057_corefolder_01.jpg   # 生成画像
+    ├── prompt.txt                 # 渡したプロンプト本文
+    ├── run_meta.json              # 構造化メタ
+    └── notes.md                  # 手書きレビュー用テンプレ
+```
+
+- ベースディレクトリは `OUTPUT_BASE_DIR`（なければ `OUTPUT_DIR`、それもなければ `output`）。
+- `--out <dir>` を指定した場合はその dir 直下に実行フォルダを直置き（日付フォルダなし）。
+- `prompt.txt` / `run_meta.json` / `notes.md` は失敗時も必ず残る（上書き禁止）。
+
+詳細は [`docs/output-and-logs.md`](../docs/output-and-logs.md) を参照。

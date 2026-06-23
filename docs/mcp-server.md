@@ -111,7 +111,7 @@ docker run --rm -p 8080:8080 \
 
 ---
 
-## 5. Google Cloud Run へのデプロイ（先輩が実行）
+## 5. Google Cloud Run へのデプロイ
 
 > 以下は **GCP アカウント側の操作**のため、ご自身で実行してください。
 > `PROJECT_ID` / `REGION` は環境に合わせて置き換えます。
