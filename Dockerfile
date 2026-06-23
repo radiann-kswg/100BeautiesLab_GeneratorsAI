@@ -26,7 +26,9 @@ RUN pip install --upgrade pip && pip install -r requirements-mcp.txt
 # アプリ本体
 COPY src/ ./src/
 COPY _ideas/ ./_ideas/
-# 形態共通データセット等の参照に必要な範囲のみ同梱（_creations-ai は別途マウント/同梱）
+# キャラクターデータ（manifest.jsonl / db_Primary.json）をイメージに同梱
+COPY _creations-ai/ai-dataset/ ./_creations-ai/ai-dataset/
+COPY _creations-ai/creations-db/data/ ./_creations-ai/creations-db/data/
 
 EXPOSE 8080
 
