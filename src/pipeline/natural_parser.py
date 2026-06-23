@@ -457,10 +457,12 @@ def _normalize_entry(entry: object) -> dict | None:
 def _correct_llm_results(
     raw: list[dict],
     integer_hints: dict[str, str],
+    text: str = "",
 ) -> list[dict]:
     """LLM 結果の num が name lookup の解決結果と食い違う場合に修正する。
 
     integer_hints: {alias: num_str (整数)} — テキスト内で確認されたマッピング
+    text: 元の入力テキスト — 欠落キャラの形態をエイリアス周辺から推定するために使用
     """
     if not integer_hints:
         return raw
@@ -473,13 +475,14 @@ def _correct_llm_results(
     for entry in raw:
         corrected.append(entry)
 
-    # 期待される num が LLM に含まれていなければ追加 (form はテキストから推定済み)
+    # 期待される num が LLM に含まれていなければ追加
     for expected_num, alias in expected.items():
         if expected_num not in actual_nums:
-            print(f"  [NameCorrect] '{alias}' → #{expected_num:03d} を LLM 結果に追加")
+            form = _detect_form_for_alias(text, alias) if text else "corefolder"
+            print(f"  [NameCorrect] '{alias}' → #{expected_num:03d} ({form}) を LLM 結果に追加")
             corrected.append({
                 "num": expected_num,
-                "form": "corefolder",  # 後で form 修正ロジックに任せる
+                "form": form,
                 "scene": "",
                 "style": "", "composition": "", "background": "",
                 "work_key": "#Works_NumberTales",
@@ -558,7 +561,7 @@ def parse_generation_request(
         raw = _simple_extract(text)
 
     # ── LLM 結果の名前整合性チェック ──
-    raw = _correct_llm_results(raw or [], integer_hints)
+    raw = _correct_llm_results(raw or [], integer_hints, text)
 
     # ── 正規化 ──
     results: list[dict] = []
