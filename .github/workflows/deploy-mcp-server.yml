@@ -81,7 +81,7 @@ jobs:
             --max-instances=1
             --memory=1Gi
             --timeout=3600
-            --cpu-always-allocated
+            --no-cpu-throttling
           env_vars: |
             MCP_TRANSPORT=streamable-http
             OUTPUT_SINK=drive
