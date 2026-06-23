@@ -11,6 +11,7 @@ on:
       - "requirements-mcp.txt"
       - "Dockerfile"
       - ".github/workflows/deploy-mcp-server.yml"
+      - "_creations-ai"
   workflow_dispatch:  # GitHub UI から手動実行できるようにする
 
 env:
