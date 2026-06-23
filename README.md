@@ -8,7 +8,11 @@
 
 ## 概要
 
-Gemini / OpenAI / Adobe Firefly API を組み合わせた **5 ステージのマルチ LLM 画像生成パイプライン**を中心に、ナンバーテールズキャラクターの画像生成プロンプト構築・検証・改稿を行うワークスペースです。
+本リポジトリは、**百花繚乱研究所（RadianN_kswg）の一次創作作品「ナンバーテールズ」シリーズを対象とした AI 生成補助ツール**です。
+キャラクター設定データベース（[100BeautiesLab_CreationsDB](https://github.com/radiann-kswg/100BeautiesLab_CreationsDB)）をサブモジュールとして参照し、Gemini / OpenAI / Adobe Firefly API を組み合わせた **5 ステージのマルチ LLM 画像生成パイプライン**で画像生成プロンプトの構築・検証・改稿を行います。
+
+> **本リポジトリの生成物は百花繚乱研究所の二次創作物に該当します。**
+> 利用・運用にあたっては、下記の公式ガイドラインへの同意が必要です。
 
 GitHub Copilot / Claude Code のエージェントは **57(イズナ)** として作画補助を担当します。
 
@@ -120,6 +124,24 @@ git submodule update --init --recursive
 | [`docs/output-and-logs.md`](docs/output-and-logs.md) | 出力レイアウト・`run_meta.json` / `notes.md` の仕様 |
 | [`docs/tools.md`](docs/tools.md) | 補助ツール・形態共通データセット管理 |
 | [`docs/mcp-server.md`](docs/mcp-server.md) | MCP サーバのデプロイと運用 |
+
+---
+
+## 公式ガイドライン（利用前に必読）
+
+本リポジトリを使用・運用する場合は、**百花繚乱研究所の公式ガイドラインに同意したうえで利用してください。**
+生成物の扱い・再配布・AI 学習利用・表現上の禁止事項はガイドラインで定められています。
+
+- [ガイドライン（日本語）](https://github.com/radiann-kswg/100BeautiesLab_CreationsDB/blob/develop/guideline.md)
+- [Guidelines (English)](https://github.com/radiann-kswg/100BeautiesLab_CreationsDB/blob/develop/guideline.en.md)
+
+ガイドラインの主な要点:
+
+- **非商用目的に限り**利用可。商用利用には著作権者の個別許可が必要。
+- 生成物を共有・再配布する際は**出典（百花繚乱研究所 / radiann-kswg）を明記**すること。
+- キャラクターの**不変特徴（耳・尻尾数・髪色・瞳色）の無断改変**は禁止。
+- 反社会的・性的表現、作者偽称、印象を著しく損なう利用は禁止。
+- AI 学習利用は非営利かつ `manifest-training.jsonl` の `ai_training.allowed = true` レコードに限る。
 
 ---
 
