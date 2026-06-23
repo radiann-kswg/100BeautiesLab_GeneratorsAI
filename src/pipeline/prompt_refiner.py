@@ -49,7 +49,7 @@ def generate_random_scene(record: dict, form: str) -> str:
     form_data = (hints.get("forms") or {}).get(form) or {}
     identity = ", ".join((common.get("identity_tags") or [])[:5])
     form_desc = str(form_data.get("natural_language_description", ""))[:80]
-    char_name = record["data"].get("Name", "Unknown")
+    char_name = record["data"].get("Name_JP") or record["data"].get("Name") or "Unknown"
 
     user_msg = (
         f"キャラクター: {char_name} / 形態: {form}\n"
@@ -139,7 +139,7 @@ def refine_with_openai(
         return ""
 
     gpt_model = os.environ.get("GPT_MODEL", "gpt-4o")
-    char_name = record["data"].get("Name", "Unknown")
+    char_name = record["data"].get("Name_JP") or record["data"].get("Name") or "Unknown"
     base_prompt = build_dalle_prompt(
         record, form, scene=scene, style=style,
         composition=composition, background=background,
@@ -186,7 +186,7 @@ def refine_with_gemini(
         return ""
 
     text_model = os.environ.get("GEMINI_TEXT_MODEL", "gemini-2.5-flash")
-    char_name = record["data"].get("Name", "Unknown")
+    char_name = record["data"].get("Name_JP") or record["data"].get("Name") or "Unknown"
     data = build_gemini_prompt(
         record, form, scene=scene, style=style,
         composition=composition, background=background,

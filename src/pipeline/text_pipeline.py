@@ -159,7 +159,7 @@ def _generate_openai(
         return ""
 
     gpt_model = os.environ.get("GPT_MODEL", "gpt-4o")
-    name = record["data"].get("Name", "Unknown")
+    name = record["data"].get("Name_JP") or record["data"].get("Name") or "Unknown"
     char_summary = _build_char_summary(record)
     template = _USER_TEMPLATES.get(mode, _USER_TEMPLATES["scene"])
     user_msg = template.format(
@@ -207,7 +207,7 @@ def _review_gemini(
     hints = record.get("ai_hints") or {}
     common = hints.get("common") or {}
     immutable = common.get("immutable_traits") or []
-    name = record["data"].get("Name", "Unknown")
+    name = record["data"].get("Name_JP") or record["data"].get("Name") or "Unknown"
 
     immutable_display = [re.sub(r"\s*\((corefolder|humanoid)\)\s*$", "", t) for t in immutable]
     review_prompt = (
@@ -304,7 +304,7 @@ def run_text_pipeline(
             "output_dir": str(output_dir),
         }
 
-    char_name = record["data"].get("Name", f"#{num}")
+    char_name = record["data"].get("Name_JP") or record["data"].get("Name") or f"#{num}"
     print(f"[TextPipeline] キャラクター: {char_name}")
 
     # Step 2: GPT-4o でプライマリ生成

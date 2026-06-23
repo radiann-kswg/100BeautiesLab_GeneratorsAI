@@ -1,15 +1,20 @@
 """
 src/tools/refresh_canva_token.py — Canva OAuth2 PKCE でアクセストークンを再取得し .env を更新する。
 
-手順:
+手順 (通常フロー):
   1. スクリプトを実行すると認可 URL が表示される。
   2. ブラウザでその URL を開いて Canva にログインし、アクセスを許可する。
   3. ブラウザがローカルサーバーにリダイレクトされ、自動的にトークンを取得する。
-  4. .env の CANVA_ACCESS_TOKEN が新しいトークンで上書きされる。
+  4. .env の CANVA_ACCESS_TOKEN と CANVA_REFRESH_TOKEN が更新される。
+
+手順 (非対話リフレッシュ):
+  --use-refresh-token を付けると、CANVA_REFRESH_TOKEN を使ってブラウザなしで更新できる。
+  MCP サーバ側で呼ぶ場合は refresh_access_token() を直接 import する。
 
 Usage:
     python -m src.tools.refresh_canva_token
-    python -m src.tools.refresh_canva_token --dry-run   # .env を書き換えず表示のみ
+    python -m src.tools.refresh_canva_token --use-refresh-token   # ブラウザ不要
+    python -m src.tools.refresh_canva_token --dry-run             # .env を書き換えず表示のみ
     python -m src.tools.refresh_canva_token --env path/to/.env
 """
 
@@ -159,19 +164,84 @@ def _wait_for_redirect(expected_state: str, timeout: int = 120) -> str:
     return _result["code"]
 
 
-def _update_env(token: str, env_path: Path) -> None:
+def _exchange_refresh_token(refresh_token: str, client_id: str, client_secret: str) -> dict:
+    """リフレッシュトークンを使って新しいアクセストークンを取得する (非対話)。"""
+    payload = urllib.parse.urlencode({
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token,
+    }).encode("ascii")
+
+    credentials = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
+    req = urllib.request.Request(
+        _TOKEN_URL,
+        data=payload,
+        headers={
+            "Authorization": f"Basic {credentials}",
+            "Content-Type": "application/x-www-form-urlencoded",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(req) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def refresh_access_token() -> dict:
+    """環境変数の CANVA_REFRESH_TOKEN を使ってアクセストークンを非対話的に更新する。
+
+    MCP サーバ等からインポートして呼び出す想定。os.environ を直接更新する。
+
+    Returns
+    -------
+    dict with keys:
+        access_token (str)   — 新しいアクセストークン
+        refresh_token (str)  — 新しいリフレッシュトークン (ローテーションされた場合)
+    Raises
+    ------
+    EnvironmentError  — 必要な環境変数が不足
+    RuntimeError      — トークン取得失敗
+    """
+    client_id, client_secret = _load_credentials()
+    refresh_token = os.environ.get("CANVA_REFRESH_TOKEN", "").strip()
+    if not refresh_token:
+        raise EnvironmentError(
+            "CANVA_REFRESH_TOKEN が設定されていません。"
+            "先に python -m src.tools.refresh_canva_token を実行して初回トークンを取得してください。"
+        )
+
+    token_data = _exchange_refresh_token(refresh_token, client_id, client_secret)
+    access_token = token_data.get("access_token", "")
+    if not access_token:
+        raise RuntimeError(f"Canva API からアクセストークンが返りませんでした: {token_data}")
+
+    os.environ["CANVA_ACCESS_TOKEN"] = access_token
+    new_refresh = token_data.get("refresh_token", refresh_token)
+    os.environ["CANVA_REFRESH_TOKEN"] = new_refresh
+
+    return {"access_token": access_token, "refresh_token": new_refresh}
+
+
+def _update_env(token: str, env_path: Path, refresh_token: str = "") -> None:
     text = env_path.read_text(encoding="utf-8")
-    new_line = f"CANVA_ACCESS_TOKEN={token}"
-    if re.search(r"^CANVA_ACCESS_TOKEN=", text, re.MULTILINE):
-        text = re.sub(r"^CANVA_ACCESS_TOKEN=.*$", new_line, text, flags=re.MULTILINE)
-    else:
-        text = text.rstrip("\n") + f"\n{new_line}\n"
+
+    def _upsert(t: str, key: str, value: str) -> str:
+        new_line = f"{key}={value}"
+        if re.search(rf"^{key}=", t, re.MULTILINE):
+            return re.sub(rf"^{key}=.*$", new_line, t, flags=re.MULTILINE)
+        return t.rstrip("\n") + f"\n{new_line}\n"
+
+    text = _upsert(text, "CANVA_ACCESS_TOKEN", token)
+    if refresh_token:
+        text = _upsert(text, "CANVA_REFRESH_TOKEN", refresh_token)
     env_path.write_text(text, encoding="utf-8")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Canva アクセストークンを OAuth2 PKCE で再取得し .env を更新する"
+        description="Canva アクセストークンを再取得し .env を更新する"
+    )
+    parser.add_argument(
+        "--use-refresh-token", action="store_true",
+        help="CANVA_REFRESH_TOKEN を使ってブラウザなしで更新する (初回以降)",
     )
     parser.add_argument(
         "--dry-run", action="store_true",
@@ -196,6 +266,35 @@ def main() -> None:
                 k, _, v = line.partition("=")
                 os.environ.setdefault(k.strip(), v.strip())
 
+    # ── 非対話モード (--use-refresh-token) ────────────────────────
+    if args.use_refresh_token:
+        print("=" * 64)
+        print("Canva トークン非対話リフレッシュ")
+        print("=" * 64)
+        try:
+            result = refresh_access_token()
+        except (EnvironmentError, RuntimeError) as err:
+            print(f"[ERROR] {err}")
+            sys.exit(1)
+
+        access_token = result["access_token"]
+        refresh_token = result["refresh_token"]
+        print(f"[OK] アクセストークン更新完了 (先頭 50 文字): {access_token[:50]}...")
+
+        if args.dry_run:
+            print("\n[dry-run] .env は変更しません。")
+            return
+
+        env_path = Path(args.env)
+        if not env_path.exists():
+            print(f"[ERROR] .env が見つかりません: {env_path}")
+            sys.exit(1)
+
+        _update_env(access_token, env_path, refresh_token)
+        print(f"[OK] {env_path} の CANVA_ACCESS_TOKEN / CANVA_REFRESH_TOKEN を更新しました。")
+        return
+
+    # ── 通常フロー (PKCE ブラウザ認証) ───────────────────────────
     try:
         client_id, client_secret = _load_credentials()
     except EnvironmentError as err:
@@ -231,11 +330,16 @@ def main() -> None:
         print(f"[ERROR] access_token が返ってきませんでした。レスポンス: {token_data}")
         sys.exit(1)
 
+    refresh_token = token_data.get("refresh_token", "")
     print(f"[OK] アクセストークン取得完了 (先頭 50 文字): {access_token[:50]}...")
+    if refresh_token:
+        print(f"[OK] リフレッシュトークン取得完了 (先頭 20 文字): {refresh_token[:20]}...")
 
     if args.dry_run:
         print("\n[dry-run] .env は変更しません。")
         print(f"\nCANVA_ACCESS_TOKEN={access_token}")
+        if refresh_token:
+            print(f"CANVA_REFRESH_TOKEN={refresh_token}")
         return
 
     env_path = Path(args.env)
@@ -243,9 +347,13 @@ def main() -> None:
         print(f"[ERROR] .env が見つかりません: {env_path}")
         sys.exit(1)
 
-    _update_env(access_token, env_path)
-    print(f"\n[OK] {env_path} の CANVA_ACCESS_TOKEN を更新しました。")
-    print("パイプラインを再実行すると Canva エクスポートが通るはずです。")
+    _update_env(access_token, env_path, refresh_token)
+    saved = "CANVA_ACCESS_TOKEN"
+    if refresh_token:
+        saved += " / CANVA_REFRESH_TOKEN"
+    print(f"\n[OK] {env_path} の {saved} を更新しました。")
+    print("パイプラインを再実行すると Canva エクスポートが通るはずです。"
+          + (" 次回以降は --use-refresh-token で更新できます。" if refresh_token else ""))
 
 
 if __name__ == "__main__":

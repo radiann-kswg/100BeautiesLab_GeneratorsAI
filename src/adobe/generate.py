@@ -216,7 +216,7 @@ def generate_image_firefly(
     )
     references = collect_reference_images(record, form=form)
 
-    print(f"[INFO] キャラクター: {record['data'].get('Name', num)} / 形態: {form}")
+    print(f"[INFO] キャラクター: {record['data'].get('Name_JP') or record['data'].get('Name') or num} / 形態: {form}")
     print(f"[INFO] モデル: Firefly ({model or 'default'}) / サイズ: {size_str} / 枚数: {count}")
 
     log_paths = initialize_run_logs(
@@ -233,7 +233,7 @@ def generate_image_firefly(
             "count": int(count),
             "reference_urls": references["urls"],
             "reference_local_paths": references["local_paths"],
-            "character_name": record["data"].get("Name", str(num)),
+            "character_name": record["data"].get("Name_JP") or record["data"].get("Name") or str(num),
             "scene": scene or "",
             "style": style or "",
             "composition": composition or "",

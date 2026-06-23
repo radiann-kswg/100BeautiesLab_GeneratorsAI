@@ -720,6 +720,91 @@ async def numbertales_get_run_logs(params: GetRunLogsInput) -> str:
     return json.dumps(base, ensure_ascii=False, indent=2)
 
 
+# ── ツール: Canva トークンリフレッシュ ─────────────────────────
+@mcp.tool(
+    name="numbertales_refresh_canva_token",
+    annotations={
+        "title": "Canva アクセストークン更新",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": True,
+    },
+)
+async def numbertales_refresh_canva_token() -> str:
+    """CANVA_REFRESH_TOKEN を使って CANVA_ACCESS_TOKEN を非対話的に更新する。
+
+    Stage 5 (Canva フィニッシング) が 401 で失敗する場合に呼び出す。
+    トークンはサーバプロセスの環境変数に反映され、以降のパイプライン実行で有効になる。
+    Secret Manager が利用可能な場合は永続化も試みる。
+
+    前提: Cloud Run の Secret Manager に CANVA_REFRESH_TOKEN / CANVA_CLIENT_ID /
+          CANVA_CLIENT_SECRET が登録されていること。
+
+    Returns:
+        str: JSON 文字列。スキーマ::
+            {
+              "status": "ok" | "error",
+              "message": str,
+              "persisted_to_secret_manager": bool
+            }
+    """
+    from src.tools.refresh_canva_token import refresh_access_token
+
+    try:
+        result = refresh_access_token()
+    except EnvironmentError as e:
+        return json.dumps(
+            {"status": "error", "message": str(e), "persisted_to_secret_manager": False},
+            ensure_ascii=False,
+        )
+    except Exception as e:  # noqa: BLE001
+        return json.dumps(
+            {
+                "status": "error",
+                "message": f"{type(e).__name__}: {e}",
+                "persisted_to_secret_manager": False,
+            },
+            ensure_ascii=False,
+        )
+
+    persisted = False
+    project_id = os.getenv("GOOGLE_CLOUD_PROJECT", "").strip()
+    if project_id:
+        try:
+            from google.cloud import secretmanager  # type: ignore
+
+            sm = secretmanager.SecretManagerServiceClient()
+
+            def _update_secret(name: str, value: str) -> None:
+                parent = f"projects/{project_id}/secrets/{name}"
+                sm.add_secret_version(
+                    request={
+                        "parent": parent,
+                        "payload": {"data": value.encode("utf-8")},
+                    }
+                )
+
+            _update_secret("CANVA_ACCESS_TOKEN", result["access_token"])
+            if result.get("refresh_token"):
+                _update_secret("CANVA_REFRESH_TOKEN", result["refresh_token"])
+            persisted = True
+        except Exception:  # noqa: BLE001 - 権限不足等はフォールバックして続行
+            pass
+
+    token_preview = result["access_token"][:20] + "..."
+    msg = f"CANVA_ACCESS_TOKEN を更新しました (先頭: {token_preview})"
+    if persisted:
+        msg += " / Secret Manager に永続化済み"
+    else:
+        msg += " / Secret Manager への永続化はスキップ (次回デプロイ時に反映してください)"
+
+    return json.dumps(
+        {"status": "ok", "message": msg, "persisted_to_secret_manager": persisted},
+        ensure_ascii=False,
+    )
+
+
 # ── 共通: 登録レスポンス ────────────────────────────────────────
 def _submit_response(job: Any) -> str:
     return json.dumps(

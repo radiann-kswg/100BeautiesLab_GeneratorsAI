@@ -81,6 +81,7 @@ jobs:
             --max-instances=1
             --memory=1Gi
             --timeout=3600
+            --cpu-always-allocated
           env_vars: |
             MCP_TRANSPORT=streamable-http
             OUTPUT_SINK=drive
@@ -88,6 +89,14 @@ jobs:
           secrets: |
             GEMINI_API_KEY=GEMINI_API_KEY:latest
             OPENAI_API_KEY=OPENAI_API_KEY:latest
+            CANVA_ACCESS_TOKEN=CANVA_ACCESS_TOKEN:latest
+            CANVA_REFRESH_TOKEN=CANVA_REFRESH_TOKEN:latest
+            CANVA_CLIENT_ID=CANVA_CLIENT_ID:latest
+            CANVA_CLIENT_SECRET=CANVA_CLIENT_SECRET:latest
+            DRIVE_FOLDER_ID=DRIVE_FOLDER_ID:latest
+            DRIVE_CLIENT_ID=DRIVE_CLIENT_ID:latest
+            DRIVE_CLIENT_SECRET=DRIVE_CLIENT_SECRET:latest
+            DRIVE_REFRESH_TOKEN=DRIVE_REFRESH_TOKEN:latest
 
       - name: Show deployed URL
         run: |

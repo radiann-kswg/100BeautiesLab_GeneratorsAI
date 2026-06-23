@@ -597,10 +597,10 @@ def run_combined_pipeline(
             _save_summary(pipeline_dir, result, start_time)
             return result
         char_data_map[n] = char_data
-        print(f"  [Stage2] #{_fmt_num(n)} {rec['data'].get('Name', '')} ({forms_map[n]}) — OK")
+        print(f"  [Stage2] #{_fmt_num(n)} {rec['data'].get('Name_JP') or rec['data'].get('Name') or ''} ({forms_map[n]}) — OK")
 
     result.stage2_summary = {
-        "char_names": [r["data"].get("Name", "") for r in records],
+        "char_names": [r["data"].get("Name_JP") or r["data"].get("Name") or "" for r in records],
         "num_chars": len(records),
     }
 
@@ -625,7 +625,7 @@ def run_combined_pipeline(
     result.stage1_prompts = {
         "scene": scene,
         "char_count": len(records),
-        "char_names": [r["data"].get("Name", "") for r in records],
+        "char_names": [r["data"].get("Name_JP") or r["data"].get("Name") or "" for r in records],
     }
     if iterate_from:
         result.stage1_prompts["iterate_from"] = iterate_from

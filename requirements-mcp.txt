@@ -10,3 +10,5 @@ google-api-python-client>=2.100.0
 google-auth>=2.23.0
 # OUTPUT_SINK=gcs のとき
 google-cloud-storage>=2.10.0
+# Canva トークン永続化 (numbertales_refresh_canva_token ツール)
+google-cloud-secret-manager>=2.16.0

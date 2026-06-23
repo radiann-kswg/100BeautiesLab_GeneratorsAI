@@ -276,6 +276,10 @@ python -m src.tools.check_sync FILE --json                              # 機械
 Canva の OAuth2 PKCE フローを Python だけで完結させ、取得したアクセストークンで `.env` を自動更新するツール。
 `CANVA_ACCESS_TOKEN` の有効期限は約4時間なので、Stage 5 で `401` が出たら実行する。
 
+初回 PKCE 認証後は `CANVA_REFRESH_TOKEN` も `.env` に保存されるため、
+**2回目以降は `--use-refresh-token` でブラウザなし**で更新できる。
+MCP サーバ側からは `numbertales_refresh_canva_token` ツールで自動更新可能。
+
 ### 前提
 
 `.env` に以下が設定されていること:
@@ -287,9 +291,14 @@ CANVA_CLIENT_SECRET=<your_client_secret>
 
 ### コマンド
 
-```powershell
-# ブラウザで Canva ログイン → .env の CANVA_ACCESS_TOKEN を自動更新
+```bash
+# 【初回】ブラウザで Canva ログイン → CANVA_ACCESS_TOKEN と CANVA_REFRESH_TOKEN を .env に保存
 python -m src.tools.refresh_canva_token
+# Linux / GCE 環境では python3 を使う
+python3 -m src.tools.refresh_canva_token
+
+# 【2回目以降】CANVA_REFRESH_TOKEN を使ってブラウザなしで更新
+python -m src.tools.refresh_canva_token --use-refresh-token
 
 # .env を書き換えず取得トークンを表示のみ
 python -m src.tools.refresh_canva_token --dry-run
@@ -297,18 +306,24 @@ python -m src.tools.refresh_canva_token --dry-run
 # 別の .env を指定
 python -m src.tools.refresh_canva_token --env path/to/.env
 
-# タイムアウトを延長 (デフォルト 120 秒)
+# タイムアウトを延長 (デフォルト 120 秒、通常フローのみ)
 python -m src.tools.refresh_canva_token --timeout 180
 ```
 
-### 手順
+### 手順 (初回・通常フロー)
 
 1. スクリプトを実行すると認可 URL が表示される
 2. ブラウザでその URL を開き Canva にログイン・「許可」を押す
 3. ブラウザに「認証完了 ✅」が表示されたらターミナルに戻る
-4. `.env` の `CANVA_ACCESS_TOKEN` が自動更新される
+4. `.env` の `CANVA_ACCESS_TOKEN` と `CANVA_REFRESH_TOKEN` が自動更新される
 
-- トークンエンドポイント: `https://api.canva.com/rest/v1/oauth/token`（PKCE S256）
+### MCP サーバからの更新
+
+Cloud Run 上の MCP サーバは `numbertales_refresh_canva_token` ツールを提供する。
+このツールは `CANVA_REFRESH_TOKEN` を使って非対話的にトークンを更新し、
+プロセスの環境変数と（権限があれば）Secret Manager に反映する。
+
+- トークンエンドポイント: `https://api.canva.com/rest/v1/oauth/token`（PKCE S256 / refresh_token）
 - コールバックポート: `3001`（`http://127.0.0.1:3001/oauth/redirect`）— 他プロセスが使用中の場合は解放してから実行
 - 実装: [src/tools/refresh_canva_token.py](../src/tools/refresh_canva_token.py)
 
