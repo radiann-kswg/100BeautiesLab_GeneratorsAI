@@ -260,6 +260,7 @@ def generate_image(
 
     model = os.environ.get("IMAGEN_MODEL", "imagen-4.0-generate-001")
     _inter_image_sleep = float(os.environ.get("GEMINI_IMAGE_SLEEP", "6"))
+    _api_timeout = int(os.environ.get("GEMINI_API_TIMEOUT", "120"))
     reference_model = os.environ.get("GEMINI_REFERENCE_MODEL", "models/gemini-3.1-flash-image")
 
     # iterate-from が指定されている場合、起点画像と次の iter ラベルを解決する。
@@ -386,7 +387,7 @@ def generate_image(
     )
     print(f"[INFO] ログ: {log_paths['meta']}")
 
-    client = genai.Client(api_key=api_key)
+    client = genai.Client(api_key=api_key, http_options={"timeout": _api_timeout})
     ref_parts = _build_reference_parts(types, ref_urls, ref_locals, limit=ref_limit)
     use_reference_input = bool(ref_parts)
     multimodal_model = model
