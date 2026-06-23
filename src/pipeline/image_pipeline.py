@@ -660,7 +660,7 @@ def run_combined_pipeline(
         _rev_block = _build_revision_block(_rev_items)
 
     per_char_roughs: dict[int | str, list[Path]] = {}
-    inter_char_sleep = float(os.environ.get("GEMINI_IMAGE_SLEEP", "6"))
+    inter_char_sleep = float(os.environ.get("GEMINI_INTER_CHAR_SLEEP", "30"))
 
     for i, rec in enumerate(records):
         n = rec["data"]["Num"]

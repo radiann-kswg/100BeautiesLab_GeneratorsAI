@@ -71,7 +71,7 @@ def _is_not_found(err: Exception) -> bool:
 
 
 def _generate_content_with_retry(client, types, model, prompt_text, ref_parts,
-                                  max_retries: int = 2, base_delay: float = 12.0):
+                                  max_retries: int = 4, base_delay: float = 30.0):
     """429 リトライ付き generate_content (参照入力モード)。
     Returns (response, error) のタプル。"""
     delay = base_delay
@@ -97,7 +97,7 @@ def _generate_content_with_retry(client, types, model, prompt_text, ref_parts,
 
 
 def _generate_images_with_retry(client, types, model, prompt_text,
-                                 max_retries: int = 2, base_delay: float = 12.0):
+                                 max_retries: int = 4, base_delay: float = 30.0):
     """404 フォールバック + 429 リトライ付き generate_images (通常生成モード)。
     Returns (response, used_model, error) のタプル。"""
     models_to_try = [model] + [m for m in _IMAGEN_FALLBACK_MODELS if m != model]
