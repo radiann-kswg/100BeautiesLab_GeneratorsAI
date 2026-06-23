@@ -13,11 +13,10 @@ on:
   workflow_dispatch:  # GitHub UI から手動実行できるようにする
 
 env:
-  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
-  REGION: ${{ secrets.GCP_REGION }}
-  REPOSITORY: ${{ secrets.GCP_AR_REPOSITORY }}   # Artifact Registry リポジトリ名
-  SERVICE: ${{ secrets.CLOUD_RUN_SERVICE }}        # Cloud Run サービス名
-  IMAGE: ${{ secrets.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${{ secrets.GCP_AR_REPOSITORY }}/numbertales-mcp
+  PROJECT_ID: claude-radiannkswg
+  REGION: asia-northeast1
+  SERVICE: generators-ai
+  IMAGE: asia-northeast1-docker.pkg.dev/claude-radiannkswg/numbertales-mcp/numbertales-mcp
 
 jobs:
   build-and-deploy:
@@ -46,7 +45,7 @@ jobs:
       - name: Configure Docker for Artifact Registry
         uses: docker/login-action@v3
         with:
-          registry: ${{ env.REGION }}-docker.pkg.dev
+          registry: asia-northeast1-docker.pkg.dev
           username: oauth2accesstoken
           password: ${{ steps.auth.outputs.access_token }}
 
