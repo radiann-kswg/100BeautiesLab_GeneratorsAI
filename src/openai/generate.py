@@ -46,6 +46,7 @@ from src.utils import (  # noqa: E402
     collect_reference_images,
     finalize_run_logs,
     find_character,
+    format_num,
     initialize_run_logs,
     next_iteration_label,
     parse_revisions,
@@ -169,7 +170,7 @@ def generate_image_dalle(
         local_list.insert(0, iterate_path_str)
         references["local_paths"] = local_list
 
-    print(f"[INFO] キャラクター: {record['data'].get('Name', num)} / 形態: {form}")
+    print(f"[INFO] キャラクター: {record['data'].get('Name_JP') or record['data'].get('Name') or num} / 形態: {form}")
     print(f"[INFO] モデル: {model} / サイズ: {size}")
     print(
         f"[INFO] 参照画像候補: URL {len(references['urls'])}件 / "
@@ -190,7 +191,7 @@ def generate_image_dalle(
             "quality_requested": requested_quality,
             "reference_urls": references["urls"],
             "reference_local_paths": references["local_paths"],
-            "character_name": record["data"].get("Name", str(num)),
+            "character_name": record["data"].get("Name_JP") or record["data"].get("Name") or str(num),
             "scene": scene or "",
             "style": style or "",
             "composition": composition or "",
@@ -216,7 +217,7 @@ def generate_image_dalle(
     if model.startswith("gpt-image") and quality == "standard":
         quality = "medium"
 
-    out_path = output_dir / f"num{num:03d}_{form}_dalle.png"
+    out_path = output_dir / f"num{format_num(num)}_{form}_dalle.png"
 
     # gpt-image-1 はマルチモーダル参照画像入力 (images.edit) に対応している。
     # ローカル参照画像が1枚以上あり、かつモデルが gpt-image 系なら edit 経由を優先する。
@@ -353,7 +354,7 @@ def assist_prompt_gpt(
         sys.exit(f"[ERROR] キャラクター #{num} ({work_key}) が見つかりません。")
 
     base_prompt = build_dalle_prompt(record, form)
-    char_name = record["data"].get("Name", f"#{num}")
+    char_name = record["data"].get("Name_JP") or record["data"].get("Name") or f"#{num}"
     references = collect_reference_images(record, form=form)
 
     output_dir = build_run_output_dir(

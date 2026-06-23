@@ -43,6 +43,7 @@ from src.utils import (  # noqa: E402
     collect_record_capabilities,
     finalize_run_logs,
     find_character,
+    format_num,
     initialize_run_logs,
     next_iteration_label,
     parse_revisions,
@@ -348,7 +349,7 @@ def generate_image(
                 ref_locals.insert(0 if iterate_source_path is None else 1, ep_str)
         ref_limit = 5
 
-    print(f"[INFO] キャラクター: {record['data'].get('Name', num)} / 形態: {form}")
+    print(f"[INFO] キャラクター: {record['data'].get('Name_JP') or record['data'].get('Name') or num} / 形態: {form}")
     print(f"[INFO] 参照画像: {ref_url or '(なし)'}")
     print(f"[INFO] 参照画像候補: URL {len(ref_urls)}件 / ローカル {len(ref_locals)}件")
     print(f"[INFO] モデル: {model} / 生成枚数: {count}")
@@ -362,7 +363,7 @@ def generate_image(
         model=model,
         prompt_text=prompt_text,
         meta={
-            "character_name": record["data"].get("Name", str(num)),
+            "character_name": record["data"].get("Name_JP") or record["data"].get("Name") or str(num),
             "count": int(count),
             "reference_model": reference_model,
             "reference_image_url": ref_url,
@@ -454,7 +455,7 @@ def generate_image(
                 print(f"[ERROR] {msg}")
                 attempt_errors.append(msg)
 
-        out_path = output_dir / f"num{num:03d}_{form}_{i + 1:02d}.png"
+        out_path = output_dir / f"num{format_num(num)}_{form}_{i + 1:02d}.png"
         if image_data is None:
             print(f"[WARN] 画像 {i + 1}: 画像データが取得できませんでした。スキップします。")
             results.append({"index": i + 1, "file": str(out_path.name), "status": "failed"})

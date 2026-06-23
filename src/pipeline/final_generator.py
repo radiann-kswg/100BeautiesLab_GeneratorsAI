@@ -105,7 +105,9 @@ def _export_canva(
     from src.canva.generate import export_via_canva
 
     num = record["data"]["Num"]
-    char_name = record["data"].get("Name", f"#{num:03d}")
+    from src.utils.paths import format_num as _fmt
+    num_s = _fmt(num)
+    char_name = record["data"].get("Name_JP") or record["data"].get("Name") or f"#{num_s}"
     print(f"[Stage5-Canva] ({index}) デザイン化・書き出し中 (入力: {source_image.name})...")
     try:
         return export_via_canva(
@@ -114,7 +116,7 @@ def _export_canva(
             work_key=work_key,
             out_dir=str(stage_dir),
             from_image=str(source_image),
-            title=f"NumberTales #{num:03d} {char_name} {form} [pipeline-v{index}]",
+            title=f"NumberTales #{num_s} {char_name} {form} [pipeline-v{index}]",
         )
     except SystemExit as err:
         print(f"[WARN] Stage5 Canva ({index}): {err}")

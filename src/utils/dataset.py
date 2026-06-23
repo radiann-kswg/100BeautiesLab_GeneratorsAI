@@ -1381,7 +1381,7 @@ def _build_form_common_dataset_block(
         _data_src = record.get("data") or {}
         _db_src = record.get("db_record") or {}
         tails_unit_en = str(_data_src.get("TailsUnit_EN") or _db_src.get("TailsUnit_EN") or "").strip()
-        tails_unit = str(_data_src.get("TailsUnit") or _db_src.get("TailsUnit") or "").strip()
+        tails_unit = str(_data_src.get("TailsUnit_JP") or _data_src.get("TailsUnit") or _db_src.get("TailsUnit_JP") or _db_src.get("TailsUnit") or "").strip()
         race_type = str(_data_src.get("RaceType") or _db_src.get("RaceType") or "").strip()
         formal_name = str(_data_src.get("FormalName_JP") or _data_src.get("FormalName") or _db_src.get("FormalName_JP") or _db_src.get("FormalName") or "").strip()
         formal_name_en = str(_data_src.get("FormalName_EN") or _db_src.get("FormalName_EN") or "").strip()

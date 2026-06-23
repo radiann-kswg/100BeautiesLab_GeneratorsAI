@@ -50,6 +50,7 @@ from src.utils import (  # noqa: E402
     build_run_output_dir,
     finalize_run_logs,
     find_character,
+    format_num,
     initialize_run_logs,
     save_image_bytes,
 )
@@ -188,8 +189,8 @@ def export_via_canva(
     print(f"[INFO] 出力先: {output_dir}")
 
     record = find_character(num, work_key)
-    char_name = record["data"].get("Name", str(num)) if record else str(num)
-    design_title = title or f"NumberTales #{num:03d} {form}"
+    char_name = (record["data"].get("Name_JP") or record["data"].get("Name") or str(num)) if record else str(num)
+    design_title = title or f"NumberTales #{format_num(num)} {form}"
 
     log_paths = initialize_run_logs(
         output_dir,
@@ -245,7 +246,7 @@ def export_via_canva(
     results: list[dict[str, object]] = []
     ext = {"jpg": ".jpg", "jpeg": ".jpg", "pdf": ".pdf"}.get(fmt, ".png")
     for i, url in enumerate(urls):
-        out_path = output_dir / f"num{num:03d}_{form}_canva_{i + 1:02d}{ext}"
+        out_path = output_dir / f"num{format_num(num)}_{form}_canva_{i + 1:02d}{ext}"
         try:
             with urllib.request.urlopen(url) as resp:  # noqa: S310 (Canva export URL)
                 raw = resp.read()

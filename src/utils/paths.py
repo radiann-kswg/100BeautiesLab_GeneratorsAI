@@ -30,8 +30,8 @@ def _sanitize_token(value: str) -> str:
     return text or "x"
 
 
-def _format_num_for_path(num: int | str) -> str:
-    """num をディレクトリ名用の文字列に変換する。
+def format_num(num: int | str) -> str:
+    """num をファイル名・ディレクトリ名用の文字列に変換する。
     22 → "022"  "2-alt" → "2-alt"  整数文字列 "22" → "022"
     """
     if isinstance(num, int):
@@ -40,6 +40,10 @@ def _format_num_for_path(num: int | str) -> str:
     if s.isdigit():
         return f"{int(s):03d}"
     return _sanitize_token(s)
+
+
+# 後方互換エイリアス
+_format_num_for_path = format_num
 
 
 def default_output_base() -> Path:

@@ -17,7 +17,7 @@ from .image_io import (
     detect_image_format,
     save_image_bytes,
 )
-from .paths import build_run_output_dir, default_output_base
+from .paths import build_run_output_dir, default_output_base, format_num
 from .iterate import (
     next_iteration_label,
     parse_revisions,
@@ -43,6 +43,7 @@ __all__ = [
     "get_local_image_paths",
     "build_run_output_dir",
     "default_output_base",
+    "format_num",
     "MIME_TO_EXTENSION",
     "detect_image_format",
     "save_image_bytes",
