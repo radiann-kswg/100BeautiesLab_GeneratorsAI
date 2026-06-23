@@ -563,10 +563,10 @@ def collect_reference_images(
     local_candidates: list[str] = []
     images_struct = record.get("images") or {}
     if isinstance(images_struct, dict):
-        _new_fmt_keys = {"concept", "arts", "design_alt", "concept_alt"}
+        _new_fmt_keys = {"concept", "arts", "design_alt", "concept_alt", "corefolder", "humanoid"}
         if _new_fmt_keys & images_struct.keys():
-            # 新形式: concept / concept_alt は文字列パスの配列
-            for key in ("concept", "concept_alt"):
+            # 新形式: concept / concept_alt / corefolder / humanoid は文字列パスの配列
+            for key in ("concept", "concept_alt", "corefolder", "humanoid"):
                 for item in (images_struct.get(key) or []):
                     if isinstance(item, str) and item:
                         path = str(Path(creations_db_base) / item)
