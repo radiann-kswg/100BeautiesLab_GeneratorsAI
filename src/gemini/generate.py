@@ -260,7 +260,7 @@ def generate_image(
 
     model = os.environ.get("IMAGEN_MODEL", "imagen-4.0-generate-001")
     _inter_image_sleep = float(os.environ.get("GEMINI_IMAGE_SLEEP", "6"))
-    _api_timeout = int(os.environ.get("GEMINI_API_TIMEOUT", "120"))
+    _api_timeout = int(os.environ.get("GEMINI_API_TIMEOUT", "120000"))  # ミリ秒; デフォルト 120 秒
     reference_model = os.environ.get("GEMINI_REFERENCE_MODEL", "models/gemini-3.1-flash-image")
 
     # iterate-from が指定されている場合、起点画像と次の iter ラベルを解決する。
