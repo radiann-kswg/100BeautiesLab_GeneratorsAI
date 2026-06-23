@@ -637,12 +637,21 @@ def _detect_form_for_alias(text: str, alias: str) -> str:
 
     before = text[max(0, idx - 25): idx]
     lower_before = before.lower()
-    for word in _HUMANOID_WORDS:
-        if word.lower() in lower_before:
-            return "humanoid"
-    for word in _COREFOLDER_WORDS:
-        if word.lower() in lower_before:
-            return "corefolder"
+
+    # エイリアスに最も近い（最後に出現した）キーワードを優先する
+    last_humanoid_pos = max(
+        (lower_before.rfind(w.lower()) for w in _HUMANOID_WORDS),
+        default=-1,
+    )
+    last_corefolder_pos = max(
+        (lower_before.rfind(w.lower()) for w in _COREFOLDER_WORDS),
+        default=-1,
+    )
+
+    if last_corefolder_pos > last_humanoid_pos:
+        return "corefolder"
+    if last_humanoid_pos > last_corefolder_pos:
+        return "humanoid"
 
     # 前方で確定しなければ後方 5 文字のみ（隣接キャラの記述を拾わないよう短く）
     after = text[idx + len(alias): idx + len(alias) + 5]
