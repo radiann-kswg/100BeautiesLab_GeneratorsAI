@@ -39,21 +39,20 @@ jobs:
         with:
           workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
-
-      # ── gcloud SDK セットアップ ──────────────────────────────────
-      - name: Set up Cloud SDK
-        uses: google-github-actions/setup-gcloud@v2
-        with:
-          project_id: claude-radiannkswg
+          token_format: access_token
 
       # ── Docker: Artifact Registry 認証 ──────────────────────────
-      - name: Configure Docker for Artifact Registry
-        run: gcloud auth configure-docker asia-northeast1-docker.pkg.dev --quiet
+      # gcloud credential helper を使わず access token を直接渡す
+      - name: Docker login to Artifact Registry
+        run: |
+          echo "${{ steps.auth.outputs.access_token }}" \
+            | docker login \
+                --username oauth2accesstoken \
+                --password-stdin \
+                asia-northeast1-docker.pkg.dev
 
       # ── Docker イメージビルド & プッシュ ────────────────────────
       - name: Build and push Docker image
-        env:
-          DOCKER_BUILDKIT: 1
         run: |
           docker build \
             --tag "${{ env.IMAGE }}:${{ github.sha }}" \
@@ -61,6 +60,12 @@ jobs:
             .
           docker push "${{ env.IMAGE }}:${{ github.sha }}"
           docker push "${{ env.IMAGE }}:latest"
+
+      # ── gcloud SDK セットアップ (deploy-cloudrun 用) ─────────────
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: claude-radiannkswg
 
       # ── Cloud Run デプロイ ───────────────────────────────────────
       - name: Deploy to Cloud Run
