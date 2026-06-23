@@ -148,7 +148,7 @@ def _build_name_lookup() -> dict[str, str]:
             if num is None:
                 continue
             num_str = str(num)
-            for field in ("Name", "SPCodeName"):
+            for field in ("Name_JP", "Name", "SPCodeName_JP", "SPCodeName"):
                 val = r.get(field) or ""
                 for alias in _extract_name_aliases(val):
                     if alias not in lookup:
@@ -285,20 +285,29 @@ def _confirm_character_dialog(name_hint: str, chars: list[dict]) -> str | None:
 # システムプロンプト構築（名前ヒント注入）
 # ──────────────────────────────────────────────────────────────
 
-def _build_system_prompt(integer_name_hints: dict[str, str] | None = None) -> str:
+def _build_system_prompt(
+    integer_name_hints: dict[str, str] | None = None,
+    skip_aliases: list[str] | None = None,
+) -> str:
     """システムプロンプトを構築する。integer_name_hints がある場合は優先マッピングを注入する。
 
     integer_name_hints: {alias: num_str (整数のみ)} e.g. {"ハツカ": "20", "フジ": "22"}
+    skip_aliases: LLM に num 割り当てをさせないエイリアス (特殊ID確定済みのもの) e.g. ["バイナ"]
     """
-    if not integer_name_hints:
+    if not integer_name_hints and not skip_aliases:
         return _SYSTEM_PROMPT_BASE
 
-    lines = [
-        _SYSTEM_PROMPT_BASE,
-        "\n[重要: テキスト内で確認されたキャラクター名と番号の対応 — 必ずこれを使用してください]",
-    ]
-    for alias, num_str in integer_name_hints.items():
-        lines.append(f'- "{alias}" → num: {num_str}')
+    lines = [_SYSTEM_PROMPT_BASE]
+
+    if integer_name_hints:
+        lines.append("\n[重要: テキスト内で確認されたキャラクター名と番号の対応 — 必ずこれを使用してください]")
+        for alias, num_str in integer_name_hints.items():
+            lines.append(f'- "{alias}" → num: {num_str}')
+
+    if skip_aliases:
+        lines.append("\n[以下の名前は番号確定済みのため、JSON 出力に含めないでください]")
+        for alias in skip_aliases:
+            lines.append(f'- "{alias}"')
 
     return "\n".join(lines)
 
@@ -549,7 +558,10 @@ def parse_generation_request(
         })
 
     # ── LLM パース (名前ヒントを注入) ──
-    system_prompt = _build_system_prompt(integer_hints or None)
+    system_prompt = _build_system_prompt(
+        integer_hints or None,
+        skip_aliases=list(special_ids.keys()) or None,
+    )
 
     if prefer_gemini:
         raw = _parse_with_gemini(text, system_prompt) or _parse_with_openai(text, system_prompt)
