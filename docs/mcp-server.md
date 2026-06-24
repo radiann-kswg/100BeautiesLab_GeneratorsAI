@@ -125,12 +125,38 @@ gcloud services enable run.googleapis.com artifactregistry.googleapis.com \
     secretmanager.googleapis.com cloudbuild.googleapis.com
 ```
 
-### 5.2 API キーを Secret Manager に登録
+### 5.2 Secret Manager にシークレットを登録
+
+Cloud Run の Revision 作成時にすべての `--set-secrets` 参照先が存在しないとデプロイが失敗します。
+**初回デプロイ前に 10 件すべてを登録してください。**
 
 ```bash
-printf '%s' "$GEMINI_API_KEY" | gcloud secrets create GEMINI_API_KEY --data-file=-
-printf '%s' "$OPENAI_API_KEY" | gcloud secrets create OPENAI_API_KEY --data-file=-
-printf '%s' "$CANVA_ACCESS_TOKEN" | gcloud secrets create CANVA_ACCESS_TOKEN --data-file=-
+# ── LLM API キー ────────────────────────────────────────
+printf '%s' "$GEMINI_API_KEY"      | gcloud secrets create GEMINI_API_KEY      --data-file=-
+printf '%s' "$OPENAI_API_KEY"      | gcloud secrets create OPENAI_API_KEY      --data-file=-
+
+# ── Canva Connect API ────────────────────────────────────
+printf '%s' "$CANVA_ACCESS_TOKEN"  | gcloud secrets create CANVA_ACCESS_TOKEN  --data-file=-
+printf '%s' "$CANVA_REFRESH_TOKEN" | gcloud secrets create CANVA_REFRESH_TOKEN --data-file=-
+printf '%s' "$CANVA_CLIENT_ID"     | gcloud secrets create CANVA_CLIENT_ID     --data-file=-
+printf '%s' "$CANVA_CLIENT_SECRET" | gcloud secrets create CANVA_CLIENT_SECRET --data-file=-
+
+# ── Google Drive 出力シンク ──────────────────────────────
+printf '%s' "$DRIVE_FOLDER_ID"     | gcloud secrets create DRIVE_FOLDER_ID     --data-file=-
+printf '%s' "$DRIVE_CLIENT_ID"     | gcloud secrets create DRIVE_CLIENT_ID     --data-file=-
+printf '%s' "$DRIVE_CLIENT_SECRET" | gcloud secrets create DRIVE_CLIENT_SECRET --data-file=-
+printf '%s' "$DRIVE_REFRESH_TOKEN" | gcloud secrets create DRIVE_REFRESH_TOKEN --data-file=-
+```
+
+> **シークレット更新時は `versions add` を使う**（`create` は初回のみ有効）:
+> ```bash
+> printf '%s' "$CANVA_ACCESS_TOKEN" | gcloud secrets versions add CANVA_ACCESS_TOKEN --data-file=-
+> ```
+
+登録確認:
+
+```bash
+gcloud secrets list --project=PROJECT_ID --format="table(name,createTime)"
 ```
 
 ### 5.3 出力先の準備
@@ -228,7 +254,51 @@ DNS の A レコードを GCE の静的外部 IP に向けると Caddy が自動
 
 ---
 
-## 7. 既知の制約 / 今後
+## 7. GitHub Actions CI/CD デプロイ
+
+`.github/workflows/deploy-mcp-server.yml` による自動デプロイの前提条件をまとめます。
+
+### 7.1 トリガー
+
+`master` ブランチへの push で、以下のパスが変更されたときに実行されます:
+
+```
+src/**  /  requirements*.txt  /  Dockerfile
+.github/workflows/deploy-mcp-server.yml  /  _creations-ai
+```
+
+`workflow_dispatch` による手動実行も可能です。
+
+### 7.2 必要な GitHub Secrets
+
+リポジトリ → **Settings → Secrets and variables → Actions** で登録します。
+
+| シークレット名 | 値の形式 | 用途 |
+|---|---|---|
+| `GCP_WIF_PROVIDER` | `projects/…/locations/global/workloadIdentityPools/…/providers/…` | Workload Identity Federation |
+| `GCP_SERVICE_ACCOUNT` | `sa-name@PROJECT_ID.iam.gserviceaccount.com` | デプロイ用 SA |
+
+### 7.3 GCP 側の前提
+
+| 項目 | 内容 |
+|---|---|
+| WIF プール | GitHub Actions リポジトリを `attribute.repository == "org/repo"` で許可 |
+| SA に付与するロール | `roles/run.admin` / `roles/artifactregistry.writer` / `roles/iam.serviceAccountUser` / `roles/secretmanager.secretAccessor` |
+| Artifact Registry | `asia-northeast1` に `numbertales-mcp`（Docker 形式）を作成済み |
+| Secret Manager | **§5.2 の 10 件すべてが登録済み**（未登録だと Revision 作成で `not found` エラー） |
+
+### 7.4 よくあるCI失敗パターン
+
+| 失敗ステップ | 典型エラー | 対処 |
+|---|---|---|
+| `Deploy to Cloud Run` | `Secret …/versions/latest was not found` | §5.2 の残りシークレットを Secret Manager に登録（`gcloud secrets versions add`） |
+| `Deploy to Cloud Run` | `PERMISSION_DENIED` | SA に `roles/run.admin` + `roles/secretmanager.secretAccessor` を付与 |
+| `Authenticate to Google Cloud` | `Error creating token` | GitHub Secrets の `GCP_WIF_PROVIDER` / `GCP_SERVICE_ACCOUNT` を確認 |
+| `Build and push Docker image` | `COPY … not found` | サブモジュール `_creations-ai` が空（checkout に問題あり） |
+
+---
+
+## 8. 既知の制約 / 今後
 
 - ジョブ状態は**プロセス内メモリ**。再デプロイ・再起動で消える。複数インスタンス不可。
   → 将来は Firestore 等の共有ストアへ差し替え可能（`src/mcp_server/jobs.py` を実装差し替え）。
