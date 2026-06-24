@@ -374,7 +374,9 @@ async def numbertales_generate_joint(params: GenerateJointInput) -> str:
 
     Args:
         params (GenerateJointInput):
-            - nums (list[int]): キャラクター番号のリスト（2-6 体）
+            - nums (list[int | str]): キャラクター番号のリスト（2-6 体）。
+              整数 (例: [25, 57]) または文字列 ID (例: ["2-alt", 25]) を混在可。
+              **「2-alt」のような alt キャラは必ず文字列で渡すこと。整数 2 は別キャラ (ツグ) にマッチする。**
             - form (Form), scene/style/composition/background (str)
             - skip_canva (bool), correction_mode (CorrectionMode), work_key (str)
 

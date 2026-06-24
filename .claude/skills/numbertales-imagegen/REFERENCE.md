@@ -46,7 +46,7 @@ PROJECT_ROOT=<repo> PYTHONPATH=<repo> python -m src.pipeline.image_pipeline --nu
 | フラグ | 既定値 | 説明 |
 |---|---|---|
 | `--num` | (いずれか必須) | キャラクター番号（単体生成） |
-| `--nums` | — | 複数番号 カンマ区切り（例 `25,52`）。**2件以上で全員を1枚に合同生成** |
+| `--nums` | — | 複数番号 カンマ区切り（例 `25,57` / `20,2-alt`）。**2件以上で全員を1枚に合同生成**。alt キャラは `2-alt` のように文字列 ID で指定する（整数 `2` は別キャラにマッチする） |
 | `--natural TEXT` | — | 自然文からパラメータを LLM 抽出 |
 | `--story FILE` | — | テキストファイルから LLM 抽出 |
 | `--form` | `corefolder` | 形態 `corefolder` / `humanoid`（`--natural` 時は LLM 判定優先） |

@@ -130,6 +130,23 @@ NT_MODULE=src.pipeline.natural_parser ./bin/ntimg.sh "コアフォルダ姿の25
 ./bin/ntimg.sh --nums 25,57 --form corefolder --scene "研究所のラボで並んでいるシーン" --skip-canva
 ```
 
+> ⚠️ **alt キャラの nums 指定は必ず文字列 ID で渡すこと！**
+>
+> `Num` フィールドが `"2-alt"` のようなキャラ（例: 2-alt=バイナ）を合同生成に含める場合、
+> MCP ツール (`numbertales_generate_joint`) の `nums` には **文字列** `"2-alt"` を渡す。
+> 整数 `2` を渡すと `_num_matches` が `int("2-alt")` を試みて失敗し、
+> 代わりに `Num=2` の別キャラ（ツグ）にマッチしてしまう。
+>
+> ```
+> # NG: nums=[20, 2]  → 20(ハツカ) + 2(ツグ) になる
+> # OK: nums=[20, "2-alt"]  → 20(ハツカ) + 2-alt(バイナ) になる
+> ```
+>
+> CLI の `--nums` フラグ（カンマ区切り文字列）はそのまま渡してよい（内部で文字列として処理される）:
+> ```bash
+> ./bin/ntimg.sh --nums 20,2-alt --forms humanoid,corefolder --scene "..."
+> ```
+
 ### E. バッチ生成（複数キャラを個別に量産）
 
 `src.batch_generate` を使う。**必ず先に `--dry-run` で対象を確認**してから本実行する。
