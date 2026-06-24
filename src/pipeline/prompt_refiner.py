@@ -20,7 +20,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-from src.utils import build_dalle_prompt, build_gemini_prompt  # noqa: E402
+from src.utils import build_dalle_prompt, build_gemini_prompt, extract_char_name  # noqa: E402
 
 _RANDOM_SCENE_SYSTEM = (
     "あなたはナンバーテールズシリーズのクリエイティブディレクターです。"
@@ -49,7 +49,7 @@ def generate_random_scene(record: dict, form: str) -> str:
     form_data = (hints.get("forms") or {}).get(form) or {}
     identity = ", ".join((common.get("identity_tags") or [])[:5])
     form_desc = str(form_data.get("natural_language_description", ""))[:80]
-    char_name = record["data"].get("Name_JP") or record["data"].get("Name") or "Unknown"
+    char_name = extract_char_name(record)
 
     user_msg = (
         f"キャラクター: {char_name} / 形態: {form}\n"
@@ -139,7 +139,7 @@ def refine_with_openai(
         return ""
 
     gpt_model = os.environ.get("GPT_MODEL", "gpt-4o")
-    char_name = record["data"].get("Name_JP") or record["data"].get("Name") or "Unknown"
+    char_name = extract_char_name(record)
     base_prompt = build_dalle_prompt(
         record, form, scene=scene, style=style,
         composition=composition, background=background,
@@ -186,7 +186,7 @@ def refine_with_gemini(
         return ""
 
     text_model = os.environ.get("GEMINI_TEXT_MODEL", "gemini-2.5-flash")
-    char_name = record["data"].get("Name_JP") or record["data"].get("Name") or "Unknown"
+    char_name = extract_char_name(record)
     data = build_gemini_prompt(
         record, form, scene=scene, style=style,
         composition=composition, background=background,

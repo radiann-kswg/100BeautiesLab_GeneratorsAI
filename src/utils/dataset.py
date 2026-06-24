@@ -724,6 +724,23 @@ def collect_record_capabilities(
     }
 
 
+def extract_char_name(record_or_data: dict, fallback: str = "Unknown") -> str:
+    """キャラクターレコードから表示用名称を取得する。
+
+    Name_JP に改行区切りで複数名称が格納されている場合は先頭行のみを使う。
+    プロンプト等への埋め込みに使用する。
+    """
+    data = record_or_data.get("data", record_or_data)
+    raw = data.get("Name_JP") or data.get("Name") or ""
+    name = raw.split("\n")[0].strip()
+    if not name:
+        num = data.get("Num")
+        if num is not None:
+            return f"#{num:03d}" if isinstance(num, int) else f"#{num}"
+        return fallback
+    return name
+
+
 def load_manifest(manifest_path: str | None = None) -> list[dict[str, Any]]:
     """manifest.jsonl を読み込んでキャラクターレコードのリストを返す。
 

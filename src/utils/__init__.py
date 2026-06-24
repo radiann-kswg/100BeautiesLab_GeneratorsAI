@@ -11,6 +11,7 @@ from .dataset import (
     build_dalle_prompt,
     build_gemini_prompt,
     get_local_image_paths,
+    extract_char_name,
 )
 from .image_io import (
     MIME_TO_EXTENSION,
@@ -41,6 +42,7 @@ __all__ = [
     "build_dalle_prompt",
     "build_gemini_prompt",
     "get_local_image_paths",
+    "extract_char_name",
     "build_run_output_dir",
     "default_output_base",
     "format_num",

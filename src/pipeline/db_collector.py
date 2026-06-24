@@ -21,7 +21,7 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from src.utils import find_character  # noqa: E402
-from src.utils.dataset import collect_reference_images, _filter_immutable_traits_by_form  # noqa: E402
+from src.utils.dataset import collect_reference_images, _filter_immutable_traits_by_form, extract_char_name  # noqa: E402
 
 
 def collect_character_data(
@@ -57,7 +57,7 @@ def collect_character_data(
         return None
 
     _num_label = f"#{num:03d}" if isinstance(num, int) else f"#{num}"
-    char_name = record["data"].get("Name_JP") or record["data"].get("Name") or _num_label
+    char_name = extract_char_name(record, fallback=_num_label)
     print(f"[Stage2] キャラクター選定: {char_name} / 形態: {form}")
 
     references = collect_reference_images(record, form=form)
@@ -124,13 +124,7 @@ def _build_character_spec(record: dict, form: str) -> dict:
         "violation_features": violation_features,
         "correction_instruction": correction_instruction,
         "form": form,
-        "char_name": (
-            record["data"].get("Name_JP") or record["data"].get("Name") or (
-                f"#{record['data']['Num']:03d}"
-                if isinstance(record["data"]["Num"], int)
-                else f"#{record['data']['Num']}"
-            )
-        ),
+        "char_name": extract_char_name(record),
         "char_num": record["data"]["Num"],
     }
 
@@ -140,7 +134,7 @@ def _save_db_summary(
 ) -> None:
     summary = {
         "num": record["data"]["Num"],
-        "name": record["data"].get("Name_JP") or record["data"].get("Name") or "",
+        "name": extract_char_name(record, fallback=""),
         "form": form,
         "reference_url_count": len(references["urls"]),
         "reference_local_count": len(references["local_paths"]),

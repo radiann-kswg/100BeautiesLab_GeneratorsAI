@@ -80,8 +80,9 @@ def _analyze_rough_with_openai(image_path: Path, spec: dict) -> dict:
     user = (
         f"このイラストを検査してください。\n"
         f"形態: {form}\n"
-        f"不変特徴 (必ず存在するべき): {immutable}\n"
-        f"以下の要素が存在する場合は violations に追加してください:\n{violation_list}\n\n"
+        f"不変特徴 (必ず存在するべき・違反扱い禁止): {immutable}\n"
+        f"以下の要素が存在する場合は violations に追加してください"
+        f"（ただし上記の不変特徴として期待されるものは violations に含めないこと）:\n{violation_list}\n\n"
         "構図として明らかに破綻している点があれば composition_issues に追加してください。\n"
         "問題がなければ overall_ok: true として violations と composition_issues は空リストにしてください。"
     )
