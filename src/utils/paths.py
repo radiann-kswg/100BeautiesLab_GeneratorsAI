@@ -35,7 +35,7 @@ def format_num(num: int | str) -> str:
 
     ゼロパディングは行わない。
     int/float は str 変換: 22 → "22", 22.0 → "22"
-    str は特殊IDとしてそのまま保持: "2-alt" → "2-alt", "0" → "0", "00" → "00"
+    str は特殊IDとしてそのまま保持: "2-alt" → "2-alt", "000" → "000"
     """
     if isinstance(num, float):
         return str(int(num))

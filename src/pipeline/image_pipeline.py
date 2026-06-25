@@ -88,7 +88,7 @@ def _fmt_num(num: int | str | None) -> str:
     """num を 3 桁表示 or そのまま文字列に変換する。
 
     int/float のみゼロパディングする: 22 → "022"
-    str は型を保持する: "2-alt" → "2-alt"  "0" → "0"  "00" → "00"  "000" → "000"
+    str は型を保持する: "2-alt" → "2-alt"  "000" → "000"
     None は "000" フォールバック（プログラムエラー時の安全網）
     """
     if num is None:
@@ -98,7 +98,6 @@ def _fmt_num(num: int | str | None) -> str:
     if isinstance(num, int):
         return f"{num:03d}"
     # 文字列 Num はそのまま保持。isdigit() 変換は行わない
-    # （"0"→"000" でチトセと衝突、"00"→"000" も同様の問題があったため削除）
     return str(num).strip()
 
 
