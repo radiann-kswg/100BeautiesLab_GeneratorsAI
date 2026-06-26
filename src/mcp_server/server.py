@@ -199,6 +199,17 @@ class GetRunLogsInput(_Base):
     include_image_urls: bool = Field(default=True, description="True で中間画像の URL を含める")
 
 
+class ListGcsLogsInput(_Base):
+    """GCS 上の生成ログ一覧の入力。"""
+
+    limit: int = Field(default=300, description="返す最大件数", ge=1, le=2000)
+    since_days: int = Field(
+        default=49,
+        description="この日数以内に作成されたログを対象（既定 49 日 = 7 週間）",
+        ge=1, le=3650,
+    )
+
+
 # ── 結果整形ヘルパ ──────────────────────────────────────────────
 def _extract_output_paths(result_dict: dict[str, Any]) -> list[str]:
     """PipelineResult 由来の辞書から「最良の」画像パス群を取り出す。
@@ -773,6 +784,42 @@ async def numbertales_get_run_logs(params: GetRunLogsInput) -> str:
 
     base["stages"] = stages
     return json.dumps(base, ensure_ascii=False, indent=2)
+
+
+# ── ツール: GCS ログ一覧（永続・期間指定） ──────────────────────
+@mcp.tool(
+    name="numbertales_list_gcs_logs",
+    annotations={
+        "title": "ナンバーテールズ GCS ログ一覧",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def numbertales_list_gcs_logs(params: ListGcsLogsInput) -> str:
+    """GCS に保存された生成ログ画像を新しい順に一覧する（読み取り専用）。
+
+    ジョブのメモリ履歴（list_runs）と異なり GCS バケットを直接走査するため、
+    サーバ再起動後や過去（既定 7 週間 = 49 日）のログも参照できる。
+    中間画像（Stage3/4）と GCS 直保存の完成画像が対象で、各要素に署名 URL が付く。
+
+    Args:
+        params (ListGcsLogsInput):
+            - limit (int): 返す最大件数（1-2000, 既定 300）
+            - since_days (int): 対象期間（日, 既定 49 = 7 週間）
+
+    Returns:
+        str: JSON 文字列。スキーマ::
+            {
+              "bucket": str, "prefix": str, "since_days": int,
+              "count": int,
+              "objects": [ {"name","object_key","url","size","created","sink":"gcs"} ],
+              "note": str
+            }
+    """
+    data = output_sink.list_gcs_logs(limit=params.limit, since_days=params.since_days)
+    return json.dumps(data, ensure_ascii=False, indent=2)
 
 
 # ── ツール: Canva トークンリフレッシュ ─────────────────────────

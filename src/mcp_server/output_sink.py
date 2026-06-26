@@ -195,6 +195,36 @@ def _publish_drive(files: list[str], run_label: str) -> list[dict[str, Any]]:
 
 
 # ── Google Cloud Storage ────────────────────────────────────────
+def _signed_url(blob: Any, bucket_name: str, object_key: str, ttl: int) -> str:
+    """blob の v4 署名 URL を返す（ADC/IAM 署名フォールバック付き）。失敗時は gs://。"""
+    from datetime import timedelta
+    try:
+        return blob.generate_signed_url(
+            version="v4", expiration=timedelta(seconds=ttl), method="GET"
+        )
+    except Exception:  # noqa: BLE001
+        # Cloud Run / GCE の ADC は鍵ファイル無しでも IAM Credentials 経由で署名できる
+        try:
+            import google.auth  # type: ignore
+            from google.auth.transport import requests as _greq  # type: ignore
+
+            _creds, _ = google.auth.default()
+            _creds.refresh(_greq.Request())
+            _sa_email = getattr(_creds, "service_account_email", None)
+            _token = getattr(_creds, "token", None)
+            if _sa_email and _token:
+                return blob.generate_signed_url(
+                    version="v4",
+                    expiration=timedelta(seconds=ttl),
+                    method="GET",
+                    service_account_email=_sa_email,
+                    access_token=_token,
+                )
+        except Exception:  # noqa: BLE001
+            pass
+        return f"gs://{bucket_name}/{object_key}"
+
+
 def _publish_gcs(files: list[str], run_label: str) -> list[dict[str, Any]]:
     bucket_name = os.getenv(ENV_GCS_BUCKET, "").strip()
     if not bucket_name:
@@ -224,41 +254,11 @@ def _publish_gcs(files: list[str], run_label: str) -> list[dict[str, Any]]:
         try:
             blob = bucket.blob(object_key)
             blob.upload_from_filename(str(path))
-            try:
-                from datetime import timedelta
-
-                url = blob.generate_signed_url(
-                    version="v4", expiration=timedelta(seconds=ttl), method="GET"
-                )
-            except Exception:  # noqa: BLE001
-                # Cloud Run / Compute Engine の ADC 認証では鍵ファイルなしで署名できる
-                # （IAM Credentials API 経由）。失敗すれば gs:// にフォールバックする。
-                try:
-                    from datetime import timedelta
-                    import google.auth  # type: ignore
-                    from google.auth.transport import requests as _greq  # type: ignore
-
-                    _creds, _ = google.auth.default()
-                    _creds.refresh(_greq.Request())
-                    _sa_email = getattr(_creds, "service_account_email", None)
-                    _token = getattr(_creds, "token", None)
-                    if _sa_email and _token:
-                        url = blob.generate_signed_url(
-                            version="v4",
-                            expiration=timedelta(seconds=ttl),
-                            method="GET",
-                            service_account_email=_sa_email,
-                            access_token=_token,
-                        )
-                    else:
-                        url = f"gs://{bucket_name}/{object_key}"
-                except Exception:  # noqa: BLE001
-                    url = f"gs://{bucket_name}/{object_key}"
             results.append(
                 {
                     "name": path.name,
                     "local_path": str(path),
-                    "url": url,
+                    "url": _signed_url(blob, bucket_name, object_key, ttl),
                     "sink": "gcs",
                     "note": "",
                 }
@@ -268,6 +268,89 @@ def _publish_gcs(files: list[str], run_label: str) -> list[dict[str, Any]]:
             item["note"] = f"GCS アップロード失敗 ({type(e).__name__})。"
             results.append(item)
     return results
+
+
+# ── GCS 署名 URL ヘルパ & 一覧（読み取り専用） ───────────────────
+def list_gcs_logs(limit: int = 300, since_days: int = 49) -> dict[str, Any]:
+    """GCS 上の生成ログ画像を新しい順に一覧する（読み取り専用）。
+
+    過去 ``since_days`` 日以内に作成された画像オブジェクトを ``GCS_PREFIX`` 配下から拾い、
+    署名 URL 付きで返す。ジョブのメモリ履歴に依存しないため、サーバ再起動後や
+    過去分のログも参照できる（既定 49 日 = 7 週間）。
+
+    Returns
+    -------
+    dict::
+        {
+          "bucket": str, "prefix": str, "since_days": int,
+          "count": int,
+          "objects": [ {"name","object_key","url","size","created","sink":"gcs"} ],
+          "note": str,
+        }
+    """
+    bucket_name = os.getenv(ENV_GCS_BUCKET, "").strip()
+    prefix = os.getenv(ENV_GCS_PREFIX, "numbertales").strip("/")
+    base: dict[str, Any] = {
+        "bucket": bucket_name, "prefix": prefix, "since_days": since_days,
+        "count": 0, "objects": [], "note": "",
+    }
+    if not bucket_name:
+        base["note"] = f"{ENV_GCS_BUCKET} 未設定"
+        return base
+    try:
+        from google.cloud import storage  # type: ignore
+    except ImportError:
+        base["note"] = "google-cloud-storage 未インストール"
+        return base
+    try:
+        client = storage.Client()
+    except Exception as e:  # noqa: BLE001
+        base["note"] = f"GCS クライアント初期化失敗 ({type(e).__name__})"
+        return base
+
+    try:
+        ttl = int(os.getenv(ENV_SIGNED_TTL, str(7 * 24 * 3600)))
+    except ValueError:
+        ttl = 7 * 24 * 3600
+
+    from datetime import datetime, timezone, timedelta
+    cutoff = datetime.now(timezone.utc) - timedelta(days=max(1, since_days))
+    epoch = datetime(1970, 1, 1, tzinfo=timezone.utc)
+
+    # メタデータだけ集めて期間フィルタ → 新しい順に並べ → limit 件に絞ってから署名する
+    # （署名は IAM 呼び出しを伴うので件数を絞ってから行う）
+    candidates: list[Any] = []
+    try:
+        for blob in client.list_blobs(bucket_name, prefix=f"{prefix}/"):
+            if Path(blob.name).suffix.lower() not in _IMAGE_EXTS:
+                continue
+            created = getattr(blob, "time_created", None)
+            if created is not None and created < cutoff:
+                continue
+            candidates.append(blob)
+    except Exception as e:  # noqa: BLE001
+        base["note"] = f"一覧取得中にエラー ({type(e).__name__})"
+        return base
+
+    candidates.sort(key=lambda b: getattr(b, "time_created", None) or epoch, reverse=True)
+    if limit and len(candidates) > limit:
+        candidates = candidates[:limit]
+
+    objects: list[dict[str, Any]] = []
+    for blob in candidates:
+        created = getattr(blob, "time_created", None)
+        objects.append({
+            "name": Path(blob.name).name,
+            "object_key": blob.name,
+            "url": _signed_url(blob, bucket_name, blob.name, ttl),
+            "size": int(getattr(blob, "size", 0) or 0),
+            "created": created.isoformat() if created else "",
+            "sink": "gcs",
+        })
+
+    base["objects"] = objects
+    base["count"] = len(objects)
+    return base
 
 
 # ── 共通ヘルパ ──────────────────────────────────────────────────
