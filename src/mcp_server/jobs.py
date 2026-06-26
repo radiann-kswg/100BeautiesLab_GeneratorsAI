@@ -41,6 +41,7 @@ class Job:
     finished_at: str = ""
     result: dict[str, Any] | None = None   # 完了時の要約 + 出力リンク
     error: str = ""
+    partial_result: dict[str, Any] | None = None  # 実行中の中間ステージ結果（Stage3/4 完了時に更新）
 
     def snapshot(self) -> dict[str, Any]:
         """外部公開用の辞書スナップショットを返す。"""
@@ -54,6 +55,7 @@ class Job:
             "finished_at": self.finished_at,
             "result": self.result,
             "error": self.error,
+            "partial_result": self.partial_result,
         }
 
 
@@ -66,7 +68,11 @@ class JobManager:
         self._lock = threading.Lock()
 
     def submit(
-        self, kind: str, params: dict[str, Any], fn: Callable[[], dict[str, Any]]
+        self,
+        kind: str,
+        params: dict[str, Any],
+        fn: Callable[[], dict[str, Any]],
+        job_id: str | None = None,
     ) -> Job:
         """ジョブを登録して即座に Job を返す（バックグラウンドで fn を実行）。
 
@@ -75,8 +81,11 @@ class JobManager:
         kind:   ジョブ種別ラベル
         params: 公開用の入力パラメータ（job_status で見える）
         fn:     実処理。戻り値の dict がそのまま job.result になる。
+        job_id: 事前に確定済みの job_id（省略時は自動生成）。
+                stage_callback クロージャへ job_id を渡す際に使う。
         """
-        job_id = uuid.uuid4().hex[:12]
+        if job_id is None:
+            job_id = uuid.uuid4().hex[:12]
         job = Job(
             job_id=job_id,
             kind=kind,
@@ -87,6 +96,27 @@ class JobManager:
             self._jobs[job_id] = job
         self._executor.submit(self._run, job, fn)
         return job
+
+    def update_partial_result(
+        self, job_id: str, stage: str, stage_data: dict[str, Any], pipeline_dir: str = ""
+    ) -> None:
+        """実行中ジョブの中間ステージ結果を更新する（Stage3/4 完了時に呼ぶ）。
+
+        get_run_logs が running 状態でも部分的な中間画像 URL を返せるようにするため、
+        ステージごとに partial_result.stage_summary を逐次更新する。
+        """
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return
+            partial: dict[str, Any] = dict(job.partial_result or {})
+            if pipeline_dir:
+                partial.setdefault("pipeline_dir", pipeline_dir)
+            partial.setdefault("scene_used", "")
+            ss: dict[str, Any] = dict(partial.get("stage_summary") or {})
+            ss[stage] = stage_data
+            partial["stage_summary"] = ss
+            job.partial_result = partial
 
     def _run(self, job: Job, fn: Callable[[], dict[str, Any]]) -> None:
         with self._lock:

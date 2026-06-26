@@ -86,6 +86,8 @@ jobs:
             MCP_TRANSPORT=streamable-http
             OUTPUT_SINK=drive
             MCP_ISSUER_URL=https://generators-ai-amotdscyfq-an.a.run.app
+            GCS_BUCKET=generators-ai-outputs
+            GCS_PREFIX=numbertales
           secrets: |
             GEMINI_API_KEY=GEMINI_API_KEY:latest
             OPENAI_API_KEY=OPENAI_API_KEY:latest

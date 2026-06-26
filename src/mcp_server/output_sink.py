@@ -230,8 +230,30 @@ def _publish_gcs(files: list[str], run_label: str) -> list[dict[str, Any]]:
                 url = blob.generate_signed_url(
                     version="v4", expiration=timedelta(seconds=ttl), method="GET"
                 )
-            except Exception:  # noqa: BLE001 - 署名不可な認証では gs:// で代替
-                url = f"gs://{bucket_name}/{object_key}"
+            except Exception:  # noqa: BLE001
+                # Cloud Run / Compute Engine の ADC 認証では鍵ファイルなしで署名できる
+                # （IAM Credentials API 経由）。失敗すれば gs:// にフォールバックする。
+                try:
+                    from datetime import timedelta
+                    import google.auth  # type: ignore
+                    from google.auth.transport import requests as _greq  # type: ignore
+
+                    _creds, _ = google.auth.default()
+                    _creds.refresh(_greq.Request())
+                    _sa_email = getattr(_creds, "service_account_email", None)
+                    _token = getattr(_creds, "token", None)
+                    if _sa_email and _token:
+                        url = blob.generate_signed_url(
+                            version="v4",
+                            expiration=timedelta(seconds=ttl),
+                            method="GET",
+                            service_account_email=_sa_email,
+                            access_token=_token,
+                        )
+                    else:
+                        url = f"gs://{bucket_name}/{object_key}"
+                except Exception:  # noqa: BLE001
+                    url = f"gs://{bucket_name}/{object_key}"
             results.append(
                 {
                     "name": path.name,

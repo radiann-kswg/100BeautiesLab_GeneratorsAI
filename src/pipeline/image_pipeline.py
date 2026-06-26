@@ -150,6 +150,7 @@ def run_image_pipeline(
     correction_mode: str = "t2i",
     iterate_from: str | None = None,
     revisions: "str | list[str] | None" = None,
+    stage_callback: "Callable[[str, dict, str], None] | None" = None,
 ) -> PipelineResult:
     """画像生成パイプライン全体 (Stage 1→2→3→4→5) を実行する。
 
@@ -171,6 +172,8 @@ def run_image_pipeline(
     iterate_from:    前回生成画像のパス (ファイルまたはrun-dir、またはGCS URL)。
                      指定時は Stage 3 が i2i モードになる。Stage 4/5 は通常通り実行。
     revisions:       修正指示 (";"/改行区切り文字列 or list)。iterate_from と組み合わせて使用。
+    stage_callback:  ステージ完了時コールバック: (stage_name, stage_paths_dict, pipeline_dir_str) → None。
+                     Stage3/4 完了直後に呼ばれ、GCS 中間アップロードや部分結果保存に利用される。
 
     Returns
     -------
@@ -273,6 +276,11 @@ def run_image_pipeline(
         iterate_from=iterate_from, revisions=revisions,
     )
     result.stage3_paths = {k: [str(p) for p in v] for k, v in rough_results.items()}
+    if stage_callback:
+        try:
+            stage_callback("stage3", result.stage3_paths, str(pipeline_dir))
+        except Exception as _cb_err:
+            print(f"[WARN] stage_callback(stage3) error: {_cb_err}")
 
     if not rough_results["all"]:
         result.errors.append(
@@ -327,6 +335,11 @@ def run_image_pipeline(
         for k, v in corrected_results.items()
         if isinstance(v, list)
     }
+    if stage_callback:
+        try:
+            stage_callback("stage4", result.stage4_paths, str(pipeline_dir))
+        except Exception as _cb_err:
+            print(f"[WARN] stage_callback(stage4) error: {_cb_err}")
 
     if not corrected_results["all"]:
         result.errors.append("Stage 4: 修正済み画像が 0 枚でした。Stage 5 をスキップします。")
@@ -512,6 +525,7 @@ def run_combined_pipeline(
     correction_mode: str = "t2i",
     iterate_from: str | None = None,
     revisions: "str | list[str] | None" = None,
+    stage_callback: "Callable[[str, dict, str], None] | None" = None,
 ) -> MultiCharPipelineResult:
     """複数キャラクターを 1 枚に合同生成するパイプライン (Stage 1→2→3→4→5)。
 
@@ -707,6 +721,13 @@ def run_combined_pipeline(
     result.stage3_paths["all"] = [str(p) for p in all_stage3]
     print(f"[Stage3] done - 合計 {len(all_stage3)} 枚")
 
+    # ── Stage 3 終了時コールバック（comp rough が確定する前の中間通知） ──
+    if stage_callback and all_stage3:
+        try:
+            stage_callback("stage3", result.stage3_paths, str(pipeline_dir))
+        except Exception as _cb_err:
+            print(f"[WARN] stage_callback(stage3) error: {_cb_err}")
+
     # ── Stage 3 続き: 全キャラクターが揃う構図ラフを 1 枚同時生成 ──
     # 単体ラフとは別に全員が同じシーンに収まる構図を先行確認するためのラフ。
     # Stage 5 最終合成の前段として i2i の起点にも使える。
@@ -788,6 +809,11 @@ def run_combined_pipeline(
     result.stage4_paths = all_stage4_paths
     result.stage4_paths["best_per_char"] = [str(p) for p in per_char_best]
     print(f"[Stage4] done - 合成用ベスト: {len(per_char_best)} 枚 ({', '.join(p.name for p in per_char_best)})")
+    if stage_callback:
+        try:
+            stage_callback("stage4", result.stage4_paths, str(pipeline_dir))
+        except Exception as _cb_err:
+            print(f"[WARN] stage_callback(stage4) error: {_cb_err}")
 
     # ── Stage 5: ベストレンダーを Gemini マルチ参照で 1 枚に合成 ──
     # comp_rough があれば先頭参照として差し込み、構図ガイドとして Gemini に渡す。

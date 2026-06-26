@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import os
+import uuid
 from enum import Enum
 from typing import Any, Optional, Union
 
@@ -295,6 +296,44 @@ def _run_and_publish(result: Any) -> dict[str, Any]:
     }
 
 
+# ── ステージコールバックファクトリ ─────────────────────────────
+def _make_stage_callback(job_id: str):
+    """Stage3/4 完了時に GCS 中間アップロード + partial_result 更新を行うコールバックを生成する。
+
+    コールバック署名: (stage_name: str, stage_paths: dict, pipeline_dir: str) → None
+
+    MCP ツール側ではパイプラインを呼び出す前にこの関数でコールバックを生成し、
+    run_image_pipeline / run_combined_pipeline の stage_callback 引数に渡す。
+    呼び出されると即座に GCS へ中間画像をアップロードし、
+    get_run_logs が running 状態でも部分的な URL を返せるよう job.partial_result を更新する。
+    """
+    def _cb(stage: str, paths: dict, pipeline_dir: str) -> None:
+        run_label = os.path.basename(pipeline_dir.rstrip("/\\")) if pipeline_dir else ""
+        all_paths = list(paths.get("all") or [])
+        comp_paths = list(paths.get("composition_rough") or [])
+
+        published_all = output_sink.publish_intermediate(
+            all_paths, run_label=f"{run_label}_{stage}"
+        )
+        stage_data: dict = {
+            "count": len(all_paths),
+            "paths": all_paths,
+            "intermediate": published_all,
+        }
+        if comp_paths:
+            published_comp = output_sink.publish_intermediate(
+                comp_paths, run_label=f"{run_label}_{stage}comp"
+            )
+            stage_data["composition_rough"] = {
+                "count": len(comp_paths),
+                "paths": comp_paths,
+                "intermediate": published_comp,
+            }
+        MANAGER.update_partial_result(job_id, stage, stage_data, pipeline_dir)
+
+    return _cb
+
+
 # ── ツール: 単体生成 ────────────────────────────────────────────
 @mcp.tool(
     name="numbertales_generate_character",
@@ -333,6 +372,7 @@ async def numbertales_generate_character(params: GenerateCharacterInput) -> str:
             }
     """
     p = params
+    _job_id = uuid.uuid4().hex[:12]
 
     def _job() -> dict[str, Any]:
         from src.pipeline.image_pipeline import run_image_pipeline
@@ -348,10 +388,11 @@ async def numbertales_generate_character(params: GenerateCharacterInput) -> str:
             costume=p.costume,
             skip_canva=p.skip_canva,
             correction_mode=p.correction_mode.value,
+            stage_callback=_make_stage_callback(_job_id),
         )
         return _run_and_publish(result)
 
-    job = MANAGER.submit("generate_character", p.model_dump(mode="json"), _job)
+    job = MANAGER.submit("generate_character", p.model_dump(mode="json"), _job, job_id=_job_id)
     return _submit_response(job)
 
 
@@ -384,6 +425,7 @@ async def numbertales_generate_joint(params: GenerateJointInput) -> str:
         str: JSON 文字列 {"job_id", "status": "pending", "kind", "message"}
     """
     p = params
+    _job_id = uuid.uuid4().hex[:12]
 
     def _job() -> dict[str, Any]:
         from src.pipeline.image_pipeline import run_combined_pipeline
@@ -401,10 +443,11 @@ async def numbertales_generate_joint(params: GenerateJointInput) -> str:
             costume=p.costume,
             skip_canva=p.skip_canva,
             correction_mode=p.correction_mode.value,
+            stage_callback=_make_stage_callback(_job_id),
         )
         return _run_and_publish(result)
 
-    job = MANAGER.submit("generate_joint", p.model_dump(mode="json"), _job)
+    job = MANAGER.submit("generate_joint", p.model_dump(mode="json"), _job, job_id=_job_id)
     return _submit_response(job)
 
 
@@ -436,6 +479,7 @@ async def numbertales_generate_from_natural(params: GenerateFromNaturalInput) ->
              抽出 0 件なら {"status": "failed", "error": "..."}。
     """
     p = params
+    _job_id = uuid.uuid4().hex[:12]
 
     def _job() -> dict[str, Any]:
         from src.pipeline.image_pipeline import (
@@ -452,6 +496,7 @@ async def numbertales_generate_from_natural(params: GenerateFromNaturalInput) ->
                 "outputs": [],
             }
 
+        cb = _make_stage_callback(_job_id)
         if len(char_params) == 1:
             cp = char_params[0]
             result = run_image_pipeline(
@@ -464,6 +509,7 @@ async def numbertales_generate_from_natural(params: GenerateFromNaturalInput) ->
                 background=cp.get("background", ""),
                 skip_canva=p.skip_canva,
                 correction_mode=p.correction_mode.value,
+                stage_callback=cb,
             )
         else:
             nat_forms = [cp.get("form", "corefolder") for cp in char_params]
@@ -478,12 +524,13 @@ async def numbertales_generate_from_natural(params: GenerateFromNaturalInput) ->
                 background=char_params[0].get("background", ""),
                 skip_canva=p.skip_canva,
                 correction_mode=p.correction_mode.value,
+                stage_callback=cb,
             )
         summary = _run_and_publish(result)
         summary["parsed"] = char_params
         return summary
 
-    job = MANAGER.submit("generate_from_natural", p.model_dump(mode="json"), _job)
+    job = MANAGER.submit("generate_from_natural", p.model_dump(mode="json"), _job, job_id=_job_id)
     return _submit_response(job)
 
 
@@ -515,6 +562,7 @@ async def numbertales_iterate(params: IterateInput) -> str:
         str: JSON 文字列 {"job_id", "status": "pending", "kind", "message"}
     """
     p = params
+    _job_id = uuid.uuid4().hex[:12]
 
     def _job() -> dict[str, Any]:
         from src.pipeline.image_pipeline import run_image_pipeline
@@ -527,10 +575,11 @@ async def numbertales_iterate(params: IterateInput) -> str:
             correction_mode=p.correction_mode.value,
             iterate_from=p.iterate_from,
             revisions=p.revisions,
+            stage_callback=_make_stage_callback(_job_id),
         )
         return _run_and_publish(result)
 
-    job = MANAGER.submit("iterate", p.model_dump(mode="json"), _job)
+    job = MANAGER.submit("iterate", p.model_dump(mode="json"), _job, job_id=_job_id)
     return _submit_response(job)
 
 
@@ -672,13 +721,17 @@ async def numbertales_get_run_logs(params: GetRunLogsInput) -> str:
         "error": job.error if job.status == "failed" else "",
     }
 
-    if job.status != "succeeded" or not job.result:
+    # succeeded なら完全結果、running/failed でも partial_result があれば中間データを返す
+    source = job.result
+    if source is None:
+        source = job.partial_result  # running 中は Stage3/4 完了分のみ入っている
+    if source is None:
         return json.dumps(base, ensure_ascii=False, indent=2)
 
-    result = job.result
-    base["pipeline_dir"] = result.get("pipeline_dir", "")
-    base["scene_used"] = result.get("scene_used", "")
-    ss = result.get("stage_summary") or {}
+    base["pipeline_dir"] = source.get("pipeline_dir", "")
+    base["scene_used"] = source.get("scene_used", "")
+    ss = source.get("stage_summary") or {}
+    result = source  # 以降の参照を統一
     want_all = params.stage == "all"
 
     def _want(s: str) -> bool:
