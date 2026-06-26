@@ -210,6 +210,16 @@ class ListGcsLogsInput(_Base):
     )
 
 
+class GetGcsImageInput(_Base):
+    """GCS 画像バイト取得の入力。"""
+
+    object_key: str = Field(
+        ...,
+        description="GCS オブジェクトキー（numbertales_list_gcs_logs の object_key）",
+        min_length=1, max_length=1024,
+    )
+
+
 # ── 結果整形ヘルパ ──────────────────────────────────────────────
 def _extract_output_paths(result_dict: dict[str, Any]) -> list[str]:
     """PipelineResult 由来の辞書から「最良の」画像パス群を取り出す。
@@ -820,6 +830,39 @@ async def numbertales_list_gcs_logs(params: ListGcsLogsInput) -> str:
     """
     data = output_sink.list_gcs_logs(limit=params.limit, since_days=params.since_days)
     return json.dumps(data, ensure_ascii=False, indent=2)
+
+
+# ── ツール: GCS 画像バイト取得（インライン表示用） ──────────────
+@mcp.tool(
+    name="numbertales_get_gcs_image",
+    annotations={
+        "title": "ナンバーテールズ GCS 画像バイト取得",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def numbertales_get_gcs_image(params: GetGcsImageInput) -> str:
+    """GCS オブジェクトの画像バイトを base64 で返す（読み取り専用）。
+
+    numbertales_list_gcs_logs が返す object_key を渡すと画像本体を base64 で取得できる。
+    署名 URL に直接アクセスできない環境（アーティファクト等）でのインライン表示に使う。
+
+    Args:
+        params (GetGcsImageInput): object_key (str)
+
+    Returns:
+        str: JSON 文字列。スキーマ::
+            {
+              "object_key": str, "name": str, "mime_type": str,
+              "content": str,   # base64
+              "size": int,
+              "note": str
+            }
+    """
+    data = output_sink.fetch_gcs_image_b64(params.object_key)
+    return json.dumps(data, ensure_ascii=False)
 
 
 # ── ツール: Canva トークンリフレッシュ ─────────────────────────

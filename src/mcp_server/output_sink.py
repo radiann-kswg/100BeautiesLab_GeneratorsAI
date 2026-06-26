@@ -353,6 +353,67 @@ def list_gcs_logs(limit: int = 300, since_days: int = 49) -> dict[str, Any]:
     return base
 
 
+def fetch_gcs_image_b64(object_key: str) -> dict[str, Any]:
+    """GCS オブジェクトの画像バイトを base64 で返す（読み取り専用）。
+
+    ``numbertales_list_gcs_logs`` が返す ``object_key`` を渡すと、画像本体を
+    base64 で取得できる。署名 URL に直接アクセスできない環境（アーティファクト等）
+    でのインライン表示用。object_key はファイル名のみ（プレフィックスなし）でも受け付ける。
+
+    Returns
+    -------
+    dict::
+        {
+          "object_key": str, "name": str, "mime_type": str,
+          "content": str,   # base64（失敗時は空文字）
+          "size": int,
+          "note": str,
+        }
+    """
+    import base64
+    import mimetypes
+
+    bucket_name = os.getenv(ENV_GCS_BUCKET, "").strip()
+    prefix = os.getenv(ENV_GCS_PREFIX, "numbertales").strip("/")
+    out: dict[str, Any] = {
+        "object_key": object_key, "name": Path(object_key).name,
+        "mime_type": "", "content": "", "size": 0, "note": "",
+    }
+    if not bucket_name:
+        out["note"] = f"{ENV_GCS_BUCKET} 未設定"
+        return out
+    try:
+        from google.cloud import storage  # type: ignore
+    except ImportError:
+        out["note"] = "google-cloud-storage 未インストール"
+        return out
+
+    # フルキー(numbertales/...)でもファイル名のみでも受け付ける
+    key = (object_key or "").strip().lstrip("/")
+    if not key:
+        out["note"] = "object_key が空です"
+        return out
+    if prefix and not key.startswith(prefix + "/") and "/" not in key:
+        key = f"{prefix}/{key}"
+
+    try:
+        client = storage.Client()
+        bucket = client.bucket(bucket_name)
+        blob = bucket.blob(key)
+        data = blob.download_as_bytes()
+    except Exception as e:  # noqa: BLE001
+        out["note"] = f"GCS 取得失敗 ({type(e).__name__})"
+        return out
+
+    mime = getattr(blob, "content_type", None) or mimetypes.guess_type(key)[0] or "image/jpeg"
+    out["name"] = Path(key).name
+    out["object_key"] = key
+    out["mime_type"] = mime
+    out["size"] = len(data)
+    out["content"] = base64.b64encode(data).decode("ascii")
+    return out
+
+
 # ── 共通ヘルパ ──────────────────────────────────────────────────
 def _remote_name(path: Path, run_label: str) -> str:
     """リモート格納名を組み立てる（run ラベルでの衝突回避用プレフィックス付き）。
