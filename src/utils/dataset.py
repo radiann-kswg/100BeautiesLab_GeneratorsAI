@@ -1167,6 +1167,7 @@ def _extract_identity_motif_en(record: dict[str, Any], form: str) -> list[str]:
 
     フォームラベル自体 ("corefolder form" / "humanoid form") は除外。
     corefolder 形態では outfit_features フィルタを適用して humanoid 衣装語を除去する。
+    IdentityMotif が存在しない場合は AppearanceDetail からフォールバック取得する。
     """
     data = record.get("data") or {}
     identity_motif = data.get("IdentityMotif")
@@ -1174,7 +1175,7 @@ def _extract_identity_motif_en(record: dict[str, Any], form: str) -> list[str]:
         db_record = record.get("db_record") or {}
         identity_motif = db_record.get("IdentityMotif")
     if not isinstance(identity_motif, list):
-        return []
+        return _extract_appearance_detail_motif_en(record, form)
     form_label = f"{form} form"
     for entry in identity_motif:
         if not isinstance(entry, dict):
@@ -1183,13 +1184,126 @@ def _extract_identity_motif_en(record: dict[str, Any], form: str) -> list[str]:
             continue
         motif_en = (entry.get("Motif") or {}).get("Motif_EN") or []
         if not isinstance(motif_en, list):
-            return []
+            return _extract_appearance_detail_motif_en(record, form)
         tags = [str(t).strip() for t in motif_en if str(t).strip().lower() != form_label]
         tags = [t for t in tags if t]
         if form == "corefolder":
             tags = _filter_corefolder_outfit_features(tags)
         return tags
-    return []
+    return _extract_appearance_detail_motif_en(record, form)
+
+
+def _extract_appearance_detail_motif_en(record: dict[str, Any], form: str) -> list[str]:
+    """AppearanceDetail から指定 form の外見モチーフ EN テキストを返す。
+
+    IdentityMotif が存在しない場合のフォールバック用。
+    #Element_Motif と #Element_CostumeItem エントリの #DesignAttr_Overview.value_EN を収集する。
+    Formation が指定 form または null のエントリを対象とする。
+    """
+    db_record = record.get("db_record") or {}
+    data = record.get("data") or {}
+    appearance_detail = db_record.get("AppearanceDetail") or data.get("AppearanceDetail")
+    if not isinstance(appearance_detail, list):
+        return []
+
+    target_elements = {"#Element_Motif", "#Element_CostumeItem"}
+    form_label = f"{form} form"
+    tags: list[str] = []
+    seen: set[str] = set()
+
+    for entry in appearance_detail:
+        if not isinstance(entry, dict):
+            continue
+        entry_formation = entry.get("Formation")
+        if entry_formation is not None and entry_formation != form:
+            continue
+        if entry.get("DesignElement") not in target_elements:
+            continue
+        for attr in (entry.get("Attrs") or []):
+            if not isinstance(attr, dict):
+                continue
+            if attr.get("AttrLabel") != "#DesignAttr_Overview":
+                continue
+            # value_EN (現行スキーマ) / Value_EN (旧マイグレーション形式) の両方を試みる
+            val = (attr.get("value_EN") or attr.get("Value_EN") or "").strip()
+            if val and val.lower() != form_label and val not in seen:
+                seen.add(val)
+                tags.append(val)
+
+    if form == "corefolder":
+        tags = _filter_corefolder_outfit_features(tags)
+    return tags
+
+
+_APPEARANCE_DETAIL_LAT_LABELS: dict[str, str] = {
+    "#Lat_Upper": "upper",
+    "#Lat_Lower": "lower",
+    "#Lat_Left": "left",
+    "#Lat_Right": "right",
+}
+
+
+def _extract_tails_unit_en_from_appearance_detail(record: dict[str, Any]) -> str:
+    """AppearanceDetail の #Element_TailsUnit エントリから EN 文字列を再構築して返す。
+
+    TailsUnit_EN が存在しない場合のフォールバック用。
+    #DesignAttr_Shape / #DesignAttr_Count / #DesignAttr_Branch を組み合わせて
+    "Fox (branched): 7 tails (upper: 2 clusters x5, lower: 1 cluster x2)" 形式に変換する。
+    Attrs に count/branch がなく shape_en のみの場合は shape_en をそのまま返す
+    （旧マイグレーション形式でフル文字列が 1 エントリに収まっている場合）。
+    """
+    db_record = record.get("db_record") or {}
+    data = record.get("data") or {}
+    appearance_detail = db_record.get("AppearanceDetail") or data.get("AppearanceDetail")
+    if not isinstance(appearance_detail, list):
+        return ""
+
+    for entry in appearance_detail:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("DesignElement") != "#Element_TailsUnit":
+            continue
+
+        shape_en = ""
+        count: int | None = None
+        branches: list[str] = []
+
+        for attr in (entry.get("Attrs") or []):
+            if not isinstance(attr, dict):
+                continue
+            label = attr.get("AttrLabel")
+            if label == "#DesignAttr_Shape":
+                shape_en = (attr.get("value_EN") or attr.get("Value_EN") or "").strip()
+            elif label == "#DesignAttr_Count":
+                raw = attr.get("value_Num")
+                if raw is not None:
+                    count = int(raw)
+            elif label == "#DesignAttr_Branch":
+                lat = _APPEARANCE_DETAIL_LAT_LABELS.get(attr.get("vdict_Laterality") or "", "")
+                n_tails = attr.get("value_Num_1")
+                n_clusters = attr.get("value_Num_2")
+                if lat and n_tails is not None and n_clusters is not None:
+                    cluster_word = "cluster" if int(n_clusters) == 1 else "clusters"
+                    branches.append(f"{lat}: {int(n_clusters)} {cluster_word} x{int(n_tails)}")
+
+        # 旧マイグレーション形式: shape_en にフル文字列が入っており count/branch がない
+        if shape_en and count is None and not branches:
+            return shape_en
+
+        parts: list[str] = []
+        if shape_en:
+            parts.append(shape_en)
+        if count is not None:
+            tail_str = f"{count} tail{'s' if count != 1 else ''}"
+            if branches:
+                tail_str += f" ({', '.join(branches)})"
+            parts.append(tail_str)
+        elif branches:
+            parts.append(f"({', '.join(branches)})")
+
+        return ": ".join(parts) if parts else ""
+
+    return ""
 
 
 def _build_number_print_block(record: dict[str, Any], form: str) -> str:
@@ -1398,6 +1512,8 @@ def _build_form_common_dataset_block(
         _data_src = record.get("data") or {}
         _db_src = record.get("db_record") or {}
         tails_unit_en = str(_data_src.get("TailsUnit_EN") or _db_src.get("TailsUnit_EN") or "").strip()
+        if not tails_unit_en:
+            tails_unit_en = _extract_tails_unit_en_from_appearance_detail(record)
         tails_unit = str(_data_src.get("TailsUnit_JP") or _data_src.get("TailsUnit") or _db_src.get("TailsUnit_JP") or _db_src.get("TailsUnit") or "").strip()
         race_type = str(_data_src.get("RaceType") or _db_src.get("RaceType") or "").strip()
         formal_name = str(_data_src.get("FormalName_JP") or _data_src.get("FormalName") or _db_src.get("FormalName_JP") or _db_src.get("FormalName") or "").strip()
