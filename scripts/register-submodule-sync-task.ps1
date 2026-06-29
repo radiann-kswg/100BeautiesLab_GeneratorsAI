@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Windows タスクスケジューラに「100BeautiesLab_SubmoduleSync」を登録/更新する。
     daily-submodule-sync.ps1 の絶対パスをこのスクリプトの場所から自動解決するため、

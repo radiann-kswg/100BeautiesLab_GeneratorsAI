@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     サブモジュール (_creations-ai / ネストの creations-db) を毎朝同期し、更新があれば取り込んで
     _tasks/ にログを生成し、コミット (push なし) するメンテナンススクリプト。

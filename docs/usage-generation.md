@@ -419,6 +419,7 @@ python -m src.batch_generate --nums 15,22,49,57 --forms both --provider both --s
 > **重要**: 番号印字ブロック (5) と禁止語ブロック (8) は2026-06-09に再強化済み。詳細は [`AGENTS.md`](../AGENTS.md) の `output レイアウト規約` セクションを参照。
 
 > **2026-06-13 更新**: `[形態共通データセット]` (ブロック 6.5) に `_creations-db` 英語フィールド拡張対応の DB原典補足行を追加。`IdentityMotif.Motif_EN`（形態別英語モチーフタグ、89キャラ対応）は両形態で注入。humanoid 形態には `TailsUnit_EN`（英語表記の尾構造、32キャラ対応）を優先使用し、未設定時は日本語版にフォールバック。corefolder 形態の Motif_EN には humanoid 衣装フィルタを通してから注入する。
+> **2026-06-29 更新**: ブロック 6.5 の DB原典補足行に **AppearanceDetail フォールバック** を追加（src 側 `src/utils/dataset.py`）。`IdentityMotif.Motif_EN` 不在時は `db_record.AppearanceDetail` の `#Element_Motif` / `#Element_CostumeItem` エントリの `#DesignAttr_Overview.value_EN`（旧形式 `Value_EN` も可）から識別モチーフを収集してフォールバックする。humanoid 形態で `TailsUnit_EN` が空の場合は `#Element_TailsUnit` の Shape / Count / Branch 属性から英語の尾構造文字列を再構築してフォールバックする。既存フィールドが存在する間は従来動作を維持（非破壊）。AppearanceDetail の有無は ai-dataset 側 `has_appearance_detail` フラグで確認できる。
 
 ---
 
