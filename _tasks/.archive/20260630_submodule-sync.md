@@ -18,3 +18,11 @@
 > Cowork の `daily-submodule-sync-optimize` タスク (Claude) に差分レビューを依頼し、
 > `src/` ・ `docs/` 側の追従最適化を行うこと。本スクリプトは git 同期とログ・コミットのみ担当。
 
+
+## Cowork 最適化レビュー — 2026-06-30 (57/イズナ)
+
+- 実機スクリプト実行: **済** (2026-06-30 09:00 のログあり)
+- 取り込み更新: **なし** (`_creations-ai` は 9880719 で NO-CHANGE)
+- スキーマ / `manifest-training.jsonl` / API / 参照パスへの影響: **なし**
+- `src/` ・ `docs/` 側の追従最適化: **不要と判断** (差分ゼロのため過剰改変を回避)
+- コミット: このサンドボックスからは行わない (実機の `scripts/daily-submodule-sync.ps1` が担当)
