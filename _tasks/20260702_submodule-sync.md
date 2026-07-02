@@ -33,3 +33,24 @@
 - **`_ideas/`・`_tasks/` 棚卸し**: 完了済みの同期ログ（`_tasks/20260627〜20260701_submodule-sync.md`）と `_ideas/2026-07-01_github-triage.md`（0702 版に要点継承済み）を `.archive/` へ移動。誤って `docs/` に置かれていた `2026-07-02_github-triage.md`（提案ログ）を CLAUDE.md の規定通り `_ideas/` へ移動。
 - コミットはこのセッションから実施（実機環境のため）。
 
+## Cowork 最適化タスクレビュー — 2026-07-02 19:07 (57/イズナ)
+
+- 実機スクリプト＋朝の実機対応レビュー（09:49 記録）の完結を確認。ローカルは `_creations-ai@c879165`（`creations-db@16dc226`）まで取り込み済み。
+- **GitHubコネクタでリモートHEAD照合**（読み取りのみ）: 実機の朝同期（`c879165` / 09:27 JST）より後、リモートが先行していることを確認。
+  - `100BeautiesLab_CreationsDB@addon-ai-tag`: `16dc226` → `166a530`（14:43 JST、"完全英訳フィールド対応" `4a105f9` を含む）
+  - `100BeautiesLab_CreationsAI@master`: `c879165` → `bc61fdd`（`creations-db@166a530` を追従）
+  - → **次回実機同期待ちの更新が 2 件**（現在 19:07 JST 時点、ローカル未取り込み）。
+- **未取り込み差分の傍証**（GitHubコネクタ stats のみ、フルパッチ未取得）: `4a105f9` は英訳値の穴埋めが中心（`db_Primary.json` は +11/-3 と小規模、キー名の破壊的リネームは見当たらず）。破壊的スキーマ変更ではなさそう。
+- **最適化判断: 現時点では不要**。当該更新はローカル未取り込みで、サンドボックスから差分レビュー・src 修正はできない（git fetch 禁止・ローカル履歴なし）。過剰改変を避け、取り込み後の確認に委ねる。
+- **次回同期時の要確認メモ**: `166a530` 取り込み後、`data/Works_NumberTales/DataBases/db_Primary.json` のキー構造（`value_JP/EN` 系）に破壊的変更がないか目視し、`src/utils/dataset.py` の両対応フォールバックで吸収できるか確認すること。
+- **先輩へのお願い**: 実機で `scripts/daily-submodule-sync.ps1` を再実行（または次回朝同期を待つ）して `bc61fdd` / `166a530` を取り込み＆コミットしてね。このサンドボックスからは git commit しない（CRLF 破壊防止のため）。
+
+## 実機対応レビュー — 2026-07-02 20:05 (57/イズナ)
+
+- 実機側で `daily-submodule-sync.ps1` が既に走っていて、`_creations-ai` の作業ツリーは `c879165` → `1788eaf`（`creations-db@6b77556`）まで進んでいたが、超プロジェクト側は未コミットのままだった。
+- **事故と復旧**: 状態確認のつもりで `git submodule update --init --recursive` を実行したところ、超プロジェクトの記録ポインタ（旧 `c879165`）へ巻き戻ってしまった。フェッチ済みコミットは残っていたため `git -C _creations-ai checkout 1788eaf` で復旧し、続けて `git submodule update --init --recursive` を再実行して入れ子の `creations-db` も記録通り `6b77556` まで揃え直した（作業消失なし）。
+- **差分レビュー（`16dc226` → `6b77556`、19:07 ログの要確認メモに対応）**: `data/Works_NumberTales/DataBases/db_Primary.json` は行数ベースで大差分（24,178 行）が出ているが、Node で新旧 JSON のキーパスを全走査した結果 **追加 0 / 削除 0** — インデント幅の変更（8→2スペース）と英訳値の穴埋め（`4a105f9` 完全英訳フィールド対応 ほか）が主因で、`value_JP/EN` 系のキー構造に破壊的変更なし。`src/utils/dataset.py` の追加修正は不要と判断。
+- 変更のあった他ファイル（`Works_PastDivers` / `Works_Proxies` / `Works_ShouArRiders` / `Works_UnauthedLogica` の DB、`pages/characters.*`、`lib/data-common.js`、`tools/deepl_py/*`）は `src/` から参照される `pkg/python`（CreationsDBClient）や NumberTales 系データパスに掛からず、影響なし。
+- `ai-dataset/build-info.json` は `submodule_commit: 6b77556` / `generated_at: 2026-07-02T19:52:04+09:00` で最新反映済み（upstream の `chore: sync ai-dataset` コミットで再生成済みのため、こちら側で `build-dataset.js` の再実行は不要）。`total_characters` は 464→465。
+- 代表確認として num=57（イズナ本人）の `manifest.jsonl` レコードが `has_ai_hints: true` / `has_immutable_constraints: true` を維持していることを確認。
+- 超プロジェクトの `_creations-ai` ポインタ更新（`c879165` → `1788eaf`）とこのログ追記を、このセッション（実機環境）からコミットする。
