@@ -71,13 +71,33 @@ python -m src.tools.migrate_output_layout
 
 # 4. ベースを変えたい場合
 python -m src.tools.migrate_output_layout --base C:\tmp\old-output
+
+# 5. パイプラインのステージ配下にネストした日付フォルダもフラット化する
+python -m src.tools.migrate_output_layout --flatten-stages --dry-run
+python -m src.tools.migrate_output_layout --flatten-stages
+
+# 6. ステージ配下のフラット化のみ (トップレベル整形はスキップ)
+python -m src.tools.migrate_output_layout --stages-only --dry-run
 ```
+
+### ステージ配下再帰フラット化 (`--flatten-stages` / `--stages-only`)
+
+パイプラインは各ステージ (`stage3_rough/` / `stage4_correct/rough_NN_corrected/` /
+`stage5_final/` / `stage5_final/synth/` など) 配下の子生成を、日付フォルダを作らない
+*フラット* 形式 (`{stage}/{ts}_{provider}_{form}_num{NNN}/`) で置く (`build_run_output_dir(date_group=False)`)。
+旧実装ではステージ配下にも日付フォルダを掘っていたため、古い実行には
+`.../{stage}/{date}/{date}_{HH}/{run}/` (旧 3 階層) や `.../{stage}/{date}/{run}/` (旧 2 階層) が
+残っている。このモードはそれらの run を 1 つ上へ引き上げてフラット化し、空になった中間日付フォルダと
+`.DS_Store` 等の不要ファイルを掃除する。トップレベルの `{作業日}/` は温存する。
+
+- `--flatten-stages`: トップレベル整形に加えてステージ配下も処理する (両パスを順に実行)。
+- `--stages-only`: トップレベル整形を行わず、ステージ配下のフラット化のみ実行する。
 
 ### 注意
 
 - dry-run で **warnings がゼロ** であることを確認してから本実行する。
 - 既に新レイアウトに収まっている run は触らない (idempotent)。
-- 一度本実行したら、再度走らせても何も移動しない設計。
+- 一度本実行したら、再度走らせても何も移動しない設計 (ステージ配下フラット化も同様)。
 - 詳細は [`src/tools/migrate_output_layout.py`](../src/tools/migrate_output_layout.py) のコメント参照。
 
 ---
