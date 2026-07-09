@@ -1240,7 +1240,116 @@ _APPEARANCE_DETAIL_LAT_LABELS: dict[str, str] = {
     "#Lat_Lower": "lower",
     "#Lat_Left": "left",
     "#Lat_Right": "right",
+    "#Lat_Both": "both",
 }
+
+_LATERALITY_LABELS_JP: dict[str, str] = {
+    "#Lat_Upper": "上",
+    "#Lat_Lower": "下",
+    "#Lat_Left": "左",
+    "#Lat_Right": "右",
+    "#Lat_Both": "両",
+}
+
+# creations-db 側 db_meta.json の $EnumDef_TailShapeType と対応 (JP, EN)。
+# 2026-07-07 の DB 構造改善で AppearanceDetail(#Element_TailsUnit) から
+# 専用フィールド TailsUnit ($Def_TailsUnit[]) へ移行された際に追従。
+_TAIL_SHAPE_TYPE_LABELS: dict[str, tuple[str, str]] = {
+    "#TailShapeType_Fox": ("キツネ型", "Fox-type"),
+    "#TailShapeType_FoxBranched": ("キツネ(枝分かれ)型", "Fox (branched)"),
+    "#TailShapeType_Cat": ("猫型", "Cat-type"),
+    "#TailShapeType_CatAccessory": ("猫型(アクセサリー)", "Cat-type (accessory)"),
+    "#TailShapeType_Nekomata": ("猫又型", "Nekomata-type"),
+    "#TailShapeType_Scorpion": ("サソリ型", "Scorpion-type"),
+    "#TailShapeType_Bud": ("つぼみ型", "Bud-type"),
+    "#TailShapeType_Dog": ("犬型", "Dog-type"),
+    "#TailShapeType_FoxSpecial": ("キツネ(特殊)型", "Fox (Special) type"),
+    "#TailShapeType_NekomataSpecial": ("猫又(特殊)型", "Nekomata (Special) type"),
+    "#TailShapeType_CaudalFin": ("尾鰭(特殊)型", "Caudal-Fin (Special) type"),
+    "#TailShapeType_Octopus": ("蛸足(特殊)型", "Octopus-leg (Special) type"),
+    "#TailShapeType_Mixed": ("多様(枝分かれ)型", "Mixed (branched) type"),
+    "#TailShapeType_Reptile": ("爬虫類型", "Reptile-type"),
+}
+
+
+def _describe_tails_unit_entry(entry: dict[str, Any]) -> tuple[str, str]:
+    """TailsUnit ($Def_TailsUnit) の1エントリを (JP文, EN文) に変換する。
+
+    #TailShapeType_FoxBranched / Count=7 / Branches=[upper:2x5, lower:1x2] のような
+    構造化データから、旧 TailsUnit_JP/TailsUnit_EN と同じ体裁の文字列を組み立てる。
+    """
+    shape_code = str(entry.get("TailShapeType") or "")
+    shape_jp, shape_en = _TAIL_SHAPE_TYPE_LABELS.get(shape_code, ("", ""))
+    count = entry.get("Count")
+    note_jp = str(entry.get("Note_JP") or "").strip()
+    note_en = str(entry.get("Note_EN") or "").strip()
+
+    branch_jp_parts: list[str] = []
+    branch_en_parts: list[str] = []
+    for branch in (entry.get("Branches") or []):
+        if not isinstance(branch, dict):
+            continue
+        lat_code = str(branch.get("Laterality") or "")
+        tail_count = branch.get("TailCount")
+        cluster_count = branch.get("ClusterCount")
+        if tail_count is None or cluster_count is None:
+            continue
+        lat_jp = _LATERALITY_LABELS_JP.get(lat_code, "")
+        lat_en = _APPEARANCE_DETAIL_LAT_LABELS.get(lat_code, "")
+        if lat_jp:
+            branch_jp_parts.append(f"{lat_jp}{int(cluster_count)}束{int(tail_count)}本")
+        if lat_en:
+            cluster_word = "cluster" if int(cluster_count) == 1 else "clusters"
+            branch_en_parts.append(f"{lat_en}: {int(cluster_count)} {cluster_word} x{int(tail_count)}")
+
+    jp = shape_jp
+    if count is not None:
+        jp += f"{int(count)}本"
+    if branch_jp_parts:
+        jp += f"({'+'.join(branch_jp_parts)})"
+    if note_jp:
+        jp = f"{jp} {note_jp}".strip()
+
+    en_parts = [shape_en] if shape_en else []
+    if count is not None:
+        tail_str = f"{int(count)} tail{'s' if int(count) != 1 else ''}"
+        if branch_en_parts:
+            tail_str += f" ({', '.join(branch_en_parts)})"
+        en_parts.append(tail_str)
+    en = ": ".join(en_parts)
+    if note_en:
+        en = f"{en} ({note_en})" if en else note_en
+
+    return jp, en
+
+
+def _extract_tails_unit_texts(record: dict[str, Any]) -> tuple[str, str]:
+    """構造化フィールド `TailsUnit` ($Def_TailsUnit[]) から (JP文, EN文) を組み立てる。
+
+    2026-07-07 の DB 構造改善で TailsUnit_JP/TailsUnit_EN の単純文字列フィールドは廃止され、
+    AppearanceDetail(#Element_TailsUnit) から独立した構造化フィールドへ全面移行された。
+    複数エントリ（複合ユニット構成）がある場合は「; 」で連結する。
+    """
+    data = record.get("data") or {}
+    db_record = record.get("db_record") or {}
+    tails_unit = data.get("TailsUnit")
+    if not isinstance(tails_unit, list) or not tails_unit:
+        tails_unit = db_record.get("TailsUnit")
+    if not isinstance(tails_unit, list) or not tails_unit:
+        return "", ""
+
+    jp_parts: list[str] = []
+    en_parts: list[str] = []
+    for entry in tails_unit:
+        if not isinstance(entry, dict):
+            continue
+        jp, en = _describe_tails_unit_entry(entry)
+        if jp:
+            jp_parts.append(jp)
+        if en:
+            en_parts.append(en)
+
+    return "; ".join(jp_parts), "; ".join(en_parts)
 
 
 def _extract_tails_unit_en_from_appearance_detail(record: dict[str, Any]) -> str:
@@ -1511,10 +1620,13 @@ def _build_form_common_dataset_block(
         # record["data"]（manifest 由来）を優先し、なければ db_record（CreationsDBClient 由来）を使う。
         _data_src = record.get("data") or {}
         _db_src = record.get("db_record") or {}
+        _tails_unit_struct_jp, _tails_unit_struct_en = _extract_tails_unit_texts(record)
         tails_unit_en = str(_data_src.get("TailsUnit_EN") or _db_src.get("TailsUnit_EN") or "").strip()
         if not tails_unit_en:
-            tails_unit_en = _extract_tails_unit_en_from_appearance_detail(record)
-        tails_unit = str(_data_src.get("TailsUnit_JP") or _data_src.get("TailsUnit") or _db_src.get("TailsUnit_JP") or _db_src.get("TailsUnit") or "").strip()
+            tails_unit_en = _tails_unit_struct_en or _extract_tails_unit_en_from_appearance_detail(record)
+        tails_unit = str(_data_src.get("TailsUnit_JP") or _db_src.get("TailsUnit_JP") or "").strip()
+        if not tails_unit:
+            tails_unit = _tails_unit_struct_jp
         race_type = str(_data_src.get("RaceType") or _db_src.get("RaceType") or "").strip()
         formal_name = str(_data_src.get("FormalName_JP") or _data_src.get("FormalName") or _db_src.get("FormalName_JP") or _db_src.get("FormalName") or "").strip()
         formal_name_en = str(_data_src.get("FormalName_EN") or _db_src.get("FormalName_EN") or "").strip()
