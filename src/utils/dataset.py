@@ -35,6 +35,8 @@ def _sanitize_natural_language_description(text: Any) -> str:
 
 def _infer_image_category(path_text: str) -> str:
     lower = path_text.replace("\\", "/").lower()
+    if "/attr/tailsunit/" in lower:
+        return "tails_unit"
     parts = [p for p in lower.split("/") if p]
     for segment in parts:
         if segment == "cocneptalt":
@@ -46,7 +48,9 @@ def _infer_image_category(path_text: str) -> str:
 
 def _get_category_priority(form: str) -> dict[str, int]:
     if form == "humanoid":
-        ordered = ["arts", "design", "designalt", "concept", "conceptalt"]
+        # tails_unit (2026-07-10 addon-ai-tag 追加): 尾の構造化資料画像。
+        # 尾の形状・分岐は DesignAlt 同様に確定情報のため design 系のすぐ後に置く。
+        ordered = ["arts", "design", "designalt", "tails_unit", "concept", "conceptalt"]
     else:
         ordered = ["corefolder", "design", "designalt", "arts", "concept", "conceptalt"]
 
@@ -409,6 +413,11 @@ def _is_path_compatible_with_form(path_text: str, form: str) -> bool:
             return False
         if "-humanoid" in lower or "_humanoid" in lower:
             return False
+        # TailsUnit 参考画像 (2026-07-10 addon-ai-tag 追加) は humanoid 専用。
+        # corefolder に注入すると球体型への枝分かれシッポ誘発の懸念があるため、
+        # 尾の構造テキスト (_extract_tails_unit_texts 経由) と同じ方針で除外する。
+        if "/attr/tailsunit/" in lower:
+            return False
     elif form == "humanoid":
         # corefolder 単独画像や corefolder アートは humanoid への誘導が強いため除外。
         if "/corefolder/" in lower:
@@ -564,10 +573,12 @@ def collect_reference_images(
     local_candidates: list[str] = []
     images_struct = record.get("images") or {}
     if isinstance(images_struct, dict):
-        _new_fmt_keys = {"concept", "arts", "design_alt", "concept_alt", "corefolder", "humanoid"}
+        _new_fmt_keys = {"concept", "arts", "design_alt", "concept_alt", "corefolder", "humanoid", "tails_unit"}
         if _new_fmt_keys & images_struct.keys():
-            # 新形式: concept / concept_alt / corefolder / humanoid は文字列パスの配列
-            for key in ("concept", "concept_alt", "corefolder", "humanoid"):
+            # 新形式: concept / concept_alt / corefolder / humanoid / tails_unit は文字列パスの配列
+            # tails_unit (2026-07-10 addon-ai-tag 追加): TailsUnit[*].TailsUnit_PNGName 由来の
+            # 尾構造参考画像。_is_path_compatible_with_form が corefolder では除外する。
+            for key in ("concept", "concept_alt", "corefolder", "humanoid", "tails_unit"):
                 for item in (images_struct.get(key) or []):
                     if isinstance(item, str) and item:
                         path = str(Path(creations_db_base) / item)
@@ -719,6 +730,7 @@ def collect_record_capabilities(
         "reference_url_count": len(references["urls"]),
         "reference_local_count": len(references["local_paths"]),
         "db_image_present": db_image_presence,
+        "has_tails_unit": bool(record.get("has_tails_unit")),
         "manifest_ai_training_allowed": bool(
             (record.get("ai_training") or {}).get("allowed", True)
         ),
@@ -1242,6 +1254,9 @@ _APPEARANCE_DETAIL_LAT_LABELS: dict[str, str] = {
     "#Lat_Left": "left",
     "#Lat_Right": "right",
     "#Lat_Both": "both",
+    # 2026-07-10 追加 (TailsUnit.Branches / LayoutDirection で実使用を確認)。
+    "#Lat_Periphery": "periphery",
+    "#Lat_Center": "center",
 }
 
 _LATERALITY_LABELS_JP: dict[str, str] = {
@@ -1250,7 +1265,14 @@ _LATERALITY_LABELS_JP: dict[str, str] = {
     "#Lat_Left": "左",
     "#Lat_Right": "右",
     "#Lat_Both": "両",
+    "#Lat_Periphery": "周辺",
+    "#Lat_Center": "中央",
 }
+
+# TailsUnit.Branches[].Laterality が null のエントリ（Upper/Lower に挟まれた中間層など）を
+# 欠落させないためのフォールバック表記。
+_LATERALITY_NULL_LABEL_JP = "中間"
+_LATERALITY_NULL_LABEL_EN = "middle"
 
 # creations-db 側 db_meta.json の $EnumDef_TailShapeType と対応 (JP, EN)。
 # 2026-07-07 の DB 構造改善で AppearanceDetail(#Element_TailsUnit) から
@@ -1273,15 +1295,34 @@ _TAIL_SHAPE_TYPE_LABELS: dict[str, tuple[str, str]] = {
 }
 
 
+def _describe_laterality(code: Any) -> tuple[str, str]:
+    """Laterality コード (#Lat_* または None) を (JP, EN) ラベルへ変換する。
+
+    TailsUnit.Branches[].Laterality は Upper/Lower に挟まれた中間層で null になる
+    実データがあるため（例: 148番 upper 1x3 / null 3x2 / lower 4x1）、null は
+    「中間」フォールバックで欠落させずに表記する。
+    """
+    if code is None:
+        return _LATERALITY_NULL_LABEL_JP, _LATERALITY_NULL_LABEL_EN
+    lat_code = str(code)
+    return (
+        _LATERALITY_LABELS_JP.get(lat_code, ""),
+        _APPEARANCE_DETAIL_LAT_LABELS.get(lat_code, ""),
+    )
+
+
 def _describe_tails_unit_entry(entry: dict[str, Any]) -> tuple[str, str]:
     """TailsUnit ($Def_TailsUnit) の1エントリを (JP文, EN文) に変換する。
 
     #TailShapeType_FoxBranched / Count=7 / Branches=[upper:2x5, lower:1x2] のような
     構造化データから、旧 TailsUnit_JP/TailsUnit_EN と同じ体裁の文字列を組み立てる。
+    Segment (節数・Scorpion 型等で使用) と LayoutDirection (分岐配置の起点→終点、
+    例: Periphery→Center) も 2026-07-10 の addon-ai-tag 更新で実データが入ったため反映する。
     """
     shape_code = str(entry.get("TailShapeType") or "")
     shape_jp, shape_en = _TAIL_SHAPE_TYPE_LABELS.get(shape_code, ("", ""))
     count = entry.get("Count")
+    segment = entry.get("Segment")
     note_jp = str(entry.get("Note_JP") or "").strip()
     note_en = str(entry.get("Note_EN") or "").strip()
 
@@ -1290,34 +1331,51 @@ def _describe_tails_unit_entry(entry: dict[str, Any]) -> tuple[str, str]:
     for branch in (entry.get("Branches") or []):
         if not isinstance(branch, dict):
             continue
-        lat_code = str(branch.get("Laterality") or "")
         tail_count = branch.get("TailCount")
         cluster_count = branch.get("ClusterCount")
         if tail_count is None or cluster_count is None:
             continue
-        lat_jp = _LATERALITY_LABELS_JP.get(lat_code, "")
-        lat_en = _APPEARANCE_DETAIL_LAT_LABELS.get(lat_code, "")
+        lat_jp, lat_en = _describe_laterality(branch.get("Laterality"))
         if lat_jp:
             branch_jp_parts.append(f"{lat_jp}{int(cluster_count)}束{int(tail_count)}本")
         if lat_en:
             cluster_word = "cluster" if int(cluster_count) == 1 else "clusters"
             branch_en_parts.append(f"{lat_en}: {int(cluster_count)} {cluster_word} x{int(tail_count)}")
 
+    layout = entry.get("LayoutDirection")
+    layout_jp = ""
+    layout_en = ""
+    if isinstance(layout, dict):
+        from_jp, from_en = _describe_laterality(layout.get("LayoutFrom"))
+        to_jp, to_en = _describe_laterality(layout.get("LayoutTo"))
+        if from_jp and to_jp:
+            layout_jp = f"{from_jp}→{to_jp}の配置"
+        if from_en and to_en:
+            layout_en = f"arranged from {from_en} to {to_en}"
+
     jp = shape_jp
     if count is not None:
         jp += f"{int(count)}本"
+    if segment is not None:
+        jp += f"{int(segment)}節"
     if branch_jp_parts:
         jp += f"({'+'.join(branch_jp_parts)})"
+    if layout_jp:
+        jp = f"{jp} {layout_jp}".strip()
     if note_jp:
         jp = f"{jp} {note_jp}".strip()
 
     en_parts = [shape_en] if shape_en else []
     if count is not None:
         tail_str = f"{int(count)} tail{'s' if int(count) != 1 else ''}"
+        if segment is not None:
+            tail_str += f", {int(segment)} segment{'s' if int(segment) != 1 else ''}"
         if branch_en_parts:
             tail_str += f" ({', '.join(branch_en_parts)})"
         en_parts.append(tail_str)
     en = ": ".join(en_parts)
+    if layout_en:
+        en = f"{en} ({layout_en})" if en else layout_en
     if note_en:
         en = f"{en} ({note_en})" if en else note_en
 
