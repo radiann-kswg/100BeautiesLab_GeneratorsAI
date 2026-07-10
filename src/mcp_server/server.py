@@ -107,6 +107,14 @@ class GenerateCharacterInput(_Base):
     composition: str = Field(default="", description="構図ヒント (例: 'bust shot')", max_length=200)
     background: str = Field(default="", description="背景ヒント", max_length=200)
     costume: str = Field(default="", description="衣装差分の説明 (例: '黒いワンピース姿の差分')。空ならデフォルト衣装", max_length=400)
+    field_overrides: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "RaceType 等の曖昧フィールド（複数候補から1つ選ぶ必要があるもの）の明示上書き指定。"
+            "未指定フィールドは scene の文脈から LLM が自動判定する。"
+            "例: {'RaceType': '最終的な設計目標'} / {'Height_cm': '190'}"
+        ),
+    )
     skip_canva: bool = Field(default=False, description="True で Stage 5 の Canva フィニッシングをスキップ")
     correction_mode: CorrectionMode = Field(default=CorrectionMode.T2I, description="重度違反時の対処モード")
     work_key: str = Field(default=DEFAULT_WORK_KEY, description="作品キー", max_length=100)
@@ -130,6 +138,13 @@ class GenerateJointInput(_Base):
     composition: str = Field(default="", description="構図ヒント", max_length=200)
     background: str = Field(default="", description="背景ヒント", max_length=200)
     costume: str = Field(default="", description="衣装差分の説明（全キャラ共通）。空ならデフォルト衣装", max_length=400)
+    field_overrides: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "RaceType 等の曖昧フィールドの明示上書き指定（全キャラ共通の1値。costume と同じ扱い）。"
+            "例: {'RaceType': '最終的な設計目標'}"
+        ),
+    )
     skip_canva: bool = Field(default=False, description="True で Stage 5 をスキップ")
     correction_mode: CorrectionMode = Field(default=CorrectionMode.T2I, description="重度違反時の対処モード")
     work_key: str = Field(default=DEFAULT_WORK_KEY, description="作品キー", max_length=100)
@@ -162,6 +177,10 @@ class IterateInput(_Base):
     iterate_from: str = Field(..., description="前回生成画像のパスまたは run-dir (例: 'output/20260609/20260609_15/..._num057')", min_length=1, max_length=600)
     revisions: str = Field(..., description="修正指示（';' または改行区切り。例: '尻尾は元のまま; 表情だけ笑顔にして'）", min_length=1, max_length=1000)
     form: Form = Field(default=Form.COREFOLDER, description="形態 (corefolder / humanoid)")
+    field_overrides: dict[str, str] = Field(
+        default_factory=dict,
+        description="RaceType 等の曖昧フィールドの明示上書き指定。例: {'RaceType': '最終的な設計目標'}",
+    )
     skip_canva: bool = Field(default=False, description="True で Stage 5 をスキップ")
     correction_mode: CorrectionMode = Field(default=CorrectionMode.T2I, description="重度違反時の対処モード")
     work_key: str = Field(default=DEFAULT_WORK_KEY, description="作品キー", max_length=100)
@@ -407,6 +426,7 @@ async def numbertales_generate_character(params: GenerateCharacterInput) -> str:
             composition=p.composition,
             background=p.background,
             costume=p.costume,
+            field_overrides=p.field_overrides,
             skip_canva=p.skip_canva,
             correction_mode=p.correction_mode.value,
             stage_callback=_make_stage_callback(_job_id),
@@ -462,6 +482,7 @@ async def numbertales_generate_joint(params: GenerateJointInput) -> str:
             composition=p.composition,
             background=p.background,
             costume=p.costume,
+            field_overrides=p.field_overrides,
             skip_canva=p.skip_canva,
             correction_mode=p.correction_mode.value,
             stage_callback=_make_stage_callback(_job_id),
@@ -596,6 +617,7 @@ async def numbertales_iterate(params: IterateInput) -> str:
             correction_mode=p.correction_mode.value,
             iterate_from=p.iterate_from,
             revisions=p.revisions,
+            field_overrides=p.field_overrides,
             stage_callback=_make_stage_callback(_job_id),
         )
         return _run_and_publish(result)

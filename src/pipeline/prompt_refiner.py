@@ -20,7 +20,12 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-from src.utils import build_dalle_prompt, build_gemini_prompt, extract_char_name  # noqa: E402
+from src.utils import (  # noqa: E402
+    build_dalle_prompt,
+    build_gemini_prompt,
+    describe_ambiguous_field_resolutions,
+    extract_char_name,
+)
 
 _RANDOM_SCENE_SYSTEM = (
     "あなたはナンバーテールズシリーズのクリエイティブディレクターです。"
@@ -125,6 +130,7 @@ def refine_with_openai(
     composition: str = "",
     background: str = "",
     costume: str = "",
+    field_overrides: dict[str, str] | None = None,
 ) -> str:
     """GPT-4o でプロンプトを加工して返す。失敗時はベースプロンプト (DALL-E 形式) を返す。"""
     try:
@@ -143,6 +149,7 @@ def refine_with_openai(
     base_prompt = build_dalle_prompt(
         record, form, scene=scene, style=style,
         composition=composition, background=background,
+        field_overrides=field_overrides,
     )
 
     client = OpenAI(api_key=api_key)
@@ -171,6 +178,7 @@ def refine_with_gemini(
     composition: str = "",
     background: str = "",
     costume: str = "",
+    field_overrides: dict[str, str] | None = None,
 ) -> str:
     """Gemini テキストモデルでプロンプトを加工して返す。失敗時はベースプロンプト (Gemini 形式) を返す。"""
     try:
@@ -190,6 +198,7 @@ def refine_with_gemini(
     data = build_gemini_prompt(
         record, form, scene=scene, style=style,
         composition=composition, background=background,
+        field_overrides=field_overrides,
     )
     base_prompt = data["prompt"]
 
@@ -218,6 +227,7 @@ def refine_prompt_dual(
     composition: str = "",
     background: str = "",
     costume: str = "",
+    field_overrides: dict[str, str] | None = None,
 ) -> dict[str, str | list]:
     """OpenAI + Gemini の両方でプロンプトを加工し、各結果を返す。
 
@@ -225,6 +235,9 @@ def refine_prompt_dual(
     ----------
     costume: 衣装差分の説明（例: '黒いワンピース姿の差分'）。
              空の場合はデフォルト衣装でプロンプトを生成する。
+    field_overrides: RaceType 等の曖昧フィールド（複数候補から1つ選ぶ必要があるもの）の
+             明示上書き指定（例: {"RaceType": "最終的な設計目標"}）。未指定フィールドは
+             シーン文脈をもとに LLM が自動判定する。
 
     Returns
     -------
@@ -236,6 +249,8 @@ def refine_prompt_dual(
         "ref_urls":    list[str] — DB 参照画像 URL
         "ref_locals":  list[str] — DB 参照画像ローカルパス
         "costume":     str — 指定衣装差分（デバッグ確認用）
+        "field_overrides":  dict[str, str] — 指定された曖昧フィールド上書き（デバッグ確認用）
+        "field_resolutions": dict[str, dict] — 曖昧フィールドの解決結果 (value/source/reasoning)
     }
     """
     if costume:
@@ -244,10 +259,12 @@ def refine_prompt_dual(
     base_dalle = build_dalle_prompt(
         record, form, scene=scene, style=style,
         composition=composition, background=background,
+        field_overrides=field_overrides,
     )
     base_gemini_data = build_gemini_prompt(
         record, form, scene=scene, style=style,
         composition=composition, background=background,
+        field_overrides=field_overrides,
     )
     base_gemini = base_gemini_data["prompt"]
 
@@ -255,14 +272,18 @@ def refine_prompt_dual(
     openai_prompt = refine_with_openai(
         record, form, scene=scene, style=style,
         composition=composition, background=background,
-        costume=costume,
+        costume=costume, field_overrides=field_overrides,
     )
 
     print("[Stage1] Gemini でプロンプトを加工中...")
     gemini_prompt = refine_with_gemini(
         record, form, scene=scene, style=style,
         composition=composition, background=background,
-        costume=costume,
+        costume=costume, field_overrides=field_overrides,
+    )
+
+    field_resolutions = describe_ambiguous_field_resolutions(
+        record, form, scene=scene, field_overrides=field_overrides
     )
 
     return {
@@ -273,4 +294,6 @@ def refine_prompt_dual(
         "ref_urls": base_gemini_data.get("reference_image_urls") or [],
         "ref_locals": base_gemini_data.get("reference_local_paths") or [],
         "costume": costume,
+        "field_overrides": field_overrides or {},
+        "field_resolutions": field_resolutions,
     }

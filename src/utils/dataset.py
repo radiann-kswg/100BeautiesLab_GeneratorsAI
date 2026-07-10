@@ -10,9 +10,10 @@ import importlib
 import os
 import re
 import sys
+from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 
 def _append_unique(values: list[str], value: Any) -> None:
@@ -1240,7 +1241,116 @@ _APPEARANCE_DETAIL_LAT_LABELS: dict[str, str] = {
     "#Lat_Lower": "lower",
     "#Lat_Left": "left",
     "#Lat_Right": "right",
+    "#Lat_Both": "both",
 }
+
+_LATERALITY_LABELS_JP: dict[str, str] = {
+    "#Lat_Upper": "上",
+    "#Lat_Lower": "下",
+    "#Lat_Left": "左",
+    "#Lat_Right": "右",
+    "#Lat_Both": "両",
+}
+
+# creations-db 側 db_meta.json の $EnumDef_TailShapeType と対応 (JP, EN)。
+# 2026-07-07 の DB 構造改善で AppearanceDetail(#Element_TailsUnit) から
+# 専用フィールド TailsUnit ($Def_TailsUnit[]) へ移行された際に追従。
+_TAIL_SHAPE_TYPE_LABELS: dict[str, tuple[str, str]] = {
+    "#TailShapeType_Fox": ("キツネ型", "Fox-type"),
+    "#TailShapeType_FoxBranched": ("キツネ(枝分かれ)型", "Fox (branched)"),
+    "#TailShapeType_Cat": ("猫型", "Cat-type"),
+    "#TailShapeType_CatAccessory": ("猫型(アクセサリー)", "Cat-type (accessory)"),
+    "#TailShapeType_Nekomata": ("猫又型", "Nekomata-type"),
+    "#TailShapeType_Scorpion": ("サソリ型", "Scorpion-type"),
+    "#TailShapeType_Bud": ("つぼみ型", "Bud-type"),
+    "#TailShapeType_Dog": ("犬型", "Dog-type"),
+    "#TailShapeType_FoxSpecial": ("キツネ(特殊)型", "Fox (Special) type"),
+    "#TailShapeType_NekomataSpecial": ("猫又(特殊)型", "Nekomata (Special) type"),
+    "#TailShapeType_CaudalFin": ("尾鰭(特殊)型", "Caudal-Fin (Special) type"),
+    "#TailShapeType_Octopus": ("蛸足(特殊)型", "Octopus-leg (Special) type"),
+    "#TailShapeType_Mixed": ("多様(枝分かれ)型", "Mixed (branched) type"),
+    "#TailShapeType_Reptile": ("爬虫類型", "Reptile-type"),
+}
+
+
+def _describe_tails_unit_entry(entry: dict[str, Any]) -> tuple[str, str]:
+    """TailsUnit ($Def_TailsUnit) の1エントリを (JP文, EN文) に変換する。
+
+    #TailShapeType_FoxBranched / Count=7 / Branches=[upper:2x5, lower:1x2] のような
+    構造化データから、旧 TailsUnit_JP/TailsUnit_EN と同じ体裁の文字列を組み立てる。
+    """
+    shape_code = str(entry.get("TailShapeType") or "")
+    shape_jp, shape_en = _TAIL_SHAPE_TYPE_LABELS.get(shape_code, ("", ""))
+    count = entry.get("Count")
+    note_jp = str(entry.get("Note_JP") or "").strip()
+    note_en = str(entry.get("Note_EN") or "").strip()
+
+    branch_jp_parts: list[str] = []
+    branch_en_parts: list[str] = []
+    for branch in (entry.get("Branches") or []):
+        if not isinstance(branch, dict):
+            continue
+        lat_code = str(branch.get("Laterality") or "")
+        tail_count = branch.get("TailCount")
+        cluster_count = branch.get("ClusterCount")
+        if tail_count is None or cluster_count is None:
+            continue
+        lat_jp = _LATERALITY_LABELS_JP.get(lat_code, "")
+        lat_en = _APPEARANCE_DETAIL_LAT_LABELS.get(lat_code, "")
+        if lat_jp:
+            branch_jp_parts.append(f"{lat_jp}{int(cluster_count)}束{int(tail_count)}本")
+        if lat_en:
+            cluster_word = "cluster" if int(cluster_count) == 1 else "clusters"
+            branch_en_parts.append(f"{lat_en}: {int(cluster_count)} {cluster_word} x{int(tail_count)}")
+
+    jp = shape_jp
+    if count is not None:
+        jp += f"{int(count)}本"
+    if branch_jp_parts:
+        jp += f"({'+'.join(branch_jp_parts)})"
+    if note_jp:
+        jp = f"{jp} {note_jp}".strip()
+
+    en_parts = [shape_en] if shape_en else []
+    if count is not None:
+        tail_str = f"{int(count)} tail{'s' if int(count) != 1 else ''}"
+        if branch_en_parts:
+            tail_str += f" ({', '.join(branch_en_parts)})"
+        en_parts.append(tail_str)
+    en = ": ".join(en_parts)
+    if note_en:
+        en = f"{en} ({note_en})" if en else note_en
+
+    return jp, en
+
+
+def _extract_tails_unit_texts(record: dict[str, Any]) -> tuple[str, str]:
+    """構造化フィールド `TailsUnit` ($Def_TailsUnit[]) から (JP文, EN文) を組み立てる。
+
+    2026-07-07 の DB 構造改善で TailsUnit_JP/TailsUnit_EN の単純文字列フィールドは廃止され、
+    AppearanceDetail(#Element_TailsUnit) から独立した構造化フィールドへ全面移行された。
+    複数エントリ（複合ユニット構成）がある場合は「; 」で連結する。
+    """
+    data = record.get("data") or {}
+    db_record = record.get("db_record") or {}
+    tails_unit = data.get("TailsUnit")
+    if not isinstance(tails_unit, list) or not tails_unit:
+        tails_unit = db_record.get("TailsUnit")
+    if not isinstance(tails_unit, list) or not tails_unit:
+        return "", ""
+
+    jp_parts: list[str] = []
+    en_parts: list[str] = []
+    for entry in tails_unit:
+        if not isinstance(entry, dict):
+            continue
+        jp, en = _describe_tails_unit_entry(entry)
+        if jp:
+            jp_parts.append(jp)
+        if en:
+            en_parts.append(en)
+
+    return "; ".join(jp_parts), "; ".join(en_parts)
 
 
 def _extract_tails_unit_en_from_appearance_detail(record: dict[str, Any]) -> str:
@@ -1463,8 +1573,248 @@ def _build_preferred_art_style_block(record: dict[str, Any] | None = None) -> st
     return f"\n[作風指示 (preferred art style)]\n{body}\n"
 
 
+@dataclass(frozen=True)
+class _AmbiguousFieldSpec:
+    """`#DictIndex_withAbout[]` 的な複数候補リストを持ちうるフィールドの宣言。
+
+    候補は `[{"value":..., "about_JP":..., "about_EN":...}, ...]` 形で、
+    シーン文脈に応じて1つを選ぶ意味を持つもの限定（例: RaceType, Height_cm）。
+    Weight_kg のような「基本値+加算内訳」は意味が異なるためここには含めない。
+    """
+
+    field_name: str
+    label_ja: str
+    forms: tuple[str, ...]
+    render: Callable[[Any], str] = str
+
+
+_AMBIGUOUS_FIELD_SPECS: tuple[_AmbiguousFieldSpec, ...] = (
+    _AmbiguousFieldSpec("RaceType", "種別", ("humanoid",)),
+    _AmbiguousFieldSpec(
+        "Height_cm", "身長", ("humanoid",),
+        render=lambda v: f"{v}cm" if v not in (None, "") else "",
+    ),
+)
+
+_AMBIGUOUS_FIELD_LLM_SYSTEM_PROMPT = (
+    "あなたはナンバーテールズシリーズの設定に精通したアシスタントです。"
+    "あるフィールドには複数の候補があり、各候補には value（識別値）と "
+    "about_JP / about_EN（その候補が指す状況の説明）が付いています。"
+    "与えられた『シーン説明』を読み、そのシーンで実際に採用すべき候補を1つだけ選んでください。\n"
+    "- シーン説明が『完成形として』『目標とする姿』『〜モードで』のように "
+    "候補の about_JP/about_EN が示す非日常的・限定的な状態を明示的に示唆している場合は、その候補を選ぶ。\n"
+    "- シーン説明がそのような示唆を含まない場合は、"
+    "『現状』『現在』『実際』『通常』のように既定・平常の状態を示す候補を選ぶこと。"
+    "どの候補が既定かは about_JP/about_EN の文面の意味から判断すること"
+    "（配列内の並び順には依存しないこと）。\n"
+    "出力は次の JSON のみ、他のテキストは一切含めないこと:\n"
+    '{"value": "<選んだ候補の value を文字列化したもの>", "reasoning": "<30文字程度の日本語で選定理由>"}'
+)
+
+
+def _strip_json_fence(raw: str) -> str:
+    """```json フェンス除去 + 最初/最後の括弧位置で切り出す。
+
+    natural_parser._strip_markdown_json と同型だが、pipeline → utils の
+    逆依存を避けるためここにローカル複製する。
+    """
+    text = re.sub(r"^```(?:json|JSON)?\s*", "", raw.strip(), flags=re.MULTILINE)
+    text = re.sub(r"\s*```$", "", text, flags=re.MULTILINE).strip()
+    start, end = text.find("{"), text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        return text[start : end + 1]
+    return text
+
+
+@lru_cache(maxsize=256)
+def _llm_pick_candidate_value(
+    candidate_sig: tuple[tuple[str, str, str], ...], scene: str
+) -> tuple[str, str, str]:
+    """候補シグネチャ + シーン文から (value文字列, source, reasoning) を返す。
+
+    candidate_sig は ((value文字列, about_JP, about_EN), ...)。OpenAI → Gemini の順に
+    フォールバックし、両方失敗/不一致なら最後の候補を返す（実データ上、既定候補は
+    末尾に来る傾向がある）。例外は投げない（画像生成を絶対にブロックしない）。
+    """
+    candidates_json = json.dumps(
+        [{"value": v, "about_JP": jp, "about_EN": en} for v, jp, en in candidate_sig],
+        ensure_ascii=False,
+    )
+    user_message = f"シーン説明: {scene or '(指定なし)'}\n\n候補:\n{candidates_json}"
+
+    def _try_openai() -> str | None:
+        try:
+            from openai import OpenAI
+        except ImportError:
+            return None
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if not api_key:
+            return None
+        try:
+            client = OpenAI(api_key=api_key)
+            resp = client.chat.completions.create(
+                model=os.environ.get("GPT_MODEL", "gpt-4o"),
+                messages=[
+                    {"role": "system", "content": _AMBIGUOUS_FIELD_LLM_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_message},
+                ],
+                max_tokens=200,
+            )
+            return resp.choices[0].message.content or ""
+        except Exception as err:
+            print(f"[WARN] 曖昧フィールド解決 (OpenAI) に失敗: {err}")
+            return None
+
+    def _try_gemini() -> str | None:
+        try:
+            from google import genai
+            from google.genai import types as genai_types
+        except ImportError:
+            return None
+        api_key = os.environ.get("GEMINI_API_KEY")
+        if not api_key:
+            return None
+        try:
+            client = genai.Client(api_key=api_key)
+            resp = client.models.generate_content(
+                model=os.environ.get("GEMINI_TEXT_MODEL", "gemini-2.5-flash"),
+                contents=user_message,
+                config=genai_types.GenerateContentConfig(
+                    system_instruction=_AMBIGUOUS_FIELD_LLM_SYSTEM_PROMPT,
+                    max_output_tokens=200,
+                ),
+            )
+            return resp.text or ""
+        except Exception as err:
+            print(f"[WARN] 曖昧フィールド解決 (Gemini) に失敗: {err}")
+            return None
+
+    raw = _try_openai()
+    source = "llm_openai"
+    if not raw:
+        raw = _try_gemini()
+        source = "llm_gemini"
+    if raw:
+        try:
+            parsed = json.loads(_strip_json_fence(raw))
+            picked = str(parsed.get("value") or "").strip()
+            reasoning = str(parsed.get("reasoning") or "").strip()
+            valid_values = {v for v, _, _ in candidate_sig}
+            if picked in valid_values:
+                return picked, source, reasoning
+        except Exception as err:
+            print(f"[WARN] 曖昧フィールド解決 応答パースに失敗: {err}")
+
+    fallback_value = candidate_sig[-1][0] if candidate_sig else ""
+    return fallback_value, "fallback_last", "LLM解決に失敗/不一致のため最後の候補を使用"
+
+
+def _match_field_override(override: str, candidates: list[dict[str, Any]]) -> dict[str, Any] | None:
+    needle = override.strip().lower()
+    if not needle:
+        return None
+    for c in candidates:  # 1st pass: value の完全一致
+        if str(c.get("value") if c.get("value") is not None else "").strip().lower() == needle:
+            return c
+    for c in candidates:  # 2nd pass: value/about_JP/about_EN の部分一致
+        haystacks = (c.get("value"), c.get("about_JP"), c.get("about_EN"))
+        if any(needle in str(h).lower() for h in haystacks if h is not None):
+            return c
+    return None
+
+
+def _resolve_ambiguous_field(
+    record: dict[str, Any], field_name: str, scene: str = "", override: str = ""
+) -> dict[str, Any]:
+    """曖昧フィールド (`_AMBIGUOUS_FIELD_SPECS` 対象) の値を解決する。
+
+    戻り値は常にこの形: {"value": Any, "source": str, "reasoning": str, "candidates": list[dict]}
+    source ∈ {"plain_value","empty","single_candidate",
+              "override_matched","override_verbatim",
+              "llm_openai","llm_gemini","fallback_last"}
+    """
+    _data_src = record.get("data") or {}
+    _db_src = record.get("db_record") or {}
+    raw = _data_src.get(field_name)
+    if raw in (None, ""):
+        raw = _db_src.get(field_name)
+
+    if isinstance(raw, dict):
+        # 非公開マスク (例: {"hideText": "非公開"}、Weight_kg 等の同系フィールドで実例あり)
+        # や単一候補が dict のままのケース。str() で repr を漏らさないよう安全に取り出す。
+        if "hideText" in raw:
+            return {"value": str(raw.get("hideText") or "").strip(), "source": "plain_value", "reasoning": "", "candidates": []}
+        if "value" in raw:
+            return {"value": raw.get("value"), "source": "plain_value", "reasoning": "", "candidates": []}
+        return {"value": "", "source": "empty", "reasoning": "", "candidates": []}
+
+    if not isinstance(raw, list):
+        return {"value": raw if raw not in (None, "") else "", "source": "plain_value", "reasoning": "", "candidates": []}
+
+    candidates = [c for c in raw if isinstance(c, dict) and c.get("value") is not None]
+    if not candidates:
+        return {"value": "", "source": "empty", "reasoning": "", "candidates": []}
+
+    override = (override or "").strip()
+    if override:
+        matched = _match_field_override(override, candidates)
+        if matched:
+            return {
+                "value": matched.get("value"),
+                "source": "override_matched",
+                "reasoning": f"override='{override}' matched candidate",
+                "candidates": candidates,
+            }
+        return {
+            "value": override,
+            "source": "override_verbatim",
+            "reasoning": f"override='{override}' matched no candidate; used verbatim",
+            "candidates": candidates,
+        }
+
+    if len(candidates) == 1:
+        return {"value": candidates[0].get("value"), "source": "single_candidate", "reasoning": "", "candidates": candidates}
+
+    candidate_sig = tuple(
+        (str(c.get("value")), str(c.get("about_JP") or ""), str(c.get("about_EN") or ""))
+        for c in candidates
+    )
+    picked_str, source, reasoning = _llm_pick_candidate_value(candidate_sig, scene.strip())
+    picked_candidate = next((c for c in candidates if str(c.get("value")) == picked_str), None)
+    value = picked_candidate.get("value") if picked_candidate is not None else picked_str
+    return {"value": value, "source": source, "reasoning": reasoning, "candidates": candidates}
+
+
+def describe_ambiguous_field_resolutions(
+    record: dict[str, Any],
+    form: str,
+    scene: str = "",
+    field_overrides: dict[str, str] | None = None,
+) -> dict[str, dict[str, Any]]:
+    """`form` に該当する曖昧フィールドの解決結果をまとめて返す（ログ/対話UI/プロンプト整形の共通入口）。
+
+    そもそも曖昧でないフィールド（単純値 or 空）は結果から除外する。
+    `_resolve_ambiguous_field` は `lru_cache` 経由の LLM 呼び出しを含むため、
+    同一 (record, scene, override) の組み合わせに対して複数回呼んでも実質無料。
+    """
+    if not isinstance(record, dict):
+        return {}
+    overrides = field_overrides or {}
+    results: dict[str, dict[str, Any]] = {}
+    for spec in _AMBIGUOUS_FIELD_SPECS:
+        if form not in spec.forms:
+            continue
+        info = _resolve_ambiguous_field(
+            record, spec.field_name, scene=scene, override=overrides.get(spec.field_name, "")
+        )
+        if info["source"] in ("plain_value", "empty"):
+            continue
+        results[spec.field_name] = info
+    return results
+
+
 def _build_form_common_dataset_block(
-    form: str, record: dict[str, Any] | None = None
+    form: str, record: dict[str, Any] | None = None, scene: str = "", field_overrides: dict[str, str] | None = None
 ) -> str:
     """共通形態データセットの要点をプロンプト用テキストとして返す。
 
@@ -1511,19 +1861,37 @@ def _build_form_common_dataset_block(
         # record["data"]（manifest 由来）を優先し、なければ db_record（CreationsDBClient 由来）を使う。
         _data_src = record.get("data") or {}
         _db_src = record.get("db_record") or {}
+        _tails_unit_struct_jp, _tails_unit_struct_en = _extract_tails_unit_texts(record)
         tails_unit_en = str(_data_src.get("TailsUnit_EN") or _db_src.get("TailsUnit_EN") or "").strip()
         if not tails_unit_en:
-            tails_unit_en = _extract_tails_unit_en_from_appearance_detail(record)
-        tails_unit = str(_data_src.get("TailsUnit_JP") or _data_src.get("TailsUnit") or _db_src.get("TailsUnit_JP") or _db_src.get("TailsUnit") or "").strip()
-        race_type = str(_data_src.get("RaceType") or _db_src.get("RaceType") or "").strip()
+            tails_unit_en = _tails_unit_struct_en or _extract_tails_unit_en_from_appearance_detail(record)
+        tails_unit = str(_data_src.get("TailsUnit_JP") or _db_src.get("TailsUnit_JP") or "").strip()
+        if not tails_unit:
+            tails_unit = _tails_unit_struct_jp
         formal_name = str(_data_src.get("FormalName_JP") or _data_src.get("FormalName") or _db_src.get("FormalName_JP") or _db_src.get("FormalName") or "").strip()
         formal_name_en = str(_data_src.get("FormalName_EN") or _db_src.get("FormalName_EN") or "").strip()
         if tails_unit_en:
             db_lines.append(f"- DB原典/尾の構造(en): {tails_unit_en}")
         elif tails_unit:
             db_lines.append(f"- DB原典/尾の構造: {tails_unit}")
-        if race_type:
-            db_lines.append(f"- DB原典/種別: {race_type}")
+
+        # RaceType / Height_cm 等は _AMBIGUOUS_FIELD_SPECS レジストリ経由で解決する。
+        # ほとんどのキャラは単純文字列（plain_value）だが、その場合もそのまま出力する
+        # （describe_ambiguous_field_resolutions はログ/対話UI用に「曖昧なフィールドのみ」
+        # を返す別用途の関数なのでここでは使わない — 単純文字列を除外してしまうため）。
+        _overrides = field_overrides or {}
+        for spec in _AMBIGUOUS_FIELD_SPECS:
+            if form not in spec.forms:
+                continue
+            info = _resolve_ambiguous_field(
+                record, spec.field_name, scene=scene, override=_overrides.get(spec.field_name, "")
+            )
+            if info["source"] == "empty":
+                continue
+            rendered = spec.render(info.get("value"))
+            if rendered:
+                db_lines.append(f"- DB原典/{spec.label_ja}: {rendered}")
+
         if formal_name:
             db_lines.append(f"- DB原典/正式名: {formal_name}")
         if formal_name_en:
@@ -1583,6 +1951,7 @@ def build_dalle_prompt(
     composition: str = "",
     background: str = "",
     revisions: list[str] | tuple[str, ...] | None = None,
+    field_overrides: dict[str, str] | None = None,
 ) -> str:
     """DALL-E / ChatGPT 用の自然文プロンプトを返す。"""
     hints = record.get("ai_hints") or {}
@@ -1643,7 +2012,7 @@ def build_dalle_prompt(
             " Keep a compact spherical corefolder silhouette,"
             " with no humanoid torso and no human limbs."
         )
-    form_common_block = _build_form_common_dataset_block(form, record)
+    form_common_block = _build_form_common_dataset_block(form, record, scene=scene, field_overrides=field_overrides)
     if form == "corefolder":
         form_lock = (
             "- corefolder 形態として描く\n"
@@ -1767,6 +2136,7 @@ def build_gemini_prompt(
     composition: str = "",
     background: str = "",
     revisions: list[str] | tuple[str, ...] | None = None,
+    field_overrides: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Gemini / Imagen 用のプロンプトと参照画像 URL を返す。"""
     hints = record.get("ai_hints") or {}
@@ -1832,7 +2202,7 @@ def build_gemini_prompt(
             " Keep a compact spherical corefolder silhouette,"
             " with no humanoid torso and no human limbs."
         )
-    form_common_block = _build_form_common_dataset_block(form, record)
+    form_common_block = _build_form_common_dataset_block(form, record, scene=scene, field_overrides=field_overrides)
 
     if form == "corefolder":
         form_lock = (

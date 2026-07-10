@@ -1,4 +1,4 @@
-# サブモジュール同期ログ — 2026-07-03 19:39
+# サブモジュール同期ログ — 2026-07-10 09:00
 
 > 実機 PowerShell スクリプト `scripts/daily-submodule-sync.ps1` による自動実行。
 
@@ -6,7 +6,7 @@
 
 | サブモジュール | 追跡先 | 旧 | 新 | 判定 | 備考 |
 |---|---|---|---|---|---|
-| `_creations-ai` | origin/master | 1788eaf | 5b1b03e | SKIP | 取り込み失敗: Already on 'master' |
+| `_creations-ai` | origin/master | 373f0ee | 1be022a | SKIP | 取り込み失敗: Already on 'master' |
 
 ## 取り込んだ更新の内容
 

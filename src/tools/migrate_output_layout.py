@@ -31,6 +31,24 @@ Copyright © RadianN_kswg — CC BY-NC 4.0
     5. `output/{date}/{provider}/{file}` (日時情報なし旧フォーマット)
         → `{date}/{date}_000000_{provider}_{form}_num{NNN}/{file}` に集約
 
+ステージ配下再帰モード (`--flatten-stages`):
+
+    パイプラインは各ステージ (`stage3_rough/` / `stage4_correct/rough_NN_corrected/` /
+    `stage5_final/` / `stage5_final/synth/` など) 配下の子生成を
+    ``date_group=False`` の *フラット* 形式で置く (`{stage}/{ts}_{provider}_{form}_num{NNN}/`)。
+    ところが旧 build_run_output_dir は子生成にも日付フォルダを掘っていたため、古い実行では
+    ステージ配下に旧 3 階層 (`{date}/{date}_{HH}/{run}/`) や 2 階層 (`{date}/{run}/`) が
+    ネストして残っている。本モードは base 直下の作業日フォルダ *より深い位置* にある
+    ``{YYYYMMDD}/`` を再帰的に探し、その配下の run を 1 つ上へ引き上げてフラット化し、
+    空になった中間日付フォルダと `.DS_Store` 等の不要ファイルを掃除する。
+
+    6. `.../{stage}/{date}/{date}_{HH}/{run}/`  (旧 3 階層のネスト)
+        → `.../{stage}/{run}/`
+       `.../{stage}/{date}/{run}/`             (旧 2 階層のネスト)
+        → `.../{stage}/{run}/`
+
+    トップレベルの `{作業日}/` (base 直下・相対パス 1 階層) は対象外で温存する。
+
 使い方:
 
     # 計画だけ確認 (デフォルトで output/)
@@ -41,6 +59,9 @@ Copyright © RadianN_kswg — CC BY-NC 4.0
 
     # 任意のベースを指定
     python -m src.tools.migrate_output_layout --base output --dry-run
+
+    # トップレベル整形に加え、ステージ配下のネスト日付フォルダもフラット化する
+    python -m src.tools.migrate_output_layout --flatten-stages --dry-run
 """
 
 from __future__ import annotations
@@ -71,6 +92,13 @@ _PROVIDER_DIR_RE = re.compile(r"^(gemini|openai|anthropic|novelai)$", re.IGNOREC
 _IMAGE_FILE_RE = re.compile(
     r"^num(?P<num>\d{3})_(?P<form>corefolder|humanoid)_(?P<tag>[A-Za-z0-9]+)\.(?P<ext>[A-Za-z0-9]+)$"
 )
+
+# ステージ配下の掃除で削除してよい OS 由来の不要ファイル
+_CRUFT_NAMES = frozenset({".DS_Store", "Thumbs.db"})
+
+
+def _is_cruft(path: Path) -> bool:
+    return path.name in _CRUFT_NAMES
 
 # ----------------------------------------------------------------------
 # データ構造
@@ -370,6 +398,102 @@ def build_plan(base: Path) -> MigrationPlan:
 
 
 # ----------------------------------------------------------------------
+# ステージ配下再帰フラット化 (--flatten-stages)
+# ----------------------------------------------------------------------
+
+
+def _iter_nested_date_dirs(base: Path) -> Iterable[Path]:
+    """base 直下の作業日フォルダ *より深い位置* にある `{YYYYMMDD}/` を列挙する。
+
+    トップレベルの作業日フォルダ (base からの相対パスが 1 階層) は対象外。
+    深い順 (パス要素数の多い順) に返し、ネストが入れ子でも内側から処理できるようにする。
+    """
+    found: list[Path] = []
+    for d in base.rglob("*"):
+        if not d.is_dir() or not _DATE_RE.match(d.name):
+            continue
+        if len(d.relative_to(base).parts) <= 1:
+            continue  # base 直下の作業日フォルダは温存
+        found.append(d)
+    found.sort(key=lambda p: len(p.parts), reverse=True)
+    return found
+
+
+def _plan_flatten_leaf(run_dir: Path, dest_parent: Path, plan: MigrationPlan) -> None:
+    """ネスト日付フォルダ配下の 1 実行ディレクトリを ``dest_parent`` 直下へ引き上げる。"""
+    if _is_cruft(run_dir):
+        plan.actions.append(
+            MoveAction(src=run_dir, dst=run_dir, kind="remove_cruft", note="OS 由来の不要ファイルを削除")
+        )
+        return
+    if not run_dir.is_dir():
+        plan.warnings.append(f"ネスト日付フォルダ配下の予期しないファイル (保留): {run_dir}")
+        return
+    if _parse_run_dir(run_dir.name) is None:
+        plan.warnings.append(f"run dir として解析できないディレクトリ (保留): {run_dir}")
+        return
+    target = dest_parent / run_dir.name
+    try:
+        if run_dir.resolve() == target.resolve():
+            plan.skipped.append((run_dir, "already flat"))
+            return
+    except OSError:
+        pass
+    final_target = _safe_unique(target) if target.exists() else target
+    plan.actions.append(
+        MoveAction(
+            src=run_dir,
+            dst=final_target,
+            kind="rename_dir",
+            note="stage 配下の run をフラット化",
+        )
+    )
+
+
+def _plan_flatten_nested_date_dir(date_dir: Path, plan: MigrationPlan) -> None:
+    """ステージ配下にネストした `{date}/[{date}_{HH}/]{run}/` をフラット化する。"""
+    dest_parent = date_dir.parent  # stage / rough_NN_corrected / synth 等
+    hour_dirs: list[Path] = []
+    for child in sorted(date_dir.iterdir()):
+        if _is_cruft(child):
+            plan.actions.append(
+                MoveAction(src=child, dst=child, kind="remove_cruft", note="OS 由来の不要ファイルを削除")
+            )
+            continue
+        # `{date}_{HH}/` 時間帯フォルダ: 配下の run を引き上げてから空削除
+        m_hh = _DATE_HH_RE.match(child.name) if child.is_dir() else None
+        if m_hh and m_hh.group(1) == date_dir.name:
+            for run in sorted(child.iterdir()):
+                _plan_flatten_leaf(run, dest_parent, plan)
+            hour_dirs.append(child)
+            continue
+        # `{date}/{run}/` 時間帯フォルダなしの run
+        if child.is_dir() and _parse_run_dir(child.name):
+            _plan_flatten_leaf(child, dest_parent, plan)
+            continue
+        plan.warnings.append(f"ネスト日付フォルダ配下の分類不能エントリ (保留): {child}")
+    # 掃除は「時間帯フォルダ → 日付フォルダ」の順 (内側から空にする)
+    for hd in hour_dirs:
+        plan.actions.append(
+            MoveAction(src=hd, dst=hd, kind="cleanup_empty_dir", note="空の時間帯フォルダを削除")
+        )
+    plan.actions.append(
+        MoveAction(src=date_dir, dst=date_dir, kind="cleanup_empty_dir", note="空のネスト日付フォルダを削除")
+    )
+
+
+def build_stage_flatten_plan(base: Path) -> MigrationPlan:
+    """ステージ配下にネストした日付フォルダをフラット化するプランを組み立てる。"""
+    plan = MigrationPlan()
+    if not base.is_dir():
+        plan.warnings.append(f"base が存在しない / ディレクトリでない: {base}")
+        return plan
+    for date_dir in _iter_nested_date_dirs(base):
+        _plan_flatten_nested_date_dir(date_dir, plan)
+    return plan
+
+
+# ----------------------------------------------------------------------
 # プラン適用
 # ----------------------------------------------------------------------
 
@@ -396,6 +520,16 @@ def apply_plan(plan: MigrationPlan) -> list[str]:
             created_dirs.add(action.dst)
             log.append(f"[create_dir] {action.dst} ({action.note})")
             continue
+        if action.kind == "remove_cruft":
+            try:
+                if action.src.exists():
+                    action.src.unlink()
+                    log.append(f"[remove_cruft] {action.src}")
+                else:
+                    log.append(f"[remove_cruft] skipped (gone): {action.src}")
+            except OSError as exc:
+                log.append(f"[remove_cruft] error on {action.src}: {exc}")
+            continue
         if action.kind == "move_file":
             action.dst.parent.mkdir(parents=True, exist_ok=True)
             target = _safe_unique(action.dst) if action.dst.exists() else action.dst
@@ -404,6 +538,8 @@ def apply_plan(plan: MigrationPlan) -> list[str]:
             continue
         log.append(f"[skip] 未対応 kind: {action.kind} ({action.src})")
 
+    # 空フォルダ削除は深い順に行い、ネストした中間フォルダを内側から畳む
+    deferred_cleanups.sort(key=lambda a: len(a.src.parts), reverse=True)
     for action in deferred_cleanups:
         try:
             if action.src.exists() and action.src.is_dir() and not any(action.src.iterdir()):
@@ -464,6 +600,16 @@ def _build_parser() -> argparse.ArgumentParser:
         help="実際にはファイルを動かさず、計画だけ表示する",
     )
     parser.add_argument(
+        "--flatten-stages",
+        action="store_true",
+        help="トップレベル整形に加え、パイプラインのステージ配下にネストした日付フォルダをフラット化する",
+    )
+    parser.add_argument(
+        "--stages-only",
+        action="store_true",
+        help="トップレベル整形を行わず、ステージ配下のフラット化のみ実行する",
+    )
+    parser.add_argument(
         "--json",
         action="store_true",
         help="計画/実行結果を JSON で出力する",
@@ -471,49 +617,79 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _resolve_passes(args: argparse.Namespace) -> list[tuple[str, "callable[[Path], MigrationPlan]"]]:
+    """CLI フラグから実行するパス (名前, プランビルダ) の列を決める。
+
+    - デフォルト: トップレベル整形のみ
+    - ``--flatten-stages``: トップレベル整形 → ステージフラット化
+    - ``--stages-only``: ステージフラット化のみ (トップレベル整形はスキップ)
+    """
+    if args.stages_only:
+        return [("stages", build_stage_flatten_plan)]
+    passes: list[tuple[str, "callable[[Path], MigrationPlan]"]] = [("toplevel", build_plan)]
+    if args.flatten_stages:
+        passes.append(("stages", build_stage_flatten_plan))
+    return passes
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
     base = Path(args.base)
-    plan = build_plan(base)
+    passes = _resolve_passes(args)
 
     if args.dry_run:
+        # ドライランは FS を変えないため、各パスを現状の base に対して個別に組み立てる
+        results = [(name, builder(base)) for name, builder in passes]
         if args.json:
             payload = {
                 "base": str(base),
                 "dry_run": True,
-                "actions": [
-                    {"kind": a.kind, "src": str(a.src), "dst": str(a.dst), "note": a.note}
-                    for a in plan.actions
+                "passes": [
+                    {
+                        "pass": name,
+                        "actions": [
+                            {"kind": a.kind, "src": str(a.src), "dst": str(a.dst), "note": a.note}
+                            for a in plan.actions
+                        ],
+                        "skipped": [{"path": str(p), "reason": r} for p, r in plan.skipped],
+                        "warnings": plan.warnings,
+                    }
+                    for name, plan in results
                 ],
-                "skipped": [{"path": str(p), "reason": r} for p, r in plan.skipped],
-                "warnings": plan.warnings,
             }
             print(json.dumps(payload, ensure_ascii=False, indent=2))
         else:
             print("=== migrate_output_layout DRY-RUN ===")
             print(f"base: {base}")
-            print(render_plan(plan))
+            for name, plan in results:
+                print(f"\n### PASS: {name}")
+                print(render_plan(plan))
         return 0
 
-    log = apply_plan(plan)
+    # 適用モードは各パスを順に build→apply する (前パスの移動結果を次パスが参照できる)
+    pass_payloads: list[dict] = []
+    for name, builder in passes:
+        plan = builder(base)
+        log = apply_plan(plan)
+        pass_payloads.append({"pass": name, "log": log, "warnings": plan.warnings})
+        if not args.json:
+            print(f"=== migrate_output_layout APPLY [{name}] ===")
+            print(f"base: {base}")
+            for line in log:
+                print(line)
+            if plan.warnings:
+                print("\n## WARNINGS")
+                for w in plan.warnings:
+                    print(f"  {w}")
     if args.json:
-        payload = {
-            "base": str(base),
-            "dry_run": False,
-            "log": log,
-            "warnings": plan.warnings,
-        }
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
-    else:
-        print("=== migrate_output_layout APPLY ===")
-        print(f"base: {base}")
-        for line in log:
-            print(line)
-        if plan.warnings:
-            print("\n## WARNINGS")
-            for w in plan.warnings:
-                print(f"  {w}")
+        print(
+            json.dumps(
+                {"base": str(base), "dry_run": False, "passes": pass_payloads},
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
     return 0
 
 

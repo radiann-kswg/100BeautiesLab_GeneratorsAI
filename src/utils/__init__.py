@@ -12,6 +12,7 @@ from .dataset import (
     build_gemini_prompt,
     get_local_image_paths,
     extract_char_name,
+    describe_ambiguous_field_resolutions,
 )
 from .image_io import (
     MIME_TO_EXTENSION,
@@ -43,6 +44,7 @@ __all__ = [
     "build_gemini_prompt",
     "get_local_image_paths",
     "extract_char_name",
+    "describe_ambiguous_field_resolutions",
     "build_run_output_dir",
     "default_output_base",
     "format_num",
