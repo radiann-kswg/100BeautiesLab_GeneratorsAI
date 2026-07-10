@@ -146,6 +146,7 @@ def run_image_pipeline(
     composition: str = "",
     background: str = "",
     costume: str = "",
+    field_overrides: dict[str, str] | None = None,
     skip_canva: bool = False,
     correction_mode: str = "t2i",
     iterate_from: str | None = None,
@@ -160,11 +161,14 @@ def run_image_pipeline(
     form:            形態 ("corefolder" / "humanoid")
     work_key:        作品キー
     out_dir:         出力ベースディレクトリ (None で環境変数 OUTPUT_BASE_DIR)
-    scene:           シーン・ポーズ説明 (空の場合はランダム生成)
+    scene:           シーン・ポーズ説明 (空の場合は revisions → ランダム生成の順でフォールバック)
     style:           作風ヒント
     composition:     構図ヒント
     background:      背景ヒント
     costume:         衣装差分の説明 (例: '黒いワンピース姿の差分')。空ならデフォルト衣装。
+    field_overrides: RaceType 等の曖昧フィールド（複数候補から1つ選ぶ必要があるもの）の
+                     明示上書き指定 (例: {"RaceType": "最終的な設計目標"})。
+                     未指定フィールドはシーン文脈をもとに LLM が自動判定する。
     skip_canva:      True なら Stage 5 の Canva フィニッシングをスキップ
     correction_mode: 重度違反時の対処モード ("t2i" | "stage3")
                      "t2i"    — Stage 4 内で T2I フル再生成 (デフォルト)
@@ -214,7 +218,20 @@ def run_image_pipeline(
         _save_summary(pipeline_dir, result, start_time)
         return result
 
-    # シーン未指定 → ランダム生成
+    # シーン未指定 → まず revisions (i2i 修正指示) をシーン文脈の代わりに使う。
+    # i2i (--iterate-from) はシーン未指定で revisions のみ指定されることが多く、
+    # revisions に「完成形態で」等の状態変化指示が書かれていても、シーン未指定のままだと
+    # RaceType/Height_cm 等の曖昧フィールド解決に届かないため。
+    if not scene and revisions:
+        _revisions_text = (
+            "; ".join(str(r) for r in revisions if str(r).strip())
+            if isinstance(revisions, (list, tuple)) else str(revisions)
+        ).strip()
+        if _revisions_text:
+            scene = _revisions_text
+            print(f"[Stage1] シーン: revisions から補完 ({scene[:60]})")
+
+    # それでも未指定 → ランダム生成
     if not scene:
         scene = generate_random_scene(_pre_record, form) or ""
         if scene:
@@ -223,7 +240,7 @@ def run_image_pipeline(
     prompts = refine_prompt_dual(
         _pre_record, form,
         scene=scene, style=style, composition=composition, background=background,
-        costume=costume,
+        costume=costume, field_overrides=field_overrides,
     )
     result.scene_used = scene
     result.stage1_prompts = {
@@ -521,6 +538,7 @@ def run_combined_pipeline(
     composition: str = "",
     background: str = "",
     costume: str = "",
+    field_overrides: dict[str, str] | None = None,
     skip_canva: bool = False,
     correction_mode: str = "t2i",
     iterate_from: str | None = None,
@@ -622,6 +640,14 @@ def run_combined_pipeline(
 
     # ── Stage 1: シーン補完 + キャラクターごとのプロンプト生成 ──
     print("\n[=] Stage 1: シーン補完 + キャラクターごとのプロンプト生成")
+    if not scene and revisions:
+        _revisions_text = (
+            "; ".join(str(r) for r in revisions if str(r).strip())
+            if isinstance(revisions, (list, tuple)) else str(revisions)
+        ).strip()
+        if _revisions_text:
+            scene = _revisions_text
+            print(f"[Stage1] シーン: revisions から補完 ({scene[:60]})")
     if not scene:
         scene = generate_random_scene(records[0], forms_map[nums[0]]) or ""
         if scene:
@@ -633,7 +659,7 @@ def run_combined_pipeline(
         prompts = refine_prompt_dual(
             rec, forms_map[n], scene=scene, style=style,
             composition=composition, background=background,
-            costume=costume,
+            costume=costume, field_overrides=field_overrides,
         )
         per_char_prompts[n] = prompts
 
@@ -914,6 +940,8 @@ def _save_stage1(stage1_dir: Path, prompts: dict) -> None:
         "gemini_length": len(prompts.get("gemini") or ""),
         "ref_url_count": len(prompts.get("ref_urls") or []),
         "ref_local_count": len(prompts.get("ref_locals") or []),
+        "field_overrides": prompts.get("field_overrides") or {},
+        "field_resolutions": prompts.get("field_resolutions") or {},
     }
     (stage1_dir / "stage1_meta.json").write_text(
         json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -958,6 +986,74 @@ def _resolve_num_arg(raw: str) -> int | str:
         return int(raw)
     except ValueError:
         return raw
+
+
+def _maybe_prompt_ambiguous_fields_interactively(
+    char_params: list[dict], default_work_key: str, non_interactive: bool
+) -> None:
+    """実ターミナル (TTY) 上でのみ、RaceType 等の曖昧フィールドを対話確認する。
+
+    char_params の各要素を必要に応じて in-place で更新する
+    (scene 未指定なら確定させ、必要なら field_overrides を設定する)。
+    非TTY (エージェント経由の Bash 実行・MCP の Cloud Run ジョブ) では即座に no-op で戻る。
+    """
+    if non_interactive or not sys.stdin.isatty():
+        return
+
+    from src.utils import find_character
+    from src.utils.dataset import _AMBIGUOUS_FIELD_SPECS, describe_ambiguous_field_resolutions
+
+    for cp in char_params:
+        form = cp.get("form", "corefolder")
+        applicable_specs = [s for s in _AMBIGUOUS_FIELD_SPECS if form in s.forms]
+        if not applicable_specs:
+            continue
+
+        record = find_character(cp["num"], cp.get("work_key", default_work_key))
+        if record is None:
+            continue
+
+        existing_overrides: dict[str, str] = dict(cp.get("field_overrides") or {})
+
+        if not cp.get("scene"):
+            cp["scene"] = generate_random_scene(record, form) or ""
+            # ↑ ここで scene を確定させておくことで、後段の Stage1 が別のランダムシーンを
+            #   再生成して自動判定と食い違う事態を防ぐ。
+
+        resolutions = describe_ambiguous_field_resolutions(
+            record, form, scene=cp["scene"], field_overrides=existing_overrides
+        )
+        for spec in applicable_specs:
+            if spec.field_name in existing_overrides:
+                continue  # 既に明示指定済み
+            info = resolutions.get(spec.field_name)
+            if not info or len(info.get("candidates") or []) < 2:
+                continue  # 曖昧ではない
+
+            candidates = info["candidates"]
+            print(f"\n[確認] #{cp['num']} の「{spec.label_ja}」候補が複数あります:")
+            for i, c in enumerate(candidates, start=1):
+                marker = " <- 自動選択" if c.get("value") == info.get("value") else ""
+                print(f"  {i}) {c.get('value')} — {c.get('about_JP', '')}{marker}")
+            print(f"  自動判定理由: {info.get('reasoning') or '(なし)'}")
+
+            try:
+                choice = input("  Enter で確定 / 番号で上書き > ").strip()
+            except (EOFError, KeyboardInterrupt):
+                choice = ""
+            if choice:
+                try:
+                    idx = int(choice) - 1
+                except ValueError:
+                    idx = -1
+                if 0 <= idx < len(candidates):
+                    existing_overrides[spec.field_name] = str(candidates[idx].get("value", ""))
+                    print(f"  → 上書き: {existing_overrides[spec.field_name]}")
+                else:
+                    print("  無効な入力のため自動選択を使用します。")
+
+        if existing_overrides:
+            cp["field_overrides"] = existing_overrides
 
 
 def main() -> None:
@@ -1024,6 +1120,15 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--field-override", action="append", default=None, dest="field_override",
+        metavar="FIELD=VALUE",
+        help=(
+            "RaceType 等の曖昧フィールド（複数候補から1つ選ぶ必要があるもの）を明示指定する。\n"
+            "繰り返し指定可能。未指定フィールドはシーン文脈から LLM が自動判定する。\n"
+            "例: --field-override RaceType=最終的な設計目標 --field-override Height_cm=190"
+        ),
+    )
+    parser.add_argument(
         "--skip-canva", action="store_true",
         help="Stage 5 の Canva フィニッシングをスキップ (CANVA_ACCESS_TOKEN 不要)",
     )
@@ -1057,7 +1162,24 @@ def main() -> None:
         "--prefer-gemini-parse", action="store_true",
         help="--natural / --story のパース時に Gemini を OpenAI より優先する",
     )
+    parser.add_argument(
+        "--non-interactive", action="store_true", dest="non_interactive",
+        help=(
+            "実ターミナル (TTY) 実行時でも、曖昧フィールドの対話確認プロンプトを出さない。\n"
+            "CI・スクリプト等、TTY はあるが対話させたくない場合に指定する。"
+        ),
+    )
     args = parser.parse_args()
+
+    field_override: dict[str, str] = {}
+    for kv in (args.field_override or []):
+        if "=" not in kv:
+            sys.exit(f"[ERROR] --field-override は FIELD=VALUE 形式で指定してください: {kv!r}")
+        k, v = kv.split("=", 1)
+        k = k.strip()
+        if not k:
+            sys.exit(f"[ERROR] --field-override のフィールド名が空です: {kv!r}")
+        field_override[k] = v.strip()
 
     # ──── 入力モード別キャラクターパラメータの収集 ────
 
@@ -1093,6 +1215,8 @@ def main() -> None:
                 cp["background"] = args.background
             if args.costume and not cp.get("costume"):
                 cp["costume"] = args.costume
+            if field_override and not cp.get("field_overrides"):
+                cp["field_overrides"] = dict(field_override)
             if args.form != "corefolder":
                 cp["form"] = args.form
 
@@ -1110,6 +1234,7 @@ def main() -> None:
                 "composition": args.composition,
                 "background": args.background,
                 "costume": args.costume,
+                "field_overrides": dict(field_override),
                 "work_key": args.work,
             })
 
@@ -1122,11 +1247,16 @@ def main() -> None:
             "composition": args.composition,
             "background": args.background,
             "costume": args.costume,
+            "field_overrides": dict(field_override),
             "work_key": args.work,
         })
 
     else:
         parser.error("--num / --nums / --natural / --story のいずれかを指定してください。")
+
+    _maybe_prompt_ambiguous_fields_interactively(
+        char_params, default_work_key=args.work, non_interactive=args.non_interactive
+    )
 
     # ──── パイプライン実行 ────
 
@@ -1142,6 +1272,7 @@ def main() -> None:
             composition=cp.get("composition", ""),
             background=cp.get("background", ""),
             costume=cp.get("costume", args.costume),
+            field_overrides=cp.get("field_overrides") or field_override,
             skip_canva=args.skip_canva,
             correction_mode=args.correction_mode,
             iterate_from=args.iterate_from,
@@ -1179,6 +1310,7 @@ def main() -> None:
             composition=char_params[0].get("composition", args.composition),
             background=char_params[0].get("background", args.background),
             costume=char_params[0].get("costume", args.costume),
+            field_overrides=char_params[0].get("field_overrides") or field_override,
             skip_canva=args.skip_canva,
             correction_mode=args.correction_mode,
             iterate_from=args.iterate_from,

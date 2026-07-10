@@ -63,6 +63,8 @@ python -m src.pipeline.image_pipeline --num 57 --form corefolder --skip-canva
 | `--iterate-from PATH` | None | 前回生成画像を起点に Stage 3 を **i2i モード**で実行。Stage 4/5 は通常通り走る。詳細は [`usage-iterate.md`](usage-iterate.md) |
 | `--revisions TEXT` | None | 修正指示（`; `/改行区切り）。`--iterate-from` と組み合わせて使用 |
 | `--prefer-gemini-parse` | false | `--natural` / `--story` のパース時に Gemini を OpenAI より優先 |
+| `--field-override FIELD=VALUE` | None | `RaceType` 等の曖昧フィールド（複数候補から1つ選ぶ必要があるもの）を明示指定。繰り返し指定可能（例: `--field-override RaceType=最終的な設計目標 --field-override Height_cm=190`）。未指定時はシーン文脈から LLM が自動判定する |
+| `--non-interactive` | false | 実ターミナル (TTY) 実行時でも曖昧フィールドの対話確認プロンプトを出さない |
 
 **出力構成 (単体キャラ `--num`):**
 ```
@@ -413,7 +415,7 @@ python -m src.batch_generate --nums 15,22,49,57 --forms both --provider both --s
 | 6    | `[形態固定ルール]`                                    | 形態固有の immutable_constraints / 形態共通データセット (`required_shape_keywords[]`)                         | `Works_NumberTales.json` + `ai_hints.forms.{form}.immutable_constraints`       |
 | 7    | `[現在形態の重点要素]`                                | `silhouette_notes` の body_description / attached_items を 2 行に分けて提示                                   | `ai_hints.forms.{form}.silhouette_notes`                                       |
 | 8    | `[禁止語]` / negative                                 | 形態共通データセットの `disallow_cross_form_keywords[]` + `negative_keywords`                                 | `Works_NumberTales.json` + `ai_hints.forms.{form}.negative_keywords`           |
-| 6.5  | `[形態共通データセット]`                              | 形態定義・シルエット要約・共通装備 + **DB原典/識別モチーフ(en)** (両形態) / **DB原典/尾の構造(en)** (humanoid 限定) | `_ideas/form_common_datasets/{Work}.json` + `db_record.IdentityMotif.Motif_EN` / `db_record.TailsUnit`（構造化） |
+| 6.5  | `[形態共通データセット]`                              | 形態定義・シルエット要約・共通装備 + **DB原典/識別モチーフ(en)** (両形態) / **DB原典/尾の構造(en)・種別・身長** (humanoid 限定) | `_ideas/form_common_datasets/{Work}.json` + `db_record.IdentityMotif.Motif_EN` / `db_record.TailsUnit`（構造化） / `db_record.RaceType`・`Height_cm`（曖昧フィールド解決） |
 | 9    | `[シーン・追加要望]`                                  | `--scene` / `--style` / `--composition` / `--background` の指定値                                             | CLI フラグ                                                                     |
 
 > **重要**: 番号印字ブロック (5) と禁止語ブロック (8) は2026-06-09に再強化済み。詳細は [`AGENTS.md`](../AGENTS.md) の `output レイアウト規約` セクションを参照。
@@ -421,6 +423,18 @@ python -m src.batch_generate --nums 15,22,49,57 --forms both --provider both --s
 > **2026-06-13 更新**: `[形態共通データセット]` (ブロック 6.5) に `_creations-db` 英語フィールド拡張対応の DB原典補足行を追加。`IdentityMotif.Motif_EN`（形態別英語モチーフタグ、89キャラ対応）は両形態で注入。humanoid 形態には `TailsUnit_EN`（英語表記の尾構造、32キャラ対応）を優先使用し、未設定時は日本語版にフォールバック。corefolder 形態の Motif_EN には humanoid 衣装フィルタを通してから注入する。
 > **2026-06-29 更新**: ブロック 6.5 の DB原典補足行に **AppearanceDetail フォールバック** を追加（src 側 `src/utils/dataset.py`）。`IdentityMotif.Motif_EN` 不在時は `db_record.AppearanceDetail` の `#Element_Motif` / `#Element_CostumeItem` エントリの `#DesignAttr_Overview.value_EN`（旧形式 `Value_EN` も可）から識別モチーフを収集してフォールバックする。humanoid 形態で `TailsUnit_EN` が空の場合は `#Element_TailsUnit` の Shape / Count / Branch 属性から英語の尾構造文字列を再構築してフォールバックする。既存フィールドが存在する間は従来動作を維持（非破壊）。AppearanceDetail の有無は ai-dataset 側 `has_appearance_detail` フラグで確認できる。
 > **2026-07-10 更新**: DB 側で `TailsUnit_JP`/`TailsUnit_EN`（単純文字列）が廃止され、構造化フィールド `TailsUnit`（`$Def_TailsUnit[]`: `TailShapeType`/`Count`/`Branches[]`/`Note_JP`/`Note_EN`）へ全面移行（2026-07-07）。`src/utils/dataset.py` の `_extract_tails_unit_texts()` が `TailShapeType` の列挙値（`_TAIL_SHAPE_TYPE_LABELS`）と `Branches[].Laterality` から JP/EN 文字列を再構築する。優先順位: 旧 `TailsUnit_JP`/`TailsUnit_EN`（残っていれば）→ 新 `TailsUnit` 構造からの再構築 → 旧 `AppearanceDetail(#Element_TailsUnit)` フォールバック。
+> **2026-07-10 更新（曖昧フィールド解決）**: `RaceType` / `Height_cm` のように DB 側で複数候補
+> （`#DictIndex_withAbout[]` 型: `[{"value":...,"about_JP":...,"about_EN":...}, ...]`）を持ちうる
+> フィールドは、`src/utils/dataset.py` の `_AMBIGUOUS_FIELD_SPECS` レジストリ + `_resolve_ambiguous_field()`
+> が汎用的に解決する。シーン文（`--scene` / `--natural` 抽出値 / i2i 時は `--revisions` をフォールバック）
+> の文脈が候補の `about_JP`/`about_EN` の示す非日常的な状態を明示的に示唆していればその候補を、
+> 示唆が無ければ既定・平常状態を表す候補を LLM（OpenAI→Gemini の順）が選ぶ。判定結果と理由は
+> `stage1_meta.json` の `field_resolutions` に記録される。`--field-override FIELD=VALUE`
+> （複数回指定可）で明示的に上書きでき、実ターミナル (TTY) 実行時は候補が複数ある場合に対話確認
+> プロンプトが出る（`--non-interactive` でスキップ可）。詳細は [`AGENTS.md`](../AGENTS.md) と
+> `src/utils/dataset.py` の `_AMBIGUOUS_FIELD_SPECS` を参照。新しい対象フィールドを追加する場合は
+> レジストリに1行足すだけでよい（対象外: `Weight_kg` は「基本値+装備品加算」という別の意味構造のため
+> 対象外）。
 
 ---
 
