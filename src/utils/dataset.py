@@ -1180,7 +1180,8 @@ def _extract_identity_motif_en(record: dict[str, Any], form: str) -> list[str]:
 
     フォームラベル自体 ("corefolder form" / "humanoid form") は除外。
     corefolder 形態では outfit_features フィルタを適用して humanoid 衣装語を除去する。
-    IdentityMotif が存在しない場合は AppearanceDetail からフォールバック取得する。
+    IdentityMotif は 2026-07-11 の DB・API大幅整備 その18 で廃止済み (AppearanceDetail へ統合)。
+    残置データが無い通常ケースは常に _extract_appearance_detail_motif_en へフォールバックする。
     """
     data = record.get("data") or {}
     identity_motif = data.get("IdentityMotif")
@@ -1209,7 +1210,7 @@ def _extract_identity_motif_en(record: dict[str, Any], form: str) -> list[str]:
 def _extract_appearance_detail_motif_en(record: dict[str, Any], form: str) -> list[str]:
     """AppearanceDetail から指定 form の外見モチーフ EN テキストを返す。
 
-    IdentityMotif が存在しない場合のフォールバック用。
+    IdentityMotif 廃止 (2026-07-11) 後の主経路。
     #Element_Motif と #Element_CostumeItem エントリの #DesignAttr_Overview.value_EN を収集する。
     Formation が指定 form または null のエントリを対象とする。
     """
@@ -1246,6 +1247,49 @@ def _extract_appearance_detail_motif_en(record: dict[str, Any], form: str) -> li
     if form == "corefolder":
         tags = _filter_corefolder_outfit_features(tags)
     return tags
+
+
+def _extract_number_mark_from_appearance_detail(record: dict[str, Any], form: str) -> list[dict[str, str]]:
+    """AppearanceDetail の #Element_NumberMark エントリから指定 form の番号印字仕様を返す。
+
+    NumberMarkLocation 廃止 (2026-07-11 DB・API大幅整備 その18) に伴うフォールバック用。
+    Formation が指定 form または null (両形態共通、例: イヤリング等の装飾で番号を表現するケース)
+    のエントリを対象とする。#DesignAttr_Position/Color/Notation を
+    旧 MarkPosition_EN/MarkColor_EN/MarkNotation_EN 相当のキーに変換する。
+    """
+    db_record = record.get("db_record") or {}
+    data = record.get("data") or {}
+    appearance_detail = db_record.get("AppearanceDetail") or data.get("AppearanceDetail")
+    if not isinstance(appearance_detail, list):
+        return []
+
+    attr_label_map = {
+        "#DesignAttr_Position": "MarkPosition_EN",
+        "#DesignAttr_Color": "MarkColor_EN",
+        "#DesignAttr_Notation": "MarkNotation_EN",
+    }
+    marks: list[dict[str, str]] = []
+    for entry in appearance_detail:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("DesignElement") != "#Element_NumberMark":
+            continue
+        entry_formation = entry.get("Formation")
+        if entry_formation is not None and entry_formation != form:
+            continue
+        mark: dict[str, str] = {}
+        for attr in (entry.get("Attrs") or []):
+            if not isinstance(attr, dict):
+                continue
+            key = attr_label_map.get(attr.get("AttrLabel"))
+            if not key:
+                continue
+            val = (attr.get("value_EN") or attr.get("Value_EN") or "").strip()
+            if val:
+                mark[key] = val
+        if mark:
+            marks.append(mark)
+    return marks
 
 
 _APPEARANCE_DETAIL_LAT_LABELS: dict[str, str] = {
@@ -1505,8 +1549,10 @@ def _build_number_print_block(record: dict[str, Any], form: str) -> str:
             f" Render the digits literally as printed / embroidered text matching \"{num_token}\","
             f" not as stylized shapes, decorative glyphs, or any other number."
         )
-        # NumberMarkLocation (db_record 由来) があればキャラ固有の印字位置を使う。
-        # なければ汎用フォールバックを使用する。
+        # NumberMarkLocation (db_record 由来、旧スキーマ) があればキャラ固有の印字位置を使う。
+        # 廃止済み (2026-07-11 DB・API大幅整備 その18) のため、
+        # AppearanceDetail(#Element_NumberMark) からのフォールバックを次点で使う。
+        # どちらもなければ汎用フォールバックを使用する。
         db_record = record.get("db_record") or {}
         nml_entries = db_record.get("NumberMarkLocation") or []
         form_marks: list[dict] | None = None
@@ -1514,6 +1560,8 @@ def _build_number_print_block(record: dict[str, Any], form: str) -> str:
             if isinstance(nml_entry, dict) and nml_entry.get("Formation") == form:
                 form_marks = nml_entry.get("Marks")
                 break
+        if not form_marks:
+            form_marks = _extract_number_mark_from_appearance_detail(record, form) or None
         if form_marks:
             mark_count = len(form_marks)
             count_word = "1 か所" if mark_count == 1 else f"{mark_count} か所"
@@ -1907,7 +1955,7 @@ def _build_form_common_dataset_block(
     function_traits = ", ".join(profile.get("function_traits") or [])
 
     db_lines: list[str] = []
-    # IdentityMotif.Motif_EN は両形態で有効（DB 側で形態別に設計済み）。
+    # 識別モチーフ(en) は両形態で有効（DB 側で形態別に設計済み、AppearanceDetail経由）。
     if isinstance(record, dict):
         motif_en_tags = _extract_identity_motif_en(record, form)
         if motif_en_tags:
