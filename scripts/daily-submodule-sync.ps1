@@ -40,10 +40,21 @@ $ErrorActionPreference = 'Stop'
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $RepoRoot
 
+# git は成功時にも stderr へ出力する (例: "Already on 'master'", "Previous HEAD position was ...")。
+# PowerShell 5.1 は native コマンドの stderr をリダイレクトすると各行を ErrorRecord (NativeCommandError) に
+# 変換するため、$ErrorActionPreference = 'Stop' 下では成功メッセージでも例外が飛ぶ。
+# ここでは一時的に Continue へ落とし、成否は必ず終了コードで判定する。
 function Invoke-Git {
-    param([Parameter(ValueFromRemainingArguments = $true)][string[]]$GitArgs)
-    $out = & git @GitArgs 2>&1
-    return ,$out
+    param([Parameter(Mandatory = $true, Position = 0)][string[]]$GitArgs)
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $out = (& git @GitArgs 2>&1 | Out-String)
+        return [pscustomobject]@{ ExitCode = $LASTEXITCODE; Output = $out.Trim() }
+    }
+    finally {
+        $ErrorActionPreference = $prev
+    }
 }
 
 if (-not (Test-Path (Join-Path $RepoRoot '.git'))) {
@@ -75,30 +86,41 @@ foreach ($line in $names) {
 
 # --- fetch ---
 Write-Host "`n-- fetch --" -ForegroundColor Yellow
-& git submodule sync --recursive | Out-Null
+$syncResult = Invoke-Git @('submodule', 'sync', '--recursive')
+if ($syncResult.ExitCode -ne 0) {
+    Write-Warning ("submodule sync 失敗: {0}" -f $syncResult.Output)
+}
 foreach ($sm in $submodules) {
     Write-Host ("fetch {0} ..." -f $sm.Path)
-    try { & git -C $sm.Path fetch --all --prune 2>&1 | Out-Null }
-    catch { Write-Warning ("fetch 失敗 {0}: {1}" -f $sm.Path, $_) }
+    $fetchResult = Invoke-Git @('-C', $sm.Path, 'fetch', '--all', '--prune')
+    if ($fetchResult.ExitCode -ne 0) {
+        Write-Warning ("fetch 失敗 {0}: {1}" -f $sm.Path, $fetchResult.Output)
+    }
 }
 
 # --- 判定 & 取り込み ---
+# Markdown テーブルへ埋める備考は 1 行に潰す (git の出力は複数行になりうる)
+function Format-Reason {
+    param([string]$Text)
+    return ($Text -replace '\r?\n', ' ' -replace '\|', '/').Trim()
+}
+
 $results = @()
 foreach ($sm in $submodules) {
-    $cur = (& git -C $sm.Path rev-parse HEAD).Trim()
+    $cur = (Invoke-Git @('-C', $sm.Path, 'rev-parse', 'HEAD')).Output
     if ($sm.Branch) {
         $trackRef = "origin/$($sm.Branch)"
     }
     else {
-        $headRef = (& git -C $sm.Path symbolic-ref --short refs/remotes/origin/HEAD 2>$null)
-        $trackRef = if ($headRef) { $headRef.Trim() } else { 'origin/HEAD' }
+        $headRef = Invoke-Git @('-C', $sm.Path, 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD')
+        $trackRef = if ($headRef.ExitCode -eq 0 -and $headRef.Output) { $headRef.Output } else { 'origin/HEAD' }
     }
-    $remote = (& git -C $sm.Path rev-parse $trackRef 2>$null)
-    if ($LASTEXITCODE -ne 0 -or -not $remote) {
+    $remoteResult = Invoke-Git @('-C', $sm.Path, 'rev-parse', $trackRef)
+    if ($remoteResult.ExitCode -ne 0 -or -not $remoteResult.Output) {
         $results += [pscustomobject]@{ Name=$sm.Name; Path=$sm.Path; Track=$trackRef; Old=$cur; New='(unknown)'; Action='SKIP'; Reason='追跡ブランチのリモートrefが解決不可' }
         continue
     }
-    $remote = $remote.Trim()
+    $remote = $remoteResult.Output
 
     if ($cur -eq $remote) {
         $results += [pscustomobject]@{ Name=$sm.Name; Path=$sm.Path; Track=$trackRef; Old=$cur; New=$remote; Action='NO-CHANGE'; Reason='最新' }
@@ -106,8 +128,8 @@ foreach ($sm in $submodules) {
     }
 
     # fast-forward 可能か (現在が追跡先の祖先か)
-    & git -C $sm.Path merge-base --is-ancestor $cur $remote 2>$null
-    $isFF = ($LASTEXITCODE -eq 0)
+    $ffCheck = Invoke-Git @('-C', $sm.Path, 'merge-base', '--is-ancestor', $cur, $remote)
+    $isFF = ($ffCheck.ExitCode -eq 0)
 
     if (-not $isFF) {
         $results += [pscustomobject]@{ Name=$sm.Name; Path=$sm.Path; Track=$trackRef; Old=$cur; New=$remote; Action='SKIP'; Reason='非 FF (枝分かれ/別ブランチ)。手動判断が必要' }
@@ -121,17 +143,27 @@ foreach ($sm in $submodules) {
 
     # 取り込み: 追跡ブランチへ checkout して ff-only
     $localBranch = if ($sm.Branch) { $sm.Branch } else { ($trackRef -replace '^origin/','') }
-    try {
-        & git -C $sm.Path checkout $localBranch 2>&1 | Out-Null
-        & git -C $sm.Path merge --ff-only $trackRef 2>&1 | Out-Null
-        # ネストサブモジュール (_creations-ai/creations-db) を新ポインタへ再帰的に追従させる。
-        & git -C $sm.Path submodule update --init --recursive 2>&1 | Out-Null
-        $newCur = (& git -C $sm.Path rev-parse HEAD).Trim()
-        $results += [pscustomobject]@{ Name=$sm.Name; Path=$sm.Path; Track=$trackRef; Old=$cur; New=$newCur; Action='UPDATED'; Reason='FF 取り込み完了' }
+
+    $checkout = Invoke-Git @('-C', $sm.Path, 'checkout', $localBranch)
+    if ($checkout.ExitCode -ne 0) {
+        $results += [pscustomobject]@{ Name=$sm.Name; Path=$sm.Path; Track=$trackRef; Old=$cur; New=$remote; Action='SKIP'; Reason=(Format-Reason ("checkout 失敗 ({0}): {1}" -f $localBranch, $checkout.Output)) }
+        continue
     }
-    catch {
-        $results += [pscustomobject]@{ Name=$sm.Name; Path=$sm.Path; Track=$trackRef; Old=$cur; New=$remote; Action='SKIP'; Reason=("取り込み失敗: {0}" -f $_) }
+
+    $merge = Invoke-Git @('-C', $sm.Path, 'merge', '--ff-only', $trackRef)
+    if ($merge.ExitCode -ne 0) {
+        $results += [pscustomobject]@{ Name=$sm.Name; Path=$sm.Path; Track=$trackRef; Old=$cur; New=$remote; Action='SKIP'; Reason=(Format-Reason ("ff-only merge 失敗: {0}" -f $merge.Output)) }
+        continue
     }
+
+    # ネストサブモジュール (_creations-ai/creations-db) を新ポインタへ再帰的に追従させる。
+    $nested = Invoke-Git @('-C', $sm.Path, 'submodule', 'update', '--init', '--recursive')
+    if ($nested.ExitCode -ne 0) {
+        Write-Warning ("ネストサブモジュール更新に失敗 {0}: {1}" -f $sm.Path, $nested.Output)
+    }
+
+    $newCur = (Invoke-Git @('-C', $sm.Path, 'rev-parse', 'HEAD')).Output
+    $results += [pscustomobject]@{ Name=$sm.Name; Path=$sm.Path; Track=$trackRef; Old=$cur; New=$newCur; Action='UPDATED'; Reason='FF 取り込み完了' }
 }
 
 # --- 結果表示 ---
@@ -168,14 +200,14 @@ if ($updated) {
         [void]$sb.AppendLine("### ``$($u.Name)`` $($u.Old.Substring(0,7))..$($u.New.Substring(0,7))")
         [void]$sb.AppendLine('')
         [void]$sb.AppendLine('```')
-        $log = (& git -C $u.Path log --oneline "$($u.Old)..$($u.New)") -join "`n"
+        $log = (Invoke-Git @('-C', $u.Path, 'log', '--oneline', "$($u.Old)..$($u.New)")).Output
         [void]$sb.AppendLine($log)
         [void]$sb.AppendLine('```')
         [void]$sb.AppendLine('')
         [void]$sb.AppendLine('変更ファイル:')
         [void]$sb.AppendLine('')
         [void]$sb.AppendLine('```')
-        $stat = (& git -C $u.Path diff --stat "$($u.Old)..$($u.New)") -join "`n"
+        $stat = (Invoke-Git @('-C', $u.Path, 'diff', '--stat', "$($u.Old)..$($u.New)")).Output
         [void]$sb.AppendLine($stat)
         [void]$sb.AppendLine('```')
         [void]$sb.AppendLine('')
@@ -203,15 +235,23 @@ if ($DryRun) {
 Write-Host "`nログ生成: $logPath" -ForegroundColor Green
 
 # --- コミット (push なし) ---
-& git add -A
-$staged = & git diff --cached --name-only
+$addResult = Invoke-Git @('add', '-A')
+if ($addResult.ExitCode -ne 0) {
+    Write-Error ("git add 失敗: {0}" -f $addResult.Output)
+    exit 1
+}
+$staged = (Invoke-Git @('diff', '--cached', '--name-only')).Output
 if (-not $staged) {
     Write-Host "コミット対象なし。終了します。"
     exit 0
 }
 
 $msg = "chore: サブモジュール更新に追従しログ生成 ($today)`n`n" + (($results | ForEach-Object { "- $($_.Name): $($_.Action) ($($_.Reason))" }) -join "`n") + "`n- push なし"
-& git commit -m $msg | Out-Null
+$commitResult = Invoke-Git @('commit', '-m', $msg)
+if ($commitResult.ExitCode -ne 0) {
+    Write-Error ("git commit 失敗: {0}" -f $commitResult.Output)
+    exit 1
+}
 Write-Host "コミット完了 (push なし):" -ForegroundColor Green
-& git log --oneline -1
+Write-Host (Invoke-Git @('log', '--oneline', '-1')).Output
 Write-Host "`n※ リモート反映が必要なら手動で 'git push' してください。"

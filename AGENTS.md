@@ -197,7 +197,10 @@ git submodule update --remote --recursive _creations-ai
 git -C _creations-ai submodule update --remote creations-db
 ```
 
-サブモジュール更新後は、参照先仕様差分が `src/` 側のプロンプト生成ロジックに影響しないか確認する。
+- 追跡ブランチはルート [`.gitmodules`](.gitmodules) に明示している（`_creations-ai` = `master` / `_creations-ai/creations-db` = `addon-ai-tag`）。ネストの `creations-db` もルートに登録済みのため、`--remote` 系の更新と [`scripts/daily-submodule-sync.ps1`](scripts/daily-submodule-sync.ps1) は両方を追跡ブランチ基準で FF 判定・同期する。
+- 毎朝の自動同期は `scripts/daily-submodule-sync.ps1`（Windows 実機・タスクスケジューラ登録）。fetch → FF 判定 → 取り込み → `_tasks/{YYYYMMDD}_submodule-sync.md` へログ生成 → コミット（push はしない）まで行う。取り込み前の確認は `-DryRun` を付けて実行する。
+
+サブモジュール更新後は、参照先仕様差分が `src/` 側のプロンプト生成ロジックに影響しないか確認する。確認結果は同期ログ（`_tasks/{YYYYMMDD}_submodule-sync.md`）の「最適化メモ」へ追記し、追従が不要だった場合もその判定根拠を残す。
 
 ### 創作 DB 実物 API
 

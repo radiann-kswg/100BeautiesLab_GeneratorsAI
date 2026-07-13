@@ -1,3 +1,8 @@
 [submodule "_creations-ai"]
 	path = _creations-ai
 	url = https://github.com/radiann-kswg/100BeautiesLab_CreationsAI.git
+	branch = master
+[submodule "_creations-ai/creations-db"]
+	path = _creations-ai/creations-db
+	url = https://github.com/radiann-kswg/100BeautiesLab_CreationsDB.git
+	branch = addon-ai-tag
