@@ -1679,6 +1679,169 @@ def _build_preferred_art_style_block(record: dict[str, Any] | None = None) -> st
     return f"\n[作風指示 (preferred art style)]\n{body}\n"
 
 
+# ColorPalette (creations-db 2026-07 新設) の列挙値ラベル。
+# 正本は creations-db の `data/db_meta.json` の $EnumDef_ColorRole / $EnumDef_DesignBodyPart。
+_COLOR_ROLE_LABELS: dict[str, str] = {
+    "#ColorRole_Primary": "主色",
+    "#ColorRole_Secondary": "補助色",
+    "#ColorRole_Accent": "差し色",
+    "#ColorRole_Sub": "副色",
+}
+_COLOR_ROLE_ORDER: tuple[str, ...] = (
+    "#ColorRole_Primary",
+    "#ColorRole_Secondary",
+    "#ColorRole_Accent",
+    "#ColorRole_Sub",
+)
+_BODY_PART_LABELS: dict[str, str] = {
+    "#BodyPart_Head": "head",
+    "#BodyPart_Hair": "hair",
+    "#BodyPart_Eye": "eye",
+    "#BodyPart_Ear": "ear",
+    "#BodyPart_Cheek": "cheek",
+    "#BodyPart_Neck": "neck",
+    "#BodyPart_Shoulder": "shoulder",
+    "#BodyPart_Arm": "arm",
+    "#BodyPart_Hand": "hand",
+    "#BodyPart_Chest": "chest",
+    "#BodyPart_Back": "back",
+    "#BodyPart_Waist": "waist",
+    "#BodyPart_Leg": "leg",
+    "#BodyPart_Foot": "foot",
+    "#BodyPart_Tail": "tail",
+    "#BodyPart_Wing": "wing",
+    "#BodyPart_Interchangeable": "interchangeable parts",
+    "#BodyPart_FaceMaking": "face makeup",
+}
+# `#Hexcode_Color` = #RRGGBB / #RRGGBBAA。DB 側の型に合わせて検証する。
+_HEXCODE_RE = re.compile(r"^#(?:[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$")
+# 副色は 1 レコードあたり数件入りうるため、プロンプト肥大を避けて上限を設ける。
+_COLOR_PALETTE_SUB_LIMIT = 4
+
+
+def _hashtag_fallback_label(hashtag: str) -> str:
+    """未知の `#Enum_Value` を人間可読ラベルへ落とす (DB 側の列挙値追加に耐えるため)。"""
+    tail = hashtag.split("_", 1)[-1] if "_" in hashtag else hashtag.lstrip("#")
+    return re.sub(r"(?<!^)(?=[A-Z])", " ", tail).lower()
+
+
+def extract_color_palette(record: dict[str, Any], form: str) -> list[dict[str, Any]]:
+    """`ColorPalette` から指定 form 向けの配色エントリを整列して返す。
+
+    creations-db 2026-07 で新設された構造化フィールド。設定画のカラーチップから
+    実測した作者指定の HEX で、`AppliesTo` に適用部位が入る。
+    `Formation` が指定 form または null (両形態共通) のエントリのみを対象とし、
+    Role を 主色 → 補助色 → 差し色 → 副色 の順に並べる。
+
+    `ColorPalette` を持たないレコードでは `ai_hints.common.palette_priority`
+    (上流で ColorPalette から機械導出される 3 スロット) へフォールバックする。
+    """
+    db_record = record.get("db_record") or {}
+    data = record.get("data") or {}
+    palette = db_record.get("ColorPalette") or data.get("ColorPalette")
+
+    entries: list[dict[str, Any]] = []
+    if isinstance(palette, list):
+        for entry in palette:
+            if not isinstance(entry, dict):
+                continue
+            entry_formation = entry.get("Formation")
+            if entry_formation is not None and entry_formation != form:
+                continue
+            hex_code = str(entry.get("Hex") or "").strip()
+            if not _HEXCODE_RE.match(hex_code):
+                continue
+            role = str(entry.get("Role") or "")
+            applies_to = [
+                _BODY_PART_LABELS.get(str(p), _hashtag_fallback_label(str(p)))
+                for p in (entry.get("AppliesTo") or [])
+                if str(p).strip()
+            ]
+            entries.append(
+                {
+                    "role": role,
+                    "role_ja": _COLOR_ROLE_LABELS.get(role, _hashtag_fallback_label(role)),
+                    "hex": hex_code.upper(),
+                    "name": str(entry.get("ColorName_EN") or entry.get("ColorName_JP") or "").strip(),
+                    "applies_to": applies_to,
+                    "note": str(entry.get("Note_EN") or entry.get("Note_JP") or "").strip(),
+                }
+            )
+
+    if entries:
+        def _sort_key(item: dict[str, Any]) -> int:
+            role = item["role"]
+            return _COLOR_ROLE_ORDER.index(role) if role in _COLOR_ROLE_ORDER else len(
+                _COLOR_ROLE_ORDER
+            )
+
+        entries.sort(key=_sort_key)
+        sub = [e for e in entries if e["role"] == "#ColorRole_Sub"]
+        if len(sub) > _COLOR_PALETTE_SUB_LIMIT:
+            keep = {id(e) for e in sub[:_COLOR_PALETTE_SUB_LIMIT]}
+            entries = [
+                e for e in entries if e["role"] != "#ColorRole_Sub" or id(e) in keep
+            ]
+        return entries
+
+    # フォールバック: ColorPalette 未整備のレコード / 作品向け。
+    common = (record.get("ai_hints") or {}).get("common") or {}
+    priority = common.get("palette_priority") or {}
+    for slot, role in (
+        ("primary", "#ColorRole_Primary"),
+        ("secondary", "#ColorRole_Secondary"),
+        ("accent", "#ColorRole_Accent"),
+    ):
+        hex_code = str(priority.get(slot) or "").strip()
+        if not _HEXCODE_RE.match(hex_code):
+            continue
+        entries.append(
+            {
+                "role": role,
+                "role_ja": _COLOR_ROLE_LABELS[role],
+                "hex": hex_code.upper(),
+                "name": "",
+                "applies_to": [],
+                "note": "",
+            }
+        )
+    return entries
+
+
+def _format_color_palette_lines(entries: list[dict[str, Any]]) -> list[str]:
+    """配色エントリを `- 主色 #FF8682 (coral) : chest, hair` 形式の行へ整形する。"""
+    lines: list[str] = []
+    for entry in entries:
+        line = f"- {entry['role_ja']} {entry['hex']}"
+        if entry["name"]:
+            line += f" ({entry['name']})"
+        if entry["applies_to"]:
+            line += f" : {', '.join(entry['applies_to'])}"
+        if entry["note"]:
+            line += f" — {entry['note']}"
+        lines.append(line)
+    return lines
+
+
+def _build_color_palette_block(record: dict[str, Any], form: str) -> str:
+    """`[配色仕様]` プロンプトブロックを生成する。配色が無ければ空文字。
+
+    HEX は DB の実測値 (作者が設定画に描いたカラーチップ) であり、参照画像と同じ
+    配色を指す。両者が食い違って見える場合は参照画像を優先させる (印刷・撮影差で
+    HEX がわずかにずれることがあるため、色相の指針として使わせる)。
+    """
+    entries = extract_color_palette(record, form)
+    if not entries:
+        return ""
+    body = "\n".join(_format_color_palette_lines(entries))
+    return (
+        "[配色仕様 (DB実測値・遵守すること)]\n"
+        f"{body}\n"
+        "- 上記の色相・明度をキャラクターの該当部位へ忠実に適用すること\n"
+        "- 参照画像の配色と矛盾して見える場合は参照画像を優先すること\n"
+    )
+
+
 @dataclass(frozen=True)
 class _AmbiguousFieldSpec:
     """`#DictIndex_withAbout[]` 的な複数候補リストを持ちうるフィールドの宣言。
@@ -2192,6 +2355,8 @@ def build_dalle_prompt(
     number_print_section = (number_print_block + "\n\n") if number_print_block else ""
     revision_block_text = _build_revision_block(revisions)
     revision_section = (revision_block_text + "\n\n") if revision_block_text else ""
+    color_palette_block = _build_color_palette_block(record, form)
+    color_palette_section = (color_palette_block + "\n") if color_palette_block else ""
 
     # [素体特徴] — manifest が空なら db_record["AIHints"] → silhouette_features の順でフォールバック
     _body_nld = _sanitize_natural_language_description(common.get('natural_language_description', ''))
@@ -2223,6 +2388,7 @@ def build_dalle_prompt(
         f"- {identity_tags}\n"
         f"- {immutable_traits}\n"
         f"- {form_tags}\n\n"
+        f"{color_palette_section}"
         f"{current_focus_block}"
         f"{form_common_block}\n\n"
         f"[混入禁止 (別形態由来)]\n{cross_form_block}\n\n"
@@ -2250,7 +2416,8 @@ def build_gemini_prompt(
     form_data = (hints.get("forms") or {}).get(form) or {}
     references = collect_reference_images(record, form=form)
 
-    palette = common.get("palette_priority") or {}
+    color_palette_block = _build_color_palette_block(record, form)
+    color_palette_section = (color_palette_block + "\n") if color_palette_block else ""
     identity_tags = ", ".join(common.get("identity_tags") or [])
     form_tags = ", ".join(form_data.get("form_tags") or [])
     form_silhouette_body, form_silhouette_attached = _extract_silhouette_notes_for_prompt(
@@ -2408,17 +2575,14 @@ def build_gemini_prompt(
         f"- {identity_tags}\n"
         f"- 不変属性: {', '.join(_filter_immutable_traits_by_form(common.get('immutable_traits') or [], form)) or '(なし)'}\n"
         f"- {form_tags}\n\n"
+        f"{color_palette_section}"
         f"{silhouette_block}"
         f"{form_common_block}\n\n"
         f"{current_focus_block}"
         f"[混入禁止 (別形態由来)]\n{cross_form_block}\n\n"
         f"[避けるべき要素]\n{current_negative}\n\n"
         f"{art_style_block}"
-        f"{scene_block}"
-        f"[パレット参考]\n"
-        f"primary: {palette.get('primary', '')}\n"
-        f"secondary: {palette.get('secondary', '')}\n"
-        f"accent: {palette.get('accent', '')}\n\n"
+        f"{scene_block}\n\n"
         "[再確認 - 絶対禁止] 画像内に文字・テキスト・ラベル・サインを一切描かないこと。"
         " Do NOT render any text, words, labels, or signs anywhere in the image."
     )
