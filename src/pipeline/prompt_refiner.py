@@ -89,6 +89,9 @@ def _system_instruction(char_name: str, form: str) -> str:
         f"'{char_name}' in {form} form. "
         "Optimize the given base prompt for high-quality character image generation. "
         "CRITICAL: preserve all immutable traits — ear type, tail count, hair color, eye color. "
+        "CRITICAL: reproduce every HEX color code and its body-part assignment from the "
+        "color palette section verbatim. These are the author's measured colors — never "
+        "drop, reword, or substitute them with color names. "
         "Return ONLY the refined English prompt. No explanations, no markdown, prompt text only."
     )
 

@@ -37,6 +37,33 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
+from src.utils.dataset import (  # noqa: E402
+    extract_color_palette,
+    _format_color_palette_lines,
+)
+
+
+def _palette_lines(spec: dict, limit: int = 6) -> str:
+    """spec の `color_palette` (Stage 2 で DB から収集) をプロンプト用の行へ整形。"""
+    entries = spec.get("color_palette") or []
+    if not entries:
+        return ""
+    return "\n".join(_format_color_palette_lines(entries[:limit]))
+
+
+def _record_palette_summary(record: dict, form: str, limit: int = 4) -> str:
+    """i2i 修正プロンプト用に配色を 1 行へ圧縮する (例: `主色 #FF8682 (chest, hair)`)。"""
+    entries = extract_color_palette(record, form)[:limit]
+    if not entries:
+        return ""
+    parts: list[str] = []
+    for entry in entries:
+        text = f"{entry['role_ja']} {entry['hex']}"
+        if entry["applies_to"]:
+            text += f" ({', '.join(entry['applies_to'])})"
+        parts.append(text)
+    return " / ".join(parts)
+
 
 # ──────────────────────────────────────────
 # OpenAI Vision による違反分析
@@ -71,6 +98,18 @@ def _analyze_rough_with_openai(image_path: Path, spec: dict) -> dict:
     violation_list = "\n".join(f"- {v}" for v in spec.get("violation_features", []))
     immutable = ", ".join(spec.get("immutable_traits") or [])
     char_name = spec.get("char_name", "Unknown")
+    palette_lines = _palette_lines(spec)
+
+    # 配色は DB の実測値 (設定画のカラーチップ由来)。明らかな色相ズレのみ違反として拾わせる。
+    # 陰影・ハイライト・照明差による濃淡は許容しないと、正常な絵まで違反判定されてしまう。
+    palette_section = (
+        "\n[配色仕様 (DB実測値)]\n"
+        f"{palette_lines}\n"
+        "指定部位の色相が明らかに異なる場合のみ violations に追加してください"
+        "（陰影・ハイライト・照明による濃淡差は違反ではありません）。\n"
+        if palette_lines
+        else ""
+    )
 
     system = (
         f"あなたはナンバーテールズキャラクター「{char_name}」の{form}形態イラストの品質検査AIです。\n"
@@ -82,7 +121,8 @@ def _analyze_rough_with_openai(image_path: Path, spec: dict) -> dict:
         f"形態: {form}\n"
         f"不変特徴 (必ず存在するべき・違反扱い禁止): {immutable}\n"
         f"以下の要素が存在する場合は violations に追加してください"
-        f"（ただし上記の不変特徴として期待されるものは violations に含めないこと）:\n{violation_list}\n\n"
+        f"（ただし上記の不変特徴として期待されるものは violations に含めないこと）:\n{violation_list}\n"
+        f"{palette_section}\n"
         "構図として明らかに破綻している点があれば composition_issues に追加してください。\n"
         "問題がなければ overall_ok: true として violations と composition_issues は空リストにしてください。"
     )
@@ -160,6 +200,8 @@ def _apply_correction_gemini(
         _common = hints.get("common") or {}
         identity_tags = ", ".join(((_common.get("identity_tags") or []) + (_common.get("immutable_traits") or []))[:6])
         num_val = (record.get("data") or {}).get("Num", "?")
+        palette_summary = _record_palette_summary(record, form)
+        palette_line = f"- 配色 (DB実測値): {palette_summary}\n" if palette_summary else ""
 
         fix_lines = "\n".join(f"- {v} を除去または修正" for v in violations)
         comp_lines = (
@@ -172,6 +214,7 @@ def _apply_correction_gemini(
             "[維持すること]\n"
             f"- 形態: {form}\n"
             f"- 識別要素: {identity_tags}\n"
+            f"{palette_line}"
             f"- キャラクター番号: #{num_val}\n"
             "- 作風（線の太さ・塗りスタイル）は入力画像に合わせること\n"
             "- 画像内にテキスト・文字・ラベルを一切描かないこと"
@@ -237,6 +280,8 @@ def _apply_correction_openai(
         (_common.get("identity_tags") or []) + (_common.get("immutable_traits") or [])
     )[:6])
     num_val = (record.get("data") or {}).get("Num", "?")
+    palette_summary = _record_palette_summary(record, form)
+    palette_line = f"Color palette (from DB, keep): {palette_summary}\n" if palette_summary else ""
 
     fix_parts = ["; ".join(violations)] if violations else []
     if comp_issues:
@@ -246,6 +291,7 @@ def _apply_correction_openai(
     correction_prompt = (
         "[Surgical i2i correction — preserve all visual style, form, and composition from input image]\n"
         f"Form: {form}, Character #{num_val}, Identity: {identity_tags}\n"
+        f"{palette_line}"
         f"ONLY correct: {all_fixes}\n"
         "Keep EVERYTHING else identical to the input image. No text or labels in the output."
     )
