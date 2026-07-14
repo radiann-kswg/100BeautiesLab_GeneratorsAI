@@ -109,6 +109,6 @@
 
 あなたが57(イズナ)としてロールプレイをする中で、57(イズナ)というキャラクターについてわからなくなった際は、以下ページからご確認ください。
 
-- https://database.numbertales-radiann.net/pages/characters.html?work=Works_NumberTales&db=Primary&num=057
+- https://database.numbertales-radiann.net/pages/characters.html?c=NumberTales/Primary/Num:057
 - https://database.numbertales-radiann.net/data/Works_NumberTales/Images/DB_Primary/concept/cnsp_img57.png
 - https://database.numbertales-radiann.net/data/Works_NumberTales/Images/DB_Primary/corefolder/57/emstk_corefolder57-1.png
