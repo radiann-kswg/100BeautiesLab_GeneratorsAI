@@ -80,6 +80,13 @@ class CorrectionMode(str, Enum):
     STAGE3 = "stage3"  # Stage 3 に差し戻してラフ再生成
 
 
+class RoughProvider(str, Enum):
+    """Stage 3 のラフ生成プロバイダ。"""
+
+    GEMINI = "gemini"          # Gemini Imagen のみ (既定)
+    SDXL_GUIDE = "sdxl-guide"  # SDXL でコアフォルダのアタリを作り Gemini の構図参照に使う (GCE VM 課金)
+
+
 class _Base(BaseModel):
     model_config = ConfigDict(
         str_strip_whitespace=True, validate_assignment=True, extra="forbid"
@@ -117,6 +124,14 @@ class GenerateCharacterInput(_Base):
     )
     skip_canva: bool = Field(default=False, description="True で Stage 5 の Canva フィニッシングをスキップ")
     correction_mode: CorrectionMode = Field(default=CorrectionMode.T2I, description="重度違反時の対処モード")
+    rough_provider: RoughProvider = Field(
+        default=RoughProvider.GEMINI,
+        description=(
+            "Stage 3 のラフ生成プロバイダ。'gemini'(既定)。'sdxl-guide' は SDXL でコアフォルダの"
+            "アタリ(構図/作風の下敷き)を生成し Gemini ラフの構図参照に使う(個体正確性は Gemini+DB が担う)。"
+            "GCE VM 起動を伴うため課金注意。単体キャラのみ対応。"
+        ),
+    )
     work_key: str = Field(default=DEFAULT_WORK_KEY, description="作品キー", max_length=100)
 
 
@@ -400,6 +415,7 @@ async def numbertales_generate_character(params: GenerateCharacterInput) -> str:
             - style/composition/background (str): 各種ヒント
             - skip_canva (bool): Stage 5 スキップ
             - correction_mode (CorrectionMode): 't2i' | 'stage3'
+            - rough_provider (RoughProvider): 'gemini'(既定) | 'sdxl-guide'(SDXLアタリをGemini構図参照に使う・GCE VM課金)
             - work_key (str): 作品キー
 
     Returns:
@@ -429,6 +445,7 @@ async def numbertales_generate_character(params: GenerateCharacterInput) -> str:
             field_overrides=p.field_overrides,
             skip_canva=p.skip_canva,
             correction_mode=p.correction_mode.value,
+            rough_provider=p.rough_provider.value,
             stage_callback=_make_stage_callback(_job_id),
         )
         return _run_and_publish(result)
