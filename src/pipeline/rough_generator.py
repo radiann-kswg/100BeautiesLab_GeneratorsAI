@@ -137,6 +137,38 @@ def retry_rough_images(
     return paths
 
 
+def _generate_sdxl_rough(
+    record: dict,
+    form: str,
+    stage_dir: Path,
+    count: int,
+    work_key: str,
+    scene: str,
+) -> list[Path]:
+    """SDXL+LoRA (GCE VM SSH バッチ) でラフを生成する (B案・併走用)。
+
+    失敗しても Gemini ラフのみで続行できるよう、例外はここで吸収して空リストを返す。
+    """
+    from src.sdxl.generate import generate_image as sdxl_generate
+
+    sdxl_dir = stage_dir / "sdxl"
+    try:
+        return sdxl_generate(
+            num=record["data"]["Num"],
+            form=form,
+            work_key=work_key,
+            count=count,
+            scene_tags=scene,
+            run_dir_override=sdxl_dir,
+        )
+    except SystemExit as err:
+        print(f"[WARN] Stage3 SDXL: {err}")
+        return []
+    except Exception as err:
+        print(f"[WARN] Stage3 SDXL 生成に失敗 (Gemini ラフのみで続行): {type(err).__name__}: {err}")
+        return []
+
+
 def generate_rough_images(
     record: dict,
     form: str,
@@ -149,6 +181,7 @@ def generate_rough_images(
     style: str = "",
     iterate_from: str | None = None,
     revisions: "str | list[str] | None" = None,
+    rough_provider: str = "gemini",
 ) -> dict[str, list[Path]]:
     """Adobe 構図ガイド + Gemini Imagen でラフ画像を生成する。
 
@@ -165,17 +198,23 @@ def generate_rough_images(
     style:        作風ヒント（同上）
     iterate_from: 前回生成画像のパス。指定時は i2i モードでラフを生成する。
     revisions:    修正指示（";"/改行区切り文字列 or list）。iterate_from と組み合わせて使用。
+    rough_provider: ラフ生成プロバイダ ("gemini" | "sdxl" | "both")。
+                    "sdxl"/"both" は GCE VM 起動を伴う (課金注意・docs/usage-generation.md 参照)。
+                    SDXL は i2i 非対応のため、iterate_from 指定時は Gemini 側のみ i2i になる。
 
     Returns
     -------
     {
         "adobe_guide": list[Path]  — Adobe で作成した構図ガイド画像
         "gemini":      list[Path]  — Gemini Imagen が生成したラフ画像
+        "sdxl":        list[Path]  — SDXL+LoRA が生成したラフ画像 (rough_provider が sdxl/both 時)
         "all":         list[Path]  — 上記すべての統合リスト
     }
     """
     stage_dir = pipeline_dir / "stage3_rough"
     stage_dir.mkdir(parents=True, exist_ok=True)
+    use_gemini = rough_provider in ("gemini", "both")
+    use_sdxl = rough_provider in ("sdxl", "both")
 
     # Step A: Adobe で構図ガイドを作成
     print(f"[Stage3-Adobe] DB 参照画像から構図ガイドを生成中 (form={form})...")
@@ -193,26 +232,42 @@ def generate_rough_images(
     gemini_prompt = prompts.get("base_gemini", "") or prompts.get("gemini", "")
     if scene and "シーン" not in gemini_prompt:
         gemini_prompt = gemini_prompt + f"\n\n[シーン・追加要望]\n- シーン: {scene}"
-    mode_label = "i2i" if iterate_from else "T2I"
-    print(f"[Stage3-Gemini] Imagen でラフ生成中 (count={count}, mode={mode_label})...")
-    gemini_paths = _generate_gemini_rough(
-        record, form,
-        prompt_override=gemini_prompt,
-        stage_dir=stage_dir,
-        count=count,
-        work_key=work_key,
-        iterate_from=iterate_from,
-        revisions=revisions,
-        extra_ref_paths=[str(p) for p in adobe_guide_paths],
-    )
+    gemini_paths: list[Path] = []
+    if use_gemini:
+        mode_label = "i2i" if iterate_from else "T2I"
+        print(f"[Stage3-Gemini] Imagen でラフ生成中 (count={count}, mode={mode_label})...")
+        gemini_paths = _generate_gemini_rough(
+            record, form,
+            prompt_override=gemini_prompt,
+            stage_dir=stage_dir,
+            count=count,
+            work_key=work_key,
+            iterate_from=iterate_from,
+            revisions=revisions,
+            extra_ref_paths=[str(p) for p in adobe_guide_paths],
+        )
 
-    all_paths = list(adobe_guide_paths) + list(gemini_paths)
+    # Step C: SDXL+LoRA でラフ生成 (B案・併走。GCE VM SSH バッチのため課金注意)
+    sdxl_paths: list[Path] = []
+    if use_sdxl:
+        print(f"[Stage3-SDXL] Illustrious-XL + 作風LoRA でラフ生成中 (count={count}, VM経由)...")
+        sdxl_paths = _generate_sdxl_rough(
+            record, form,
+            stage_dir=stage_dir,
+            count=count,
+            work_key=work_key,
+            scene=scene,
+        )
+
+    all_paths = list(adobe_guide_paths) + list(gemini_paths) + list(sdxl_paths)
     print(
         f"[Stage3] done - 構図ガイド: {len(adobe_guide_paths)} / "
-        f"Gemini ラフ: {len(gemini_paths)} / total: {len(all_paths)} files"
+        f"Gemini ラフ: {len(gemini_paths)} / SDXL ラフ: {len(sdxl_paths)} / "
+        f"total: {len(all_paths)} files"
     )
     return {
         "adobe_guide": adobe_guide_paths,
         "gemini": gemini_paths,
+        "sdxl": sdxl_paths,
         "all": all_paths,
     }

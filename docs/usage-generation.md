@@ -352,6 +352,55 @@ python -m src.canva.generate --num 57 --from-image <path> --dry-run
 
 > Canva で「新規生成」したい場合は MCP ワークフロー ([`usage-mcp-canva-adobe.md`](usage-mcp-canva-adobe.md)) を使う。
 
+### 3-5-3. SDXL + 作風LoRA — `src.sdxl.generate` (B案・GCE VM SSH バッチ)
+
+Illustrious-XL v0.1 + コアフォルダ作風LoRA (`nt-corefolder-v1-000004.safetensors`, エポック4) で
+ラフを生成するプロバイダ。推論は GCE VM `lora-l4-trial` 上で行い、gcloud ssh/scp で結果を回収する。
+計画書: `_ideas/sdxl-provider-plan-v1.md`
+
+```powershell
+# dry-run (gcloud コマンド列の確認のみ・VM 操作なし・課金ゼロ)
+python -m src.sdxl.generate --num 57 --form corefolder --count 2 --dry-run
+
+# 本番 (VM 起動を伴う = スポットL4課金。事前に RUN 予定を共有すること)
+python -m src.sdxl.generate --num 57 --form corefolder --count 3 `
+    --scene-tags "reading a book, library"
+```
+
+| env | 役割 |
+| --- | --- |
+| `SDXL_GCP_PROJECT` | GCP プロジェクト (default: `claude-radiannkswg`) |
+| `SDXL_VM_NAME` / `SDXL_VM_ZONE` | 推論 VM (default: `lora-l4-trial` / `asia-east1-b`) |
+| `SDXL_REMOTE_WORKDIR` | VM 上の作業ディレクトリ (default: `/home/s-chi/sdxl-infer`) |
+| `SDXL_REMOTE_BASE_MODEL` | (必須) VM 上の Illustrious-XL チェックポイント絶対パス |
+| `SDXL_REMOTE_LORA` | (必須) VM 上の LoRA 重み絶対パス |
+| `SDXL_LORA_SCALE` | LoRA 適用強度 (default: `0.8`) |
+
+| SDXL 専用フラグ | 役割 |
+| --- | --- |
+| `--scene-tags` | シーンのタグ列 (英語推奨。WD14 タグ体系) |
+| `--seed` | 乱数シード固定 |
+| `--keep-vm` | 生成後に VM を停止しない (連続実行用・課金継続注意) |
+| `--dry-run` | gcloud コマンド表示のみ (課金ゼロ) |
+
+- プロンプトは `src/sdxl/prompt_map.py` が「trigger word (`nt-corefolder`) + 既定タグ +
+  DB 定義色タグ (ColorPalette → `yellow arms` 等へ自動変換) + シーンタグ」に変換する。
+- 生成後は VM を**自動停止**する (失敗時は手動停止コマンドを警告表示)。
+- v1 は `corefolder` 形態のみ (humanoid の作風LoRAは未学習)。
+- VM 側前提スクリプト: `scripts/sdxl_vm/infer_sdxl_lora.py` (client が自動転送。初回のみ
+  VM に `pip install diffusers transformers accelerate safetensors` が必要)。
+
+**パイプライン統合 (`--rough-provider`)**: `src.pipeline.image_pipeline` に
+`--rough-provider {gemini|sdxl|both}` を追加済み (既定 `gemini`・完全後方互換)。
+`both` (併走式) では Gemini ラフと SDXL ラフの両方が Stage 4 (違反修正) へ渡る。
+合同生成 (`--nums`) は未対応 (gemini 固定)。
+
+```powershell
+# 併走式: Gemini + SDXL 両方のラフから Stage 4/5 を回す
+python -m src.pipeline.image_pipeline --num 57 --form corefolder `
+    --scene "図書館で本を読んでいるシーン" --rough-provider both --skip-canva
+```
+
 ---
 
 ## 4. バッチ実行 — `src.batch_generate`

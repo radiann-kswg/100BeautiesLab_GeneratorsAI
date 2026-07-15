@@ -151,6 +151,7 @@ def run_image_pipeline(
     correction_mode: str = "t2i",
     iterate_from: str | None = None,
     revisions: "str | list[str] | None" = None,
+    rough_provider: str = "gemini",
     stage_callback: "Callable[[str, dict, str], None] | None" = None,
 ) -> PipelineResult:
     """画像生成パイプライン全体 (Stage 1→2→3→4→5) を実行する。
@@ -176,6 +177,8 @@ def run_image_pipeline(
     iterate_from:    前回生成画像のパス (ファイルまたはrun-dir、またはGCS URL)。
                      指定時は Stage 3 が i2i モードになる。Stage 4/5 は通常通り実行。
     revisions:       修正指示 (";"/改行区切り文字列 or list)。iterate_from と組み合わせて使用。
+    rough_provider:  Stage 3 のラフ生成プロバイダ ("gemini" | "sdxl" | "both")。
+                     "sdxl"/"both" は GCE VM 起動を伴う (課金注意)。既定は "gemini"。
     stage_callback:  ステージ完了時コールバック: (stage_name, stage_paths_dict, pipeline_dir_str) → None。
                      Stage3/4 完了直後に呼ばれ、GCS 中間アップロードや部分結果保存に利用される。
 
@@ -285,12 +288,13 @@ def run_image_pipeline(
     # Stage 3: ラフ 5 案生成 (Adobe + Gemini)
     # ──────────────────────────────────────
     stage3_mode = f"i2i ({iterate_from})" if iterate_from else "T2I"
-    print(f"\n[=] Stage 3: ラフ {_ROUGH_COUNT} 案生成 (mode={stage3_mode})")
+    print(f"\n[=] Stage 3: ラフ {_ROUGH_COUNT} 案生成 (mode={stage3_mode}, provider={rough_provider})")
     rough_results = generate_rough_images(
         record, form, prompts=prompts,
         pipeline_dir=pipeline_dir, count=_ROUGH_COUNT, work_key=work_key,
         scene=scene, background=background, style=style,
         iterate_from=iterate_from, revisions=revisions,
+        rough_provider=rough_provider,
     )
     result.stage3_paths = {k: [str(p) for p in v] for k, v in rough_results.items()}
     if stage_callback:
@@ -1159,6 +1163,16 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--rough-provider", default="gemini", dest="rough_provider",
+        choices=["gemini", "sdxl", "both"],
+        help=(
+            "Stage 3 のラフ生成プロバイダ (既定: gemini)。\n"
+            "  sdxl: Illustrious-XL + 作風LoRA (GCE VM SSH バッチ・課金注意)\n"
+            "  both: Gemini と SDXL の両方を生成して Stage 4 へ渡す (併走式)\n"
+            "単体キャラ実行のみ対応。合同 (--nums) では gemini 固定。"
+        ),
+    )
+    parser.add_argument(
         "--prefer-gemini-parse", action="store_true",
         help="--natural / --story のパース時に Gemini を OpenAI より優先する",
     )
@@ -1277,6 +1291,7 @@ def main() -> None:
             correction_mode=args.correction_mode,
             iterate_from=args.iterate_from,
             revisions=args.revisions,
+            rough_provider=args.rough_provider,
         )
         print(f"\n[完了] ステータス: {result.status}")
         if result.scene_used:
@@ -1293,9 +1308,14 @@ def main() -> None:
             print(f"  修正済みラフ (Stage4): {len(s4_all)} 枚")
         if s3_gemini:
             print(f"  ラフ (Stage3): Gemini {len(s3_gemini)} 枚")
+        s3_sdxl = result.stage3_paths.get("sdxl") or []
+        if s3_sdxl:
+            print(f"  ラフ (Stage3): SDXL {len(s3_sdxl)} 枚")
 
     else:
         # 2 件以上の --nums → 全員を 1 枚に合同生成
+        if args.rough_provider != "gemini":
+            print("[WARN] --rough-provider は合同生成 (--nums) では未対応です。gemini で続行します。")
         combined_nums = [cp["num"] for cp in char_params]
         combined_scene = char_params[0].get("scene", "") or args.scene
         combined_forms = [cp.get("form", args.form) for cp in char_params]
