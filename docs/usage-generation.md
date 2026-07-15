@@ -375,6 +375,7 @@ python -m src.sdxl.generate --num 57 --form corefolder --count 3 `
 | `SDXL_REMOTE_BASE_MODEL` | (必須) VM 上の Illustrious-XL チェックポイント絶対パス |
 | `SDXL_REMOTE_LORA` | (必須) VM 上の LoRA 重み絶対パス |
 | `SDXL_LORA_SCALE` | LoRA 適用強度 (default: `0.8`) |
+| `SDXL_REMOTE_PYTHON` | 推論に使う VM 上の python (default: `python3`)。diffusers/peft 入りの venv 絶対パスを推奨 (例: `/home/s-chi/sd-scripts/venv/bin/python`) |
 
 | SDXL 専用フラグ | 役割 |
 | --- | --- |
@@ -387,8 +388,12 @@ python -m src.sdxl.generate --num 57 --form corefolder --count 3 `
   DB 定義色タグ (ColorPalette → `yellow arms` 等へ自動変換) + シーンタグ」に変換する。
 - 生成後は VM を**自動停止**する (失敗時は手動停止コマンドを警告表示)。
 - v1 は `corefolder` 形態のみ (humanoid の作風LoRAは未学習)。
-- VM 側前提スクリプト: `scripts/sdxl_vm/infer_sdxl_lora.py` (client が自動転送。初回のみ
-  VM に `pip install diffusers transformers accelerate safetensors` が必要)。
+- VM 側前提スクリプト: `scripts/sdxl_vm/infer_sdxl_lora.py` (client が自動転送)。
+- **VM 初回セットアップ (一度きり)**: 推論は diffusers + peft が必要。kohya 学習環境の venv
+  (`/home/s-chi/sd-scripts/venv`) に torch/diffusers が同居しているので、これを
+  `SDXL_REMOTE_PYTHON` に指定して流用する。venv に peft が無い場合は一度だけ
+  `<venv>/bin/python -m pip install peft` を実行する (2026-07-15 に `peft 0.19.1` 導入済み)。
+  システムの `python3` には diffusers が無いため、既定のままだと `ModuleNotFoundError` になる。
 
 **パイプライン統合 (`--rough-provider`)**: `src.pipeline.image_pipeline` に
 `--rough-provider {gemini|sdxl|both}` を追加済み (既定 `gemini`・完全後方互換)。
