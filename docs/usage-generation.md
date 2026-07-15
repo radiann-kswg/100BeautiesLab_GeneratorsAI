@@ -395,16 +395,26 @@ python -m src.sdxl.generate --num 57 --form corefolder --count 3 `
   `<venv>/bin/python -m pip install peft` を実行する (2026-07-15 に `peft 0.19.1` 導入済み)。
   システムの `python3` には diffusers が無いため、既定のままだと `ModuleNotFoundError` になる。
 
-**パイプライン統合 (`--rough-provider`)**: `src.pipeline.image_pipeline` に
-`--rough-provider {gemini|sdxl|both}` を追加済み (既定 `gemini`・完全後方互換)。
-`both` (併走式) では Gemini ラフと SDXL ラフの両方が Stage 4 (違反修正) へ渡る。
-合同生成 (`--nums`) は未対応 (gemini 固定)。
+**パイプライン統合 (`--rough-provider sdxl-guide`)**: `src.pipeline.image_pipeline` に
+`--rough-provider {gemini|sdxl-guide}` を用意 (既定 `gemini`)。
+`sdxl-guide` は SDXL でコアフォルダの **アタリ(構図/作風の下敷き)** を生成し、Gemini ラフの
+追加参照 (`extra_ref_locals`) として渡す。個体の色・番号・固有アクセサリなどの正確性は
+Gemini + DB 公式参照が担い、SDXL アタリは構図/作風の下敷きに徹する。
+
+- SDXL アタリ自体は `stage3_rough/sdxl_guide/` に保存され、**Stage 4 (違反修正) / Stage 5 (合成) には流さない**
+  (個体を描き分けられない SDXL が最終画の作風アンカーに化けるのを防ぐ)。
+- Adobe 構図ガイド (PIL/Lightroom) も同じ追加参照チャネルで Gemini に渡る。
+- 旧 `--rough-provider {sdxl|both}` (併走ピア) は非推奨。指定すると警告のうえ `sdxl-guide` に読み替える。
+- 合同生成 (`--nums`) は未対応 (gemini 固定)。
 
 ```powershell
-# 併走式: Gemini + SDXL 両方のラフから Stage 4/5 を回す
+# アタリ式: SDXL のコアフォルダアタリを Gemini ラフの構図参照に使う
 python -m src.pipeline.image_pipeline --num 57 --form corefolder `
-    --scene "図書館で本を読んでいるシーン" --rough-provider both --skip-canva
+    --scene "図書館で本を読んでいるシーン" --rough-provider sdxl-guide --skip-canva
 ```
+
+> `python -m src.sdxl.generate` (単体) は raw アタリを直接得る用途 (「コアフォルダはどんな見た目か」の
+> ベース組み立て) として据え置き。パイプラインの個体生成に組み込むときは `--rough-provider sdxl-guide` を使う。
 
 ---
 

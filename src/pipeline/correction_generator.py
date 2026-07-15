@@ -391,12 +391,12 @@ def correct_rough_images(
     stage_dir = pipeline_dir / "stage4_correct"
     stage_dir.mkdir(parents=True, exist_ok=True)
 
-    # Gemini ラフ + OpenAI ラフ（gpt-image-1 ハイブリッド生成分）+ SDXL ラフ（B案・併走分）を合算する。
-    # "all" には Adobe 構図ガイドも含まれるため、生成物のみを対象にする。
+    # Gemini ラフ + OpenAI ラフ（gpt-image-1 ハイブリッド生成分）を補正対象に合算する。
+    # SDXL アタリ ("sdxl_guide") と Adobe 構図ガイド ("adobe_guide") は「Gemini への構図参照(下敷き)」で
+    # あり個体正確な最終画ではないため、Stage4 の補正ベースには含めない（"all" も使わない）。
     rough_paths: list[Path] = (
         list(rough_results.get("gemini") or []) +
-        list(rough_results.get("openai") or []) +
-        list(rough_results.get("sdxl") or [])
+        list(rough_results.get("openai") or [])
     )
     if not rough_paths:
         print("[Stage4] ラフ画像がありません。Stage 4 をスキップします。")

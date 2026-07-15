@@ -1164,11 +1164,12 @@ def main() -> None:
     )
     parser.add_argument(
         "--rough-provider", default="gemini", dest="rough_provider",
-        choices=["gemini", "sdxl", "both"],
+        choices=["gemini", "sdxl-guide", "sdxl", "both"],
         help=(
             "Stage 3 のラフ生成プロバイダ (既定: gemini)。\n"
-            "  sdxl: Illustrious-XL + 作風LoRA (GCE VM SSH バッチ・課金注意)\n"
-            "  both: Gemini と SDXL の両方を生成して Stage 4 へ渡す (併走式)\n"
+            "  sdxl-guide: SDXL でコアフォルダのアタリ(構図/作風の下敷き)を生成し、\n"
+            "              Gemini ラフの追加参照に渡す (個体正確性は Gemini+DB が担う・GCE VM 課金注意)\n"
+            "  sdxl / both: 旧・併走ピアモード (非推奨)。警告のうえ sdxl-guide に読み替える。\n"
             "単体キャラ実行のみ対応。合同 (--nums) では gemini 固定。"
         ),
     )
@@ -1184,6 +1185,14 @@ def main() -> None:
         ),
     )
     args = parser.parse_args()
+
+    # 旧・併走ピアモード (sdxl/both) は廃止。sdxl-guide (アタリ→Gemini参照) に読み替える。
+    if args.rough_provider in ("sdxl", "both"):
+        print(
+            f"[WARN] --rough-provider {args.rough_provider} は廃止されました。"
+            "sdxl-guide (SDXL アタリを Gemini の構図参照に使う) に読み替えます。"
+        )
+        args.rough_provider = "sdxl-guide"
 
     field_override: dict[str, str] = {}
     for kv in (args.field_override or []):
@@ -1308,14 +1317,14 @@ def main() -> None:
             print(f"  修正済みラフ (Stage4): {len(s4_all)} 枚")
         if s3_gemini:
             print(f"  ラフ (Stage3): Gemini {len(s3_gemini)} 枚")
-        s3_sdxl = result.stage3_paths.get("sdxl") or []
-        if s3_sdxl:
-            print(f"  ラフ (Stage3): SDXL {len(s3_sdxl)} 枚")
+        s3_sdxl_guide = result.stage3_paths.get("sdxl_guide") or []
+        if s3_sdxl_guide:
+            print(f"  アタリ (Stage3): SDXL {len(s3_sdxl_guide)} 枚 (Gemini 参照用)")
 
     else:
         # 2 件以上の --nums → 全員を 1 枚に合同生成
         if args.rough_provider != "gemini":
-            print("[WARN] --rough-provider は合同生成 (--nums) では未対応です。gemini で続行します。")
+            print("[WARN] --rough-provider (sdxl-guide) は合同生成 (--nums) では未対応です。gemini で続行します。")
         combined_nums = [cp["num"] for cp in char_params]
         combined_scene = char_params[0].get("scene", "") or args.scene
         combined_forms = [cp.get("form", args.form) for cp in char_params]
