@@ -69,8 +69,14 @@ def _record_palette_summary(record: dict, form: str, limit: int = 4) -> str:
 # OpenAI Vision による違反分析
 # ──────────────────────────────────────────
 
-def _analyze_rough_with_openai(image_path: Path, spec: dict) -> dict:
+def _analyze_rough_with_openai(
+    image_path: Path, spec: dict, ref_image_path: Path | None = None
+) -> dict:
     """OpenAI Vision でラフ画像の違反特徴・構図問題を分析する。
+
+    ref_image_path が指定されている場合は公式 DB 参照画像を 2 枚目として添付し、
+    左右の向き・非対称要素の配置が原典と反転していないかも検査する
+    （i2i 起点画像由来の左右反転を Stage 4 で検出・修正するため）。
 
     Returns
     -------
@@ -111,6 +117,19 @@ def _analyze_rough_with_openai(image_path: Path, spec: dict) -> dict:
         else ""
     )
 
+    # ── 左右整合チェック (公式 DB 参照画像がある場合のみ) ──
+    has_ref = bool(ref_image_path and ref_image_path.exists())
+    chirality_section = (
+        "\n[左右整合チェック]\n"
+        "2枚目の画像は公式 DB 参照 (原典) です。\n"
+        "1枚目 (検査対象) の左右の向き・非対称要素の配置 (尻尾の束構成・マーキング位置・"
+        "髪の分け目など) が原典と左右反転している場合は、"
+        "violations に「左右反転: <反転している要素>」の形式で追加してください。\n"
+        "ポーズや構図の違いによる自然な差・左右対称な要素は違反ではありません。\n"
+        if has_ref
+        else ""
+    )
+
     system = (
         f"あなたはナンバーテールズキャラクター「{char_name}」の{form}形態イラストの品質検査AIです。\n"
         "画像に対して以下を確認し、**JSONのみ**を返してください（説明文・マークダウン不要）:\n"
@@ -122,14 +141,27 @@ def _analyze_rough_with_openai(image_path: Path, spec: dict) -> dict:
         f"不変特徴 (必ず存在するべき・違反扱い禁止): {immutable}\n"
         f"以下の要素が存在する場合は violations に追加してください"
         f"（ただし上記の不変特徴として期待されるものは violations に含めないこと）:\n{violation_list}\n"
-        f"{palette_section}\n"
+        f"{palette_section}"
+        f"{chirality_section}\n"
         "構図として明らかに破綻している点があれば composition_issues に追加してください。\n"
         "問題がなければ overall_ok: true として violations と composition_issues は空リストにしてください。"
     )
 
-    ext = image_path.suffix.lstrip(".").lower()
-    mime = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "webp": "image/webp"}.get(ext, "image/png")
-    img_b64 = base64.b64encode(image_path.read_bytes()).decode("utf-8")
+    def _encode_image(path: Path) -> tuple[str, str]:
+        ext = path.suffix.lstrip(".").lower()
+        mime = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "webp": "image/webp"}.get(ext, "image/png")
+        return mime, base64.b64encode(path.read_bytes()).decode("utf-8")
+
+    mime, img_b64 = _encode_image(image_path)
+    content: list[dict] = [
+        {"type": "text", "text": user},
+        {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{img_b64}"}},
+    ]
+    if has_ref:
+        ref_mime, ref_b64 = _encode_image(ref_image_path)  # type: ignore[arg-type]
+        content.append(
+            {"type": "image_url", "image_url": {"url": f"data:{ref_mime};base64,{ref_b64}"}}
+        )
 
     try:
         client = OpenAI(api_key=api_key)
@@ -137,10 +169,7 @@ def _analyze_rough_with_openai(image_path: Path, spec: dict) -> dict:
             model=gpt_model,
             messages=[
                 {"role": "system", "content": system},
-                {"role": "user", "content": [
-                    {"type": "text", "text": user},
-                    {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{img_b64}"}},
-                ]},
+                {"role": "user", "content": content},
             ],
             max_tokens=500,
             response_format={"type": "json_object"},
@@ -362,8 +391,9 @@ def correct_rough_images(
     stage_dir = pipeline_dir / "stage4_correct"
     stage_dir.mkdir(parents=True, exist_ok=True)
 
-    # Gemini ラフ + OpenAI ラフ（gpt-image-1 ハイブリッド生成分）を合算する。
-    # "all" には Adobe 構図ガイドも含まれるため、生成物のみを対象にする。
+    # Gemini ラフ + OpenAI ラフ（gpt-image-1 ハイブリッド生成分）を補正対象に合算する。
+    # SDXL アタリ ("sdxl_guide") と Adobe 構図ガイド ("adobe_guide") は「Gemini への構図参照(下敷き)」で
+    # あり個体正確な最終画ではないため、Stage4 の補正ベースには含めない（"all" も使わない）。
     rough_paths: list[Path] = (
         list(rough_results.get("gemini") or []) +
         list(rough_results.get("openai") or [])
@@ -377,13 +407,24 @@ def correct_rough_images(
     needs_regen: list[Path] = []
     analysis_log: list[dict] = []
 
+    # 左右整合チェック用に、公式 DB 参照画像 (Stage 1 の ref_locals) の先頭 1 枚を分析へ添付する。
+    # i2i 起点画像 (LoRA 参照や前回 run) 由来の左右反転を原典比較で検出するため。
+    ref_image_path: Path | None = None
+    for _ref in (prompts.get("ref_locals") or []):
+        _ref_path = Path(_ref)
+        if _ref_path.exists():
+            ref_image_path = _ref_path
+            break
+    if ref_image_path:
+        print(f"[Stage4] 左右整合チェック用の原典参照: {ref_image_path.name}")
+
     for i, rough_path in enumerate(rough_paths, 1):
         if not rough_path.exists():
             print(f"[Stage4] rough_{i:02d}: ファイルが見つかりません。スキップ。")
             continue
 
         print(f"[Stage4] ({i}/{len(rough_paths)}) {rough_path.name} を分析中...")
-        analysis = _analyze_rough_with_openai(rough_path, char_spec)
+        analysis = _analyze_rough_with_openai(rough_path, char_spec, ref_image_path=ref_image_path)
 
         violations = analysis.get("violations") or []
         comp_issues = analysis.get("composition_issues") or []

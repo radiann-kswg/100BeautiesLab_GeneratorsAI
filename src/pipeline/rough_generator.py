@@ -41,7 +41,9 @@ def _generate_gemini_rough(
 
     iterate_from: 前回生成画像のパス。指定時は i2i モードになり、source が参照先頭に差し込まれる。
     revisions:    修正指示（";"/改行区切り文字列 or list）。iterate_from と組み合わせて使用。
-    extra_ref_paths: Adobe が作成した構図ガイドを参照画像の末尾に追加する。
+    extra_ref_paths: アタリ(SDXL)/Adobe 構図ガイドを Gemini の追加参照
+                     (extra_ref_locals) として前方に添付する。個体正確性は
+                     プロンプト本文と DB 公式参照画像が担い、アタリは構図/作風の下敷き。
     """
     from src.gemini.generate import generate_image
 
@@ -59,6 +61,17 @@ def _generate_gemini_rough(
         if rev_block and final_prompt:
             final_prompt = rev_block + "\n\n" + final_prompt
 
+    # アタリ/構図ガイドを添付する場合、参照の役割（構図の下敷き／個体はプロンプト・DB優先）を明示する。
+    if extra_ref_paths and final_prompt:
+        guide_header = (
+            "[参照画像の役割 — アタリ（構図・作風の下敷き）]\n"
+            "- 添付の参照画像はコアフォルダ形態の構図・レイアウト・作風の方向性を示すアタリです。\n"
+            "  シルエット・配置・塗りの雰囲気の下敷きとして参考にしてください。\n"
+            "- 個体の色・番号・固有アクセサリなどの識別要素は本プロンプトと（あれば）DB公式参照画像に従い、\n"
+            "  アタリ側の配色・崩れ・線の乱れは引き継がないこと。\n\n"
+        )
+        final_prompt = guide_header + final_prompt
+
     try:
         paths = generate_image(
             num=record["data"]["Num"],
@@ -68,8 +81,8 @@ def _generate_gemini_rough(
             count=count,
             prompt_override=final_prompt,
             iterate_from=iterate_from,
+            extra_ref_locals=extra_ref_paths or None,
         )
-        # 生成後、extra_ref_paths を run_meta に記録 (Gemini 側では参照添付が既に行われている)
         return paths
     except SystemExit as err:
         print(f"[WARN] Stage2 Gemini: {err}")
@@ -137,6 +150,40 @@ def retry_rough_images(
     return paths
 
 
+def _generate_sdxl_rough(
+    record: dict,
+    form: str,
+    stage_dir: Path,
+    count: int,
+    work_key: str,
+    scene: str,
+) -> list[Path]:
+    """SDXL+LoRA (GCE VM SSH バッチ) でコアフォルダのアタリを生成する (B案・アタリ用)。
+
+    出力は Gemini ラフ生成の構図参照 (extra_ref_locals) として使う下敷きで、
+    Stage4/5 の補正・合成対象には流さない。失敗しても Gemini ラフのみで続行できるよう、
+    例外はここで吸収して空リストを返す。
+    """
+    from src.sdxl.generate import generate_image as sdxl_generate
+
+    sdxl_dir = stage_dir / "sdxl_guide"
+    try:
+        return sdxl_generate(
+            num=record["data"]["Num"],
+            form=form,
+            work_key=work_key,
+            count=count,
+            scene_tags=scene,
+            run_dir_override=sdxl_dir,
+        )
+    except SystemExit as err:
+        print(f"[WARN] Stage3 SDXL: {err}")
+        return []
+    except Exception as err:
+        print(f"[WARN] Stage3 SDXL 生成に失敗 (Gemini ラフのみで続行): {type(err).__name__}: {err}")
+        return []
+
+
 def generate_rough_images(
     record: dict,
     form: str,
@@ -149,6 +196,7 @@ def generate_rough_images(
     style: str = "",
     iterate_from: str | None = None,
     revisions: "str | list[str] | None" = None,
+    rough_provider: str = "gemini",
 ) -> dict[str, list[Path]]:
     """Adobe 構図ガイド + Gemini Imagen でラフ画像を生成する。
 
@@ -165,19 +213,27 @@ def generate_rough_images(
     style:        作風ヒント（同上）
     iterate_from: 前回生成画像のパス。指定時は i2i モードでラフを生成する。
     revisions:    修正指示（";"/改行区切り文字列 or list）。iterate_from と組み合わせて使用。
+    rough_provider: ラフ生成プロバイダ ("gemini" | "sdxl-guide")。
+                    "sdxl-guide" は SDXL でコアフォルダのアタリ(構図/作風の下敷き)を生成し、
+                    Gemini ラフの追加参照(extra_ref_locals)として渡す。個体正確性は Gemini+DB が担う。
+                    GCE VM 起動を伴う (課金注意・docs/usage-generation.md 参照)。
+                    SDXL は i2i 非対応のため、iterate_from 指定時も Gemini 側のみ i2i になる。
 
     Returns
     -------
     {
-        "adobe_guide": list[Path]  — Adobe で作成した構図ガイド画像
-        "gemini":      list[Path]  — Gemini Imagen が生成したラフ画像
-        "all":         list[Path]  — 上記すべての統合リスト
+        "adobe_guide": list[Path]  — Adobe で作成した構図ガイド画像 (Gemini 参照に添付)
+        "gemini":      list[Path]  — Gemini Imagen が生成したラフ画像 (Stage4/5 へ渡る本体)
+        "sdxl_guide":  list[Path]  — SDXL が生成したアタリ (Gemini 参照に添付。Stage4/5 には流さない)
+        "all":         list[Path]  — 上記すべての統合リスト (空判定/表示用)
     }
     """
     stage_dir = pipeline_dir / "stage3_rough"
     stage_dir.mkdir(parents=True, exist_ok=True)
+    use_gemini = rough_provider in ("gemini", "sdxl-guide")
+    use_sdxl_guide = rough_provider == "sdxl-guide"
 
-    # Step A: Adobe で構図ガイドを作成
+    # Step A: Adobe で構図ガイドを作成 (Gemini 参照に添付する下敷き)
     print(f"[Stage3-Adobe] DB 参照画像から構図ガイドを生成中 (form={form})...")
     adobe_guide_paths = _generate_adobe_composition_guide(
         record, form, stage_dir, scene, background, style, work_key
@@ -187,32 +243,57 @@ def generate_rough_images(
     else:
         print("[Stage3-Adobe] 構図ガイドなし (参照画像不足 or PIL/Adobe 設定未完)。テキスト生成で続行。")
 
-    # Step B: Gemini Imagen でラフ生成 (構図ガイドを参照に追加)
+    # Step B: SDXL+LoRA でコアフォルダのアタリを生成 (Gemini より先に作り、参照として渡す)
+    # GCE VM SSH バッチのため課金注意。アタリは 1 枚 (個体正確性は Gemini+DB が担うため下敷きは 1 枚で十分)。
+    sdxl_guide_paths: list[Path] = []
+    if use_sdxl_guide:
+        print("[Stage3-SDXL] コアフォルダのアタリ(構図/作風の下敷き)を生成中 (VM経由)...")
+        sdxl_guide_paths = _generate_sdxl_rough(
+            record, form,
+            stage_dir=stage_dir,
+            count=1,
+            work_key=work_key,
+            scene=scene,
+        )
+
+    # Step C: Gemini Imagen でラフ生成 (アタリ + Adobe 構図ガイドを追加参照として添付)
     # base_gemini (形態固定ルール・シーン・尻尾数・識別記号等すべてのブロックを含む) を優先使用する。
     # 短縮版の "gemini" キーは Gemini テキストモデルが 600 token に圧縮した版でシーン等が欠落するため使わない。
     gemini_prompt = prompts.get("base_gemini", "") or prompts.get("gemini", "")
     if scene and "シーン" not in gemini_prompt:
         gemini_prompt = gemini_prompt + f"\n\n[シーン・追加要望]\n- シーン: {scene}"
-    mode_label = "i2i" if iterate_from else "T2I"
-    print(f"[Stage3-Gemini] Imagen でラフ生成中 (count={count}, mode={mode_label})...")
-    gemini_paths = _generate_gemini_rough(
-        record, form,
-        prompt_override=gemini_prompt,
-        stage_dir=stage_dir,
-        count=count,
-        work_key=work_key,
-        iterate_from=iterate_from,
-        revisions=revisions,
-        extra_ref_paths=[str(p) for p in adobe_guide_paths],
-    )
+    # 追加参照は「アタリ(SDXL)を先頭・Adobe 構図ガイドを後続」で最大 2 枚に絞る。
+    # extra_ref_locals は ref_limit を 5 に増やすが、DB 公式参照(=個体の正解)の枠を残すため。
+    guide_refs = (
+        [str(p) for p in sdxl_guide_paths] + [str(p) for p in adobe_guide_paths]
+    )[:2]
+    gemini_paths: list[Path] = []
+    if use_gemini:
+        mode_label = "i2i" if iterate_from else "T2I"
+        print(
+            f"[Stage3-Gemini] Imagen でラフ生成中 "
+            f"(count={count}, mode={mode_label}, guide_refs={len(guide_refs)})..."
+        )
+        gemini_paths = _generate_gemini_rough(
+            record, form,
+            prompt_override=gemini_prompt,
+            stage_dir=stage_dir,
+            count=count,
+            work_key=work_key,
+            iterate_from=iterate_from,
+            revisions=revisions,
+            extra_ref_paths=guide_refs,
+        )
 
-    all_paths = list(adobe_guide_paths) + list(gemini_paths)
+    all_paths = list(adobe_guide_paths) + list(sdxl_guide_paths) + list(gemini_paths)
     print(
         f"[Stage3] done - 構図ガイド: {len(adobe_guide_paths)} / "
-        f"Gemini ラフ: {len(gemini_paths)} / total: {len(all_paths)} files"
+        f"SDXL アタリ: {len(sdxl_guide_paths)} / Gemini ラフ: {len(gemini_paths)} / "
+        f"total: {len(all_paths)} files"
     )
     return {
         "adobe_guide": adobe_guide_paths,
         "gemini": gemini_paths,
+        "sdxl_guide": sdxl_guide_paths,
         "all": all_paths,
     }

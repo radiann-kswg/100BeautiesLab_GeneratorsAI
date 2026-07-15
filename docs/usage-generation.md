@@ -352,6 +352,70 @@ python -m src.canva.generate --num 57 --from-image <path> --dry-run
 
 > Canva で「新規生成」したい場合は MCP ワークフロー ([`usage-mcp-canva-adobe.md`](usage-mcp-canva-adobe.md)) を使う。
 
+### 3-5-3. SDXL + 作風LoRA — `src.sdxl.generate` (B案・GCE VM SSH バッチ)
+
+Illustrious-XL v0.1 + コアフォルダ作風LoRA (`nt-corefolder-v1-000004.safetensors`, エポック4) で
+ラフを生成するプロバイダ。推論は GCE VM `lora-l4-trial` 上で行い、gcloud ssh/scp で結果を回収する。
+計画書: `_ideas/sdxl-provider-plan-v1.md`
+
+```powershell
+# dry-run (gcloud コマンド列の確認のみ・VM 操作なし・課金ゼロ)
+python -m src.sdxl.generate --num 57 --form corefolder --count 2 --dry-run
+
+# 本番 (VM 起動を伴う = スポットL4課金。事前に RUN 予定を共有すること)
+python -m src.sdxl.generate --num 57 --form corefolder --count 3 `
+    --scene-tags "reading a book, library"
+```
+
+| env | 役割 |
+| --- | --- |
+| `SDXL_GCP_PROJECT` | GCP プロジェクト (default: `claude-radiannkswg`) |
+| `SDXL_VM_NAME` / `SDXL_VM_ZONE` | 推論 VM (default: `lora-l4-trial` / `asia-east1-b`) |
+| `SDXL_REMOTE_WORKDIR` | VM 上の作業ディレクトリ (default: `/home/s-chi/sdxl-infer`) |
+| `SDXL_REMOTE_BASE_MODEL` | (必須) VM 上の Illustrious-XL チェックポイント絶対パス |
+| `SDXL_REMOTE_LORA` | (必須) VM 上の LoRA 重み絶対パス |
+| `SDXL_LORA_SCALE` | LoRA 適用強度 (default: `0.8`) |
+| `SDXL_REMOTE_PYTHON` | 推論に使う VM 上の python (default: `python3`)。diffusers/peft 入りの venv 絶対パスを推奨 (例: `/home/s-chi/sd-scripts/venv/bin/python`) |
+
+| SDXL 専用フラグ | 役割 |
+| --- | --- |
+| `--scene-tags` | シーンのタグ列 (英語推奨。WD14 タグ体系) |
+| `--seed` | 乱数シード固定 |
+| `--keep-vm` | 生成後に VM を停止しない (連続実行用・課金継続注意) |
+| `--dry-run` | gcloud コマンド表示のみ (課金ゼロ) |
+
+- プロンプトは `src/sdxl/prompt_map.py` が「trigger word (`nt-corefolder`) + 既定タグ +
+  DB 定義色タグ (ColorPalette → `yellow arms` 等へ自動変換) + シーンタグ」に変換する。
+- 生成後は VM を**自動停止**する (失敗時は手動停止コマンドを警告表示)。
+- v1 は `corefolder` 形態のみ (humanoid の作風LoRAは未学習)。
+- VM 側前提スクリプト: `scripts/sdxl_vm/infer_sdxl_lora.py` (client が自動転送)。
+- **VM 初回セットアップ (一度きり)**: 推論は diffusers + peft が必要。kohya 学習環境の venv
+  (`/home/s-chi/sd-scripts/venv`) に torch/diffusers が同居しているので、これを
+  `SDXL_REMOTE_PYTHON` に指定して流用する。venv に peft が無い場合は一度だけ
+  `<venv>/bin/python -m pip install peft` を実行する (2026-07-15 に `peft 0.19.1` 導入済み)。
+  システムの `python3` には diffusers が無いため、既定のままだと `ModuleNotFoundError` になる。
+
+**パイプライン統合 (`--rough-provider sdxl-guide`)**: `src.pipeline.image_pipeline` に
+`--rough-provider {gemini|sdxl-guide}` を用意 (既定 `gemini`)。
+`sdxl-guide` は SDXL でコアフォルダの **アタリ(構図/作風の下敷き)** を生成し、Gemini ラフの
+追加参照 (`extra_ref_locals`) として渡す。個体の色・番号・固有アクセサリなどの正確性は
+Gemini + DB 公式参照が担い、SDXL アタリは構図/作風の下敷きに徹する。
+
+- SDXL アタリ自体は `stage3_rough/sdxl_guide/` に保存され、**Stage 4 (違反修正) / Stage 5 (合成) には流さない**
+  (個体を描き分けられない SDXL が最終画の作風アンカーに化けるのを防ぐ)。
+- Adobe 構図ガイド (PIL/Lightroom) も同じ追加参照チャネルで Gemini に渡る。
+- 旧 `--rough-provider {sdxl|both}` (併走ピア) は非推奨。指定すると警告のうえ `sdxl-guide` に読み替える。
+- 合同生成 (`--nums`) は未対応 (gemini 固定)。
+
+```powershell
+# アタリ式: SDXL のコアフォルダアタリを Gemini ラフの構図参照に使う
+python -m src.pipeline.image_pipeline --num 57 --form corefolder `
+    --scene "図書館で本を読んでいるシーン" --rough-provider sdxl-guide --skip-canva
+```
+
+> `python -m src.sdxl.generate` (単体) は raw アタリを直接得る用途 (「コアフォルダはどんな見た目か」の
+> ベース組み立て) として据え置き。パイプラインの個体生成に組み込むときは `--rough-provider sdxl-guide` を使う。
+
 ---
 
 ## 4. バッチ実行 — `src.batch_generate`

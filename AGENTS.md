@@ -112,6 +112,9 @@ python -m src.pipeline.image_pipeline --num 57 --form corefolder --skip-canva \
 python -m src.gemini.generate --num 57 --form corefolder
 python -m src.openai.generate --num 57 --form corefolder
 python -m src.openai.generate --num 57 --mode prompt-assist --scene "図書館で本を読んでいるシーン"
+# SDXL + 作風LoRA (B案・GCE VM SSH バッチ。必ず --dry-run で確認してから本番実行)
+python -m src.sdxl.generate --num 57 --form corefolder --dry-run
+# パイプラインで SDXL のコアフォルダアタリを Gemini ラフの構図参照に使う場合は --rough-provider sdxl-guide
 
 # 複数キャラクター・形態を一括で試すバッチランチャー
 # 常に --dry-run を先に走らせて RUN/SKIP 予定と capability を確認してから課金を伴う本番実行へ進めること。
