@@ -16,6 +16,7 @@
 | [`usage-generation.md`](usage-generation.md) | `src.gemini` / `src.openai` / `src.adobe` / `src.canva` / `src.batch_generate` の基本コマンドとフラグ |
 | [`usage-mcp-canva-adobe.md`](usage-mcp-canva-adobe.md) | Claude(Cowork) 経由で接続済み Adobe / Canva MCP を使う対話的ワークフロー、Canva 接続手順 |
 | [`usage-iterate.md`](usage-iterate.md)       | `--iterate-from` / `--revisions` による i2i (前回画像をベースに改稿) のワークフロー         |
+| [`usage-roleplay.md`](usage-roleplay.md)     | `src.roleplay.export` — 上流生成済みロールプレイプロンプトのゲート付き消費 (漏洩ガード)      |
 | [`output-and-logs.md`](output-and-logs.md)   | `output/` の3階層レイアウト、`prompt.txt` / `run_meta.json` / `notes.md` の役割と書式       |
 | [`tools.md`](tools.md)                       | 画像 MIME チェック、output レイアウト移行、形態共通データセットの管理                       |
 | [`mcp-server.md`](mcp-server.md)             | パイプラインを MCP ツール化して公開する `src/mcp_server/`、ローカル/Cloud Run デプロイ、出力シンク(local/drive/gcs) |
@@ -66,6 +67,10 @@ python -m src.batch_generate --nums 15,22,49,57 --forms both --provider both
 
 # プロンプト改善提案 (GPT-4o)
 python -m src.openai.generate --num 57 --mode prompt-assist --scene "縁側で日向ぼっこ"
+
+# 生成済みロールプレイプロンプトの消費 (ゲート付き)
+python -m src.roleplay.export --num 57
+python -m src.roleplay.export --list
 
 # 画像 MIME 不一致チェック
 python -m src.tools.check_image_mime --strict

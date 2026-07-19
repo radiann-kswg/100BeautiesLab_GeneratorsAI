@@ -40,6 +40,7 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from src.utils import (  # noqa: E402
+    apply_generation_gate,
     build_dalle_prompt,
     build_run_output_dir,
     collect_record_capabilities,
@@ -150,6 +151,11 @@ def generate_image_dalle(
     if record is None:
         sys.exit(f"[ERROR] キャラクター #{num} ({work_key}) が見つかりません。")
 
+    # AI 学習/生成オプトアウト・ゲート（権利軸=中止、充填軸=警告のうえ続行）
+    proceed, ai_gate = apply_generation_gate(record, usage="image", num=num, printer=print)
+    if not proceed:
+        return None
+
     prompt_text = prompt_override or build_dalle_prompt(
         record,
         form,
@@ -207,6 +213,7 @@ def generate_image_dalle(
                 else None
             ),
             "record_capabilities": collect_record_capabilities(record, form=form),
+            "ai_training_gate": ai_gate,
         },
     )
     print(f"[INFO] ログ: {log_paths['meta']}")
@@ -353,6 +360,11 @@ def assist_prompt_gpt(
     if record is None:
         sys.exit(f"[ERROR] キャラクター #{num} ({work_key}) が見つかりません。")
 
+    # AI 学習/生成オプトアウト・ゲート（テキスト用途。権利軸=中止、充填軸=警告のうえ続行）
+    proceed, ai_gate = apply_generation_gate(record, usage="text", num=num, printer=print)
+    if not proceed:
+        return ""
+
     base_prompt = build_dalle_prompt(record, form)
     char_name = record["data"].get("Name_JP") or record["data"].get("Name") or f"#{num}"
     references = collect_reference_images(record, form=form)
@@ -381,6 +393,7 @@ def assist_prompt_gpt(
             "character_name": char_name,
             "reference_urls": references["urls"][:3],
             "reference_local_paths": references["local_paths"][:3],
+            "ai_training_gate": ai_gate,
         },
     )
     print(f"[INFO] ログ: {log_paths['meta']}")

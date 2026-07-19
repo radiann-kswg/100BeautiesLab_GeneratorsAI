@@ -160,8 +160,15 @@ CREATIONS_DB_PACKAGE_ENABLE=1
 # 創作 DB 実物 API (database.numbertales-radiann.net)
 # addon-ai-tag ブランチで公開している AIHints エンドポイント等にアクセスする際に必要。
 # 通常の公開エンドポイント (/api/v1/works/…) はトークン不要。
+# AIHints (/api/ai/…) は Bearer 必須。トークンは .env のみで管理しコミット禁止。
+# ?form=corefolder|humanoid の形態絞り込みに src も対応 (_fetch_record_via_api の form 引数)。
 CREATIONS_DB_API_TOKEN=
 CREATIONS_DB_API_BASE_URL=https://database.numbertales-radiann.net/api/v1
+
+# AI 学習/生成オプトアウト・ゲート (軸判別 fail-closed。既定 ON)。
+# 権利軸(AI_Optout 等)=生成拒否 / 充填軸(AI_Unready=制作途中)=画像/テキストは警告のみ許可。
+# デバッグで一時的に無効化したいときだけ 0/false を設定 (通常は空=ON のままにする)。
+AI_OPTOUT_ENFORCE=1
 
 # パス・実行系 (任意。パーソナルスキル/ランチャーから任意 cwd で実行する場合に使う)
 NUMBERTALES_REPO=                       # ランチャーが使うリポジトリルートの明示指定 (最優先)

@@ -60,7 +60,11 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-from src.utils import build_run_output_dir, find_character  # noqa: E402
+from src.utils import (  # noqa: E402
+    apply_generation_gate,
+    build_run_output_dir,
+    find_character,
+)
 
 
 _SYSTEM_MESSAGES: dict[str, str] = {
@@ -304,6 +308,16 @@ def run_text_pipeline(
             "output_dir": str(output_dir),
         }
 
+    # AI 学習/生成オプトアウト・ゲート（テキスト用途。権利軸=中止、充填軸=警告のうえ続行）。
+    # 本パイプラインは shipped 済みだが従来ゲート無しだったため棚卸しで是正。
+    proceed, ai_gate = apply_generation_gate(record, usage="text", num=num, printer=print)
+    if not proceed:
+        return {
+            "primary": "", "reviewed": "",
+            "final": f"[ai-optout: {ai_gate['reason']}]",
+            "output_dir": str(output_dir),
+        }
+
     char_name = record["data"].get("Name_JP") or record["data"].get("Name") or f"#{num}"
     print(f"[TextPipeline] キャラクター: {char_name}")
 
@@ -340,6 +354,7 @@ def run_text_pipeline(
             "openai": os.environ.get("GPT_MODEL", "gpt-4o"),
             "gemini": os.environ.get("GEMINI_TEXT_MODEL", "gemini-2.5-flash"),
         },
+        "ai_training_gate": ai_gate,
     }
     (output_dir / "run_meta.json").write_text(
         json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8"
