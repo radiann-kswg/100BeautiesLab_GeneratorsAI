@@ -737,6 +737,89 @@ def collect_record_capabilities(
     }
 
 
+# ── AI 学習/生成オプトアウト判定（軸判別 fail-closed）─────────────────────────
+# 判定の正典は上流 _creations-ai/scripts/lib/policy.js。ここでは policy.js がビルド時に
+# manifest レコードへ畳み込んだ ai_training.{allowed, reason} を「読むだけ」で、
+# 権利軸 (AI_Optout / DB_Hidden / Works_Hidden / isPrivate 等) と
+# 充填軸 (AI_Unready / Progress) を判別する。policy を src で再実装しない。
+#
+# 充填軸の理由文だけが持つ一意マーカー。policy.js の aiTrainingDisallowedProgressUnready()
+# が生成する文言 "...This is NOT a rights-based opt-out: rights are expressed only by AI_Optout."
+# に対応する。この文字列を含まない allowed=false は保守的に「権利軸」(hard) として扱う。
+_AI_TRAINING_FILL_AXIS_MARKER = "NOT a rights-based opt-out"
+
+
+def _ai_optout_enforced() -> bool:
+    """AI オプトアウト・ゲートを有効にするか。既定 ON（デバッグ用 kill スイッチ）。
+
+    環境変数 ``AI_OPTOUT_ENFORCE`` に偽値 (0/false/no/off) を設定した時のみ無効化する。
+    """
+    raw = os.environ.get("AI_OPTOUT_ENFORCE", "1").strip().lower()
+    return raw not in {"0", "false", "no", "off"}
+
+
+def ai_training_allowed(record: dict[str, Any] | None) -> bool:
+    """レコードの ``ai_training.allowed`` を読む。欠落時は既定 True (fail-open)。
+
+    判定値は上流 policy.js がビルド時に manifest へ畳み込んだもの。src では再計算しない。
+    """
+    if not record:
+        return True
+    return bool((record.get("ai_training") or {}).get("allowed", True))
+
+
+def ai_training_axis(record: dict[str, Any] | None) -> str:
+    """``ai_training`` が表す軸を判別して返す: ``"allowed"`` / ``"fill"`` / ``"rights"``。
+
+    - allowed=True                    → ``"allowed"``
+    - allowed=False かつ 充填軸マーカー → ``"fill"``   (AI_Unready/Progress。制作途中で内容が無いだけ)
+    - allowed=False かつ それ以外       → ``"rights"`` (権利軸オプトアウト。**未知理由も保守的にこちら**)
+
+    充填軸マーカーは上流 policy.js ``aiTrainingDisallowedProgressUnready()`` の理由文に一意。
+    未知の理由文は fail-safe に ``"rights"`` (hard) 側へ倒す。
+    """
+    if ai_training_allowed(record):
+        return "allowed"
+    reason = str(((record or {}).get("ai_training") or {}).get("reason", ""))
+    if _AI_TRAINING_FILL_AXIS_MARKER in reason:
+        return "fill"
+    return "rights"
+
+
+def generation_permitted(
+    record: dict[str, Any] | None,
+    *,
+    usage: str = "image",
+) -> tuple[str, str]:
+    """用途別に生成可否を判定して ``(decision, reason)`` を返す。
+
+    decision:
+      - ``"allow"``  … そのまま生成してよい
+      - ``"warn"``   … 生成は許可するが警告を残す（充填軸: 制作途中）
+      - ``"refuse"`` … 生成しない（権利軸オプトアウト）
+
+    用途別ゲート原則 (``usage``):
+      - ``"image"``    権利軸=refuse / 充填軸=warn+allow（例: 10-alt を過剰ブロックしない）
+      - ``"text"``     権利軸=refuse / 充填軸=warn+allow（慎重）
+      - ``"roleplay"`` 権利軸=refuse / 充填軸=refuse（最厳格。生成済みロールプレイ本文の漏洩防止）
+
+    ``AI_OPTOUT_ENFORCE=0`` のときは常に ``("allow", ...)``。ai_training を読むだけで policy 再実装しない。
+    """
+    if not _ai_optout_enforced():
+        return "allow", "ai-optout-enforcement-disabled"
+
+    axis = ai_training_axis(record)
+    reason = str(((record or {}).get("ai_training") or {}).get("reason", "")) or axis
+    if axis == "allowed":
+        return "allow", "ai_training.allowed=true"
+    if axis == "rights":
+        return "refuse", reason
+    # axis == "fill": 充填軸（制作途中）。ロールプレイのみ最厳格に refuse。
+    if usage == "roleplay":
+        return "refuse", reason
+    return "warn", reason
+
+
 def extract_char_name(record_or_data: dict, fallback: str = "Unknown") -> str:
     """キャラクターレコードから表示用名称を取得する。
 
