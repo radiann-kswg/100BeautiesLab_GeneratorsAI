@@ -213,11 +213,21 @@ def run_image_pipeline(
 
     # Stage 2 でレコードを取得するが、ランダムシーン生成には先にレコードが必要。
     # 軽量な find_character を先行呼び出しし、Stage 2 で再利用する。
-    from src.utils import find_character
+    from src.utils import apply_generation_gate, find_character
     _pre_record = find_character(num, work_key)
     if _pre_record is None:
         result.status = "failed"
         result.errors.append(f"キャラクター #{num} ({work_key}) が見つかりません。")
+        _save_summary(pipeline_dir, result, start_time)
+        return result
+
+    # AI 学習/生成オプトアウト・ゲート（権利軸=skip、充填軸=警告のうえ続行）
+    _proceed, _ai_gate = apply_generation_gate(
+        _pre_record, usage="image", num=num, printer=print
+    )
+    if not _proceed:
+        result.status = "skipped"
+        result.errors.append(f"ai_training opt-out: {_ai_gate['reason']}")
         _save_summary(pipeline_dir, result, start_time)
         return result
 
@@ -582,7 +592,7 @@ def run_combined_pipeline(
     -------
     MultiCharPipelineResult
     """
-    from src.utils import find_character
+    from src.utils import apply_generation_gate, find_character
     from src.gemini.generate import generate_image
 
     # キャラ別形態マップを構築する。forms が指定されていればそれを優先し、
@@ -624,6 +634,14 @@ def run_combined_pipeline(
         if rec is None:
             result.status = "failed"
             result.errors.append(f"キャラクター #{n} ({work_key}) が見つかりません。")
+            _save_summary(pipeline_dir, result, start_time)
+            return result
+        # AI 学習/生成オプトアウト・ゲート。合同絵は部分生成できないため、
+        # 1 人でも権利軸オプトアウトなら合同全体を中止。充填軸は警告のうえ続行。
+        _proceed, _ai_gate = apply_generation_gate(rec, usage="image", num=n, printer=print)
+        if not _proceed:
+            result.status = "skipped"
+            result.errors.append(f"ai_training opt-out (#{_fmt_num(n)}): {_ai_gate['reason']}")
             _save_summary(pipeline_dir, result, start_time)
             return result
         records.append(rec)

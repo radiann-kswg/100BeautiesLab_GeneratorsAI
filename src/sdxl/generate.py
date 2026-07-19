@@ -46,7 +46,7 @@ def generate_image(
     run_dir_override: パイプライン (Stage 3) から呼ぶ際に、ステージ配下の
                       実行フォルダを直接指定するためのフック。
     """
-    from src.utils import find_character
+    from src.utils import apply_generation_gate, find_character
     from src.utils.paths import build_run_output_dir
     from src.utils.run_log import finalize_run_logs, initialize_run_logs
     from src.sdxl.client import SdxlVmClient
@@ -55,6 +55,11 @@ def generate_image(
     record = find_character(num, work_key)
     if record is None:
         raise SystemExit(f"キャラクター #{num} ({work_key}) が見つかりません。")
+
+    # AI 学習/生成オプトアウト・ゲート（権利軸=中止、充填軸=警告のうえ続行）
+    proceed, ai_gate = apply_generation_gate(record, usage="image", num=num, printer=print)
+    if not proceed:
+        return []
 
     positive, negative = build_sdxl_prompt(
         record, form, scene_tags=scene_tags, extra_tags=extra_tags
@@ -80,6 +85,7 @@ def generate_image(
             "seed": seed,
             "count": count,
             "dry_run": dry_run,
+            "ai_training_gate": ai_gate,
         },
     )
 

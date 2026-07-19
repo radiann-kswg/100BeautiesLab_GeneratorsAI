@@ -35,6 +35,7 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from src.utils import (  # noqa: E402
+    apply_generation_gate,
     collect_record_capabilities,
     find_character,
 )
@@ -216,6 +217,24 @@ def run_batch(
                     print(f"\n[BATCH {idx}/{total}] #{num} {form} {provider} -> NOT_FOUND")
                     results.append(
                         BatchResult(num, form, provider, "skipped", "character not found")
+                    )
+            continue
+
+        # AI 学習/生成オプトアウト・ゲート（キャラ単位・form 非依存）。
+        # 権利軸オプトアウトは全 form×provider を skipped に。充填軸は警告のうえ続行。
+        proceed, gate = apply_generation_gate(
+            record, usage="image", num=num, printer=print
+        )
+        if not proceed:
+            for form in forms:
+                for provider in providers:
+                    idx += 1
+                    print(f"\n[BATCH {idx}/{total}] #{num} {form} {provider} -> SKIP (ai-optout)")
+                    results.append(
+                        BatchResult(
+                            num, form, provider, "skipped",
+                            f"ai_training opt-out: {gate['reason']}",
+                        )
                     )
             continue
 

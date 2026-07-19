@@ -44,6 +44,7 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from src.utils import (  # noqa: E402
+    apply_generation_gate,
     build_dalle_prompt,
     build_run_output_dir,
     collect_record_capabilities,
@@ -205,6 +206,11 @@ def generate_image_firefly(
     if record is None:
         sys.exit(f"[ERROR] キャラクター #{num} ({work_key}) が見つかりません。")
 
+    # AI 学習/生成オプトアウト・ゲート（権利軸=中止、充填軸=警告のうえ続行）
+    proceed, ai_gate = apply_generation_gate(record, usage="image", num=num, printer=print)
+    if not proceed:
+        return []
+
     prompt_text = prompt_override or build_dalle_prompt(
         record,
         form,
@@ -244,6 +250,7 @@ def generate_image_firefly(
                 if iterate_source_path is not None else None
             ),
             "record_capabilities": collect_record_capabilities(record, form=form),
+            "ai_training_gate": ai_gate,
         },
     )
     print(f"[INFO] ログ: {log_paths['meta']}")

@@ -820,6 +820,43 @@ def generation_permitted(
     return "warn", reason
 
 
+def apply_generation_gate(
+    record: dict[str, Any] | None,
+    *,
+    usage: str = "image",
+    num: int | str | None = None,
+    printer: Callable[[str], None] | None = None,
+) -> tuple[bool, dict[str, Any]]:
+    """生成入口共通のオプトアウト・ゲート。``(proceed, gate_meta)`` を返す。
+
+    - ``proceed=False`` … 権利軸オプトアウト等で生成を止めるべき（呼び出し側で skip/return）。
+    - ``gate_meta`` … ``run_meta.json`` へ相乗りさせる記録（enforce/usage/axis/allowed/reason/decision/skipped）。
+      本文や機微情報は載せない（理由文のみ）。
+    - ``printer`` が与えられれば warn / refuse 時に 1 行メッセージを出力する。
+
+    各入口はこれを ``find_character()`` 直後に呼び、``proceed`` で分岐して ``gate_meta`` を
+    run_meta へ載せるだけでよい。判定は WS2 の ``generation_permitted`` に委譲（policy 再実装なし）。
+    """
+    decision, reason = generation_permitted(record, usage=usage)
+    gate_meta = {
+        "enforce": _ai_optout_enforced(),
+        "usage": usage,
+        "axis": ai_training_axis(record),
+        "allowed": ai_training_allowed(record),
+        "reason": reason,
+        "decision": decision,
+        "skipped": decision == "refuse",
+    }
+    label = f"num={num} " if num is not None else ""
+    if decision == "refuse":
+        if printer:
+            printer(f"[ai-optout] {label}生成をスキップ（権利軸オプトアウト）: {reason}")
+        return False, gate_meta
+    if decision == "warn" and printer:
+        printer(f"[ai-optout] {label}充填軸（制作途中）につき警告のうえ続行: {reason}")
+    return True, gate_meta
+
+
 def extract_char_name(record_or_data: dict, fallback: str = "Unknown") -> str:
     """キャラクターレコードから表示用名称を取得する。
 
@@ -928,6 +965,14 @@ def find_character(
         # ローカルに無い → API データで manifest 相当のレコードを構成
         return _build_record_from_api(api_data, num=num, work_key=work_key)
 
+    # fail-closed: ローカル manifest が権利軸オプトアウト (rights) と判定するなら、
+    # API が ai_hints を返しても採用しない。build 時に policy.js が畳み込んだローカル
+    # ai_training を「権利判定の正」とし、上流 API 側の入手経路遮断に穴 (例:
+    # migrate-aihints のカテゴリ単位未対応) が開いても src 側で塞ぐ。
+    # 充填軸 (fill) / allowed はそのまま補完してよい (制作途中であって権利上の拒否ではない)。
+    if ai_training_axis(target) == "rights":
+        return target
+
     # ローカルにあるが ai_hints が欠けている → API の ai_hints で補完
     ai_hints_from_api = api_data.get("ai_hints") or api_data.get("_aihints")
     if ai_hints_from_api:
@@ -1023,11 +1068,18 @@ def _fetch_record_via_api(
     num: int | str,
     work_key: str,
     db_name: str = "Primary",
+    *,
+    form: str | None = None,
 ) -> dict[str, Any] | None:
     """実物 API (Cloudflare Workers) からキャラクターレコードを取得する。
 
     通常レコード: GET /api/v1/{work}/{db}/records/{num}?idxKey=Num
-    AIHints:      GET /api/ai/{work}/{db}/aihints/{num}  (Bearer 認証必要)
+    AIHints:      GET /api/ai/{work}/{db}/aihints/{num}[?form=<f>]  (Bearer 認証必要)
+
+    ``form`` に ``corefolder`` / ``humanoid`` を渡すと AIHints を指定形態のみ
+    (``common`` + 該当 ``form``) に絞り込む (API v2.0.0 の ``?form=`` 対応)。
+    既定 None のときは従来通り全形態を取得する。``find_character`` の既定経路は
+    単一レコードを両形態で使い回すため None で呼ぶ (将来のピンポイント取得用の口)。
 
     環境変数:
         CREATIONS_DB_API_BASE_URL   ベース URL (デフォルト: https://database.numbertales-radiann.net/api/v1)
@@ -1066,6 +1118,8 @@ def _fetch_record_via_api(
     if token:
         ai_base = base_url.replace("/api/v1", "/api/ai")
         hints_url = f"{ai_base}/{work_id}/{db_name}/aihints/{num}"
+        if form in {"corefolder", "humanoid"}:
+            hints_url += f"?form={form}"
         hints = _get_json(hints_url, headers={"Authorization": f"Bearer {token}"})
         if isinstance(hints, dict):
             record["ai_hints"] = hints
