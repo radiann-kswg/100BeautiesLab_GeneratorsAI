@@ -276,7 +276,7 @@ git -C _creations-ai submodule update --remote creations-db
 
 ## エージェント実務ルール
 
-- プロンプト提案時は `_creations-ai/ai-dataset/manifest.jsonl` を使用し、`has_ai_hints=True` のレコードのみを対象とする。`AI_Optout` は学習制限フラグであり画像生成用途には適用しない（生成可否は `AI_Output` フラグが将来的に担う）。
+- プロンプト提案時は `_creations-ai/ai-dataset/manifest.jsonl` を使用し、`has_ai_hints=True` のレコードのみを列挙対象とする。生成可否は **manifest の `ai_training.{allowed, reason}` を「読むだけ」の軸判別 fail-closed ゲート**（`src/utils/dataset.py` の `generation_permitted` / `apply_generation_gate`）が担う。**権利軸**（`AI_Optout` / `DB_Hidden` / `Works_Hidden` / `isPrivate` 等）は拒否、**充填軸**（`AI_Unready` = 制作途中。例: `10-alt`）は画像/テキストでは警告のみ許可、ロールプレイは最厳格に拒否。判定の正典は上流 `_creations-ai/scripts/lib/policy.js` にあり src では再実装しない。ゲートは既定 ON（デバッグ用 kill スイッチ env `AI_OPTOUT_ENFORCE=0`）。※かつて記載していた `AI_Output` フラグは全 DB/manifest に実在せず、記述を実機構へ訂正済み（2026-07-19）。
 - 新規の提案テキストや作業メモは `_ideas/` に集約する。
 - API キーやシークレットはコードに直接埋め込まず `.env` を使用する。
 - 仕様が曖昧な場合は、推測実装より先に関連ドキュメントへのリンクを示して確認する。

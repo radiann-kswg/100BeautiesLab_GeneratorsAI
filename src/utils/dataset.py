@@ -877,10 +877,12 @@ def extract_char_name(record_or_data: dict, fallback: str = "Unknown") -> str:
 def load_manifest(manifest_path: str | None = None) -> list[dict[str, Any]]:
     """manifest.jsonl を読み込んでキャラクターレコードのリストを返す。
 
-    生成用途では manifest.jsonl（全レコード）を使用する。
-    AI_Optout は学習データへの利用制限フラグであり、画像生成（AI_Output）用途には適用しない。
-    manifest-training.jsonl は学習許可済みサブセットで、生成では使用しない。
-    パスは環境変数 MANIFEST_PATH で上書き可能。
+    生成用途では manifest.jsonl（全レコード）を使用する。レコード列挙は
+    has_ai_hints で絞り、権利軸オプトアウト（``ai_training.allowed`` が権利軸で
+    False）は各生成入口の :func:`apply_generation_gate` が fail-closed に弾く。
+    充填軸（``AI_Unready``）は画像/テキストでは警告のみで生成継続。判定の正典は
+    上流 policy.js（src では再実装しない）。manifest-training.jsonl は学習許可済み
+    サブセット。パスは環境変数 MANIFEST_PATH で上書き可能。
     """
     path = (
         manifest_path
@@ -898,10 +900,10 @@ def load_manifest(manifest_path: str | None = None) -> list[dict[str, Any]]:
 
 
 def get_characters(manifest_path: str | None = None) -> list[dict[str, Any]]:
-    """ai_hints を持つキャラクターレコードを返す（画像生成用）。
+    """ai_hints を持つキャラクターレコードを返す（画像生成の列挙用）。
 
-    AI_Optout は学習制限フラグであり生成用途には適用しない。
-    ai_hints が存在する（has_ai_hints=True）レコードのみを対象とする。
+    列挙自体は has_ai_hints のみで絞る（reason を保持するため純粋に保つ）。
+    権利軸オプトアウトの拒否は各生成入口の :func:`apply_generation_gate` が担う。
     """
     return [
         r for r in load_manifest(manifest_path)

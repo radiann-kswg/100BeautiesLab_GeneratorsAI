@@ -191,6 +191,23 @@ python -m src.pipeline.text_pipeline --num 57 --mode caption \
 i2i 用フラグ (`--iterate-from` / `--revisions`) は [`usage-iterate.md`](usage-iterate.md) を参照。
 `batch_generate` には **意図的に追加していない** (i2i は単発実行専用)。
 
+### 1-1. AI 学習/生成オプトアウト・ゲート (軸判別 fail-closed・既定 ON)
+
+各生成入口 (`gemini` / `openai` / `adobe` / `sdxl` / `batch_generate` / `image_pipeline` / `text_pipeline`) は
+`find_character()` 直後に **manifest の `ai_training.{allowed, reason}` を「読むだけ」の軸判別ゲート**
+(`apply_generation_gate`) を通す。判定の正典は上流 `_creations-ai/scripts/lib/policy.js` にあり src では再実装しない。
+
+| 軸 | 該当フラグ (上流) | 画像 / テキスト生成 | ロールプレイ (`src.roleplay`) |
+| --- | --- | --- | --- |
+| **権利軸** | `AI_Optout` / `DB_Hidden` / `Works_Hidden` / `isPrivate` / `_Secondaries` カテゴリ別 `AI_Optout` | **拒否** (skip) | **拒否** |
+| **充填軸** | `AI_Unready` (= 制作途中。例: `10-alt`) | **警告のうえ許可** | **拒否** (最厳格) |
+| 許可 | 上記いずれも非該当 | 生成 | 生成 |
+
+- 未知の理由文は保守的に権利軸 (拒否) 扱い。判定は `run_meta.json` の `ai_training_gate` に記録される。
+- **既定 ON**。デバッグで一時無効化するときのみ env `AI_OPTOUT_ENFORCE=0` (新 CLI フラグは追加していない)。
+- 充填軸を画像で過剰にブロックしないため、`10-alt` のような制作途中キャラは警告付きで生成継続する。
+- ロールプレイプロンプト消費 (`src.roleplay.export`) は [`usage-roleplay.md`](usage-roleplay.md) を参照。
+
 ---
 
 ## 2. Gemini (Imagen 3 / 4) — `src.gemini.generate`
