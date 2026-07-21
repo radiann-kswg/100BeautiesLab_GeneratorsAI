@@ -6,12 +6,40 @@
 
 | サブモジュール | 追跡先 | 旧 | 新 | 判定 | 備考 |
 |---|---|---|---|---|---|
-| `_creations-ai` | origin/master | dc25100 | 0c94954 | SKIP | checkout 失敗 (master): git.exe : fatal: Unable to create 'C:/Visual Studio Code UserFile/100BeautiesLab_GeneratorsAI/.git/modules/_creations-a i/index.lock': File exists. At C:\Visual Studio Code UserFile\100BeautiesLab_GeneratorsAI\scripts\daily-submodule-sync.ps1:52 char:17 +         $out = (& git @GitArgs 2>&1 / Out-String) +                 ~~~~~~~~~~~~~~~~~~~     + CategoryInfo          : NotSpecified: (fatal: Unable t...': File exists.:String) [], RemoteException     + FullyQualifiedErrorId : NativeCommandError    Another git process seems to be running in this repository, e.g. an editor opened by 'git commit'. Please make sure all processes are terminated then try again. If it still fails, a git process may have crashed in this repository earlier: remove the file manually to continue. |
-| `_creations-ai/creations-db` | origin/addon-ai-tag | 5bf2be0 | 8392433 | SKIP | checkout 失敗 (addon-ai-tag): git.exe : fatal: Unable to create 'C:/Visual Studio Code UserFile/100BeautiesLab_GeneratorsAI/.git/modules/_creations-a i/modules/creations-db/index.lock': File exists. At C:\Visual Studio Code UserFile\100BeautiesLab_GeneratorsAI\scripts\daily-submodule-sync.ps1:52 char:17 +         $out = (& git @GitArgs 2>&1 / Out-String) +                 ~~~~~~~~~~~~~~~~~~~     + CategoryInfo          : NotSpecified: (fatal: Unable t...': File exists.:String) [], RemoteException     + FullyQualifiedErrorId : NativeCommandError    Another git process seems to be running in this repository, e.g. an editor opened by 'git commit'. Please make sure all processes are terminated then try again. If it still fails, a git process may have crashed in this repository earlier: remove the file manually to continue. |
+| `_creations-ai` | origin/master | dc25100 | 0c94954 | UPDATED | FF 取り込み完了 |
+| `_creations-ai/creations-db` | origin/addon-ai-tag | 8392433 | 8392433 | NO-CHANGE | 最新 |
 
 ## 取り込んだ更新の内容
 
-今回取り込んだ更新はありません。
+### `_creations-ai` dc25100..0c94954
+
+```
+0c94954 chore: sync ai-dataset (creations-db@8392433) — ai_training allowed: 154 [skip ci]
+4e8fb1e chore: sync ai-dataset (creations-db@027a8ec) — ai_training allowed: 153 -> 154 [skip ci]
+```
+
+変更ファイル:
+
+```
+ai-dataset/build-info.json                        | 10 +++----
+ ai-dataset/image-index.json                       | 11 ++++----
+ ai-dataset/index.json                             | 12 ++++-----
+ ai-dataset/manifest-training.jsonl                |  9 ++++---
+ ai-dataset/manifest.jsonl                         | 32 ++++++++++++-----------
+ ai-dataset/policy.json                            |  2 +-
+ ai-dataset/works/Works_CommonReferences.json      |  3 ++-
+ ai-dataset/works/Works_DestinyFoxRecords.json     |  2 +-
+ ai-dataset/works/Works_FLInvestigator78.json      |  4 ++-
+ ai-dataset/works/Works_NumberTales.json           |  2 +-
+ ai-dataset/works/Works_PastDivers.json            |  2 +-
+ ai-dataset/works/Works_ShouArRiders.json          |  2 +-
+ ai-dataset/works/Works_SinisterChangingGirls.json |  2 +-
+ ai-dataset/works/Works_UnauthedLogica.json        |  2 +-
+ ai-dataset/works/Works_UnibyteLive.json           |  2 +-
+ ai-dataset/works/Works_VirtuesUs.json             |  2 +-
+ creations-db                                      |  2 +-
+ 17 files changed, 54 insertions(+), 47 deletions(-)
+```
 
 ## 最適化メモ
 
