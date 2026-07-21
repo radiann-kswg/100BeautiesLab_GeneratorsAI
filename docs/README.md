@@ -4,7 +4,8 @@
 このフォルダは「使い方」を一通り辿るためのハブで、各ページは独立して読めるようになっています。
 
 > 仕様変更があった場合は **必ずこのフォルダのドキュメントも同時に更新してね。**
-> 詳しい運用ルールは [`AGENTS.md`](../AGENTS.md) と [`.github/copilot-instructions.md`](../.github/copilot-instructions.md) を参照。
+> 詳しい運用ルールの正典は [`AGENTS.md`](../AGENTS.md)。
+> 各エージェント（Copilot / Claude / GPT Codex）への配布の仕組みは [`agent-config.md`](agent-config.md) を参照。
 
 ---
 
@@ -20,6 +21,7 @@
 | [`output-and-logs.md`](output-and-logs.md)   | `output/` の3階層レイアウト、`prompt.txt` / `run_meta.json` / `notes.md` の役割と書式       |
 | [`tools.md`](tools.md)                       | 画像 MIME チェック、output レイアウト移行、形態共通データセットの管理                       |
 | [`mcp-server.md`](mcp-server.md)             | パイプラインを MCP ツール化して公開する `src/mcp_server/`、ローカル/Cloud Run デプロイ、出力シンク(local/drive/gcs) |
+| [`agent-config.md`](agent-config.md)         | Copilot / Claude / GPT Codex への設定配布 (SSOT)、`.agents/` スキルの正本とミラー同期、`.ps1` の文字コード |
 
 ---
 
