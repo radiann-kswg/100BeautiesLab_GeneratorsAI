@@ -35,5 +35,7 @@ Thumbs.db
 *.swp
 
 # Skill (numbertales-imagegen) — machine-specific config / build artifacts
-.claude/skills/numbertales-imagegen/repo_path.txt
+# 正本 .agents/skills/ とミラー .claude/skills/ の両方で repo_path.txt は環境固有のため除外
+.agents/skills/*/repo_path.txt
+.claude/skills/*/repo_path.txt
 *.skill

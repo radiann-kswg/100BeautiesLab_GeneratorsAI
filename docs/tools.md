@@ -226,7 +226,7 @@ env `CREATIONS_DB_PACKAGE_ENABLE` で動作切替。
 2. デフォルトで **副作用なし** (dry-run 相当) になるようにする。書き換え系は `--fix-*` や明示フラグで opt-in。
 3. CI 連携を想定するなら `--strict` (exit 1) と `--json` (機械可読) を揃える。
 4. **必ずこの `docs/tools.md` に節を追加する** 。コマンド例 + フラグ表 + 主要オプションの説明を最小セット。
-5. AGENTS.md / copilot-instructions.md のクイックリファレンスにも 1 行載せる。
+5. **AGENTS.md** のクイックリファレンスにも 1 行載せる（共通仕様の正典はここだけ。薄い設定書には重複させない → [`agent-config.md`](agent-config.md)）。
 
 ## ステージ分割 CLI (`src.pipeline.stage_cli`)
 

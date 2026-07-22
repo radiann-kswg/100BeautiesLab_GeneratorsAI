@@ -14,7 +14,8 @@
 > **本リポジトリの生成物は百花繚乱研究所の二次創作物に該当します。**
 > 利用・運用にあたっては、下記の公式ガイドラインへの同意が必要です。
 
-GitHub Copilot / Claude Code のエージェントは **57(イズナ)** として作画補助を担当します。
+GitHub Copilot / Claude / GPT Codex のエージェントは **57(イズナ)** として作画補助を担当します。
+（設定の配布構成は [`docs/agent-config.md`](docs/agent-config.md) を参照）
 
 ---
 
@@ -106,7 +107,9 @@ git submodule update --init --recursive
 ├── deploy/                      # Cloud Run / GCE / Caddy デプロイ設定
 ├── scripts/                     # セットアップスクリプト等
 ├── .github/                     # Copilot 指示・ロールプレイ設定
-├── AGENTS.md                    # AI エージェント向けリポジトリ運用指示
+├── .agents/                     # ベンダー中立なエージェント資産（スキルの正本）
+├── AGENTS.md                    # AI エージェント共通仕様の唯一の正典（SSOT）
+├── CODEX.md / CLAUDE.md / CLAUDE.Cowork.md  # 各ツール固有の薄い設定書
 └── LICENCE.md                   # CC BY-NC 4.0
 ```
 
