@@ -19,3 +19,16 @@
 > Cowork の `daily-submodule-sync-optimize` タスク (Claude) に差分レビューを依頼し、
 > `src/` ・ `docs/` 側の追従最適化を行うこと。本スクリプトは git 同期とログ・コミットのみ担当。
 
+## Cowork レビュー追記 — 2026-07-23 (57/イズナ)
+
+- **実機スクリプト実行**: あり（10:18）。ただし両サブモジュールとも SKIP。
+- **原因**: 古い `index.lock` が2つ残存し checkout 失敗。
+  - `.git/modules/_creations-ai/index.lock`（0バイト, Jul 23 08:06）
+  - `.git/modules/_creations-ai/modules/creations-db/index.lock`（0バイト, Jul 23 08:06）
+- **ローカル HEAD 確認**: `_creations-ai`=809a444 / `creations-db`=acd1d8f のまま（取り込みなし）。
+- **リモート HEAD 確認（GitHubコネクタ・読み取り）**:
+  - `100BeautiesLab_CreationsAI@master` = 7c63c33（ログのターゲットと一致、以降の進みなし）。内容: ai-dataset 同期、ai_training 許可 154→155。
+  - `100BeautiesLab_CreationsDB@addon-ai-tag` = 12982c8（同上一致）。内容: DB構造整備（辞書・所属/Class情報追加）、英訳推敲（Bewußtsein Division 等）、ICSカレンダー仕様変更。
+  - → **未取り込みの更新がリモートに存在**（次回同期待ち）。実機のロック残存が唯一のブロッカー。
+- **src/ ・ docs/ 追従最適化**: 不要と判断。理由: (1) そもそもローカルに取り込まれておらず追従すべき差分が親リポに発生していない、(2) 想定される差分内容も count 増分(154→155)・DB内テキスト/Class情報・カレンダー enrich ロジックであり、スキーマ / `manifest-training.jsonl` の構造 / フィールド名 / API / 参照パスに影響しない。過剰改変を避け未編集。
+- **先輩へのお願い（実機作業）**: ①上記2つの `index.lock` を手動削除 → ②`scripts/daily-submodule-sync.ps1` を再実行（または `git submodule update --remote`）→ ③`git add` / `git commit`。このサンドボックスからは git 操作を行っていません。
