@@ -17,6 +17,7 @@ from __future__ import annotations
 import re
 import tempfile
 import urllib.parse
+import urllib.request
 from pathlib import Path
 
 _SUPPORTED_IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp")
@@ -66,7 +67,6 @@ def _download_remote_image(url: str) -> Path:
             blob = bucket.blob(object_key)
             blob.download_to_filename(tmp.name)
         else:
-            import urllib.request
             urllib.request.urlretrieve(url, tmp.name)  # noqa: S310
     except Exception as e:
         Path(tmp.name).unlink(missing_ok=True)
