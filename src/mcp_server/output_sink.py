@@ -114,6 +114,13 @@ def _publish_local(files: list[str]) -> list[dict[str, Any]]:
     ]
 
 
+def _err_detail(e: Exception, limit: int = 200) -> str:
+    """例外を「型名: メッセージ」形式で返す（note 用・長すぎる場合は切り詰め）。"""
+    msg = str(e).replace("\n", " ").strip()
+    detail = f"{type(e).__name__}: {msg}" if msg else type(e).__name__
+    return detail[:limit] + ("…" if len(detail) > limit else "")
+
+
 def _fallback(files: list[str], reason: str) -> list[dict[str, Any]]:
     out = _publish_local(files)
     for item in out:
@@ -165,7 +172,7 @@ def _publish_drive(files: list[str], run_label: str) -> list[dict[str, Any]]:
         creds = _build_drive_creds()
         service = build("drive", "v3", credentials=creds, cache_discovery=False)
     except Exception as e:  # noqa: BLE001 - 認証は多様な例外を投げる
-        return _fallback(files, f"Drive 認証失敗 ({type(e).__name__})")
+        return _fallback(files, f"Drive 認証失敗 ({_err_detail(e)})")
 
     results: list[dict[str, Any]] = []
     for p in files:
@@ -189,7 +196,7 @@ def _publish_drive(files: list[str], run_label: str) -> list[dict[str, Any]]:
             )
         except Exception as e:  # noqa: BLE001
             item = _publish_local([str(path)])[0]
-            item["note"] = f"Drive アップロード失敗 ({type(e).__name__})。"
+            item["note"] = f"Drive アップロード失敗 ({_err_detail(e)})。"
             results.append(item)
     return results
 
@@ -239,7 +246,7 @@ def _publish_gcs(files: list[str], run_label: str) -> list[dict[str, Any]]:
         client = storage.Client()
         bucket = client.bucket(bucket_name)
     except Exception as e:  # noqa: BLE001
-        return _fallback(files, f"GCS クライアント初期化失敗 ({type(e).__name__})")
+        return _fallback(files, f"GCS クライアント初期化失敗 ({_err_detail(e)})")
 
     prefix = os.getenv(ENV_GCS_PREFIX, "numbertales").strip("/")
     try:
@@ -265,7 +272,7 @@ def _publish_gcs(files: list[str], run_label: str) -> list[dict[str, Any]]:
             )
         except Exception as e:  # noqa: BLE001
             item = _publish_local([str(path)])[0]
-            item["note"] = f"GCS アップロード失敗 ({type(e).__name__})。"
+            item["note"] = f"GCS アップロード失敗 ({_err_detail(e)})。"
             results.append(item)
     return results
 
