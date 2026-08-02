@@ -2,7 +2,10 @@
 -r requirements.txt
 
 # MCP Python SDK（FastMCP を含む）
-mcp>=1.2.0
+# 2026-08-02: mcp 2.0.0 で `mcp.server.fastmcp` が削除され Cloud Run 起動時に
+# ModuleNotFoundError → コンテナ即終了となったため、1.x 系へ上限ピン。
+# 2.x へ上げる場合は src/mcp_server/ の FastMCP 依存の移行が必要。
+mcp>=1.2.0,<2
 
 # ── 出力シンク（使うものだけ入れれば良い） ───────────────────────
 # OUTPUT_SINK=drive のとき
