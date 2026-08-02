@@ -265,6 +265,18 @@ git -C _creations-ai submodule update --remote creations-db
 
 サブモジュール更新後は、参照先仕様差分が `src/` 側のプロンプト生成ロジックに影響しないか確認する。確認結果は同期ログ（`_tasks/{YYYYMMDD}_submodule-sync.md`）の「最適化メモ」へ追記し、追従が不要だった場合もその判定根拠を残す。
 
+### 画像ファイル名の命名規則（インデックスバッジ）
+
+原典 DB の画像ファイル名は `{prefix}_{kind}{Works_Code}-{バッジ本体}{接尾辞}`（例: `cnsp_imgNTS-57.png`）。
+**`Num` とバッジ本体は一致しないことがある**（`2-alt` → `2B` / `10-alt` → `10D` / `67-old` → `67B` / `67` → `67A`）。
+
+- 参照画像のキャラクター同定は `src/utils/dataset.py` の `_looks_like_target_character()` に集約し、
+  ファイル名から読み取ったバッジとレコードのバッジを厳密一致させる。**番号の部分一致で判定しない**
+  （`NTS-10-2` の接尾辞を `Num:2` が拾う、`NTS-2B` を `Num:2` が拾う等の混入が起きる）。
+- **バッジからファイル名を組み立てる実装は追加しない。** 接尾辞・連名が復元できないため上流も持たない。
+  DB の `images` に書かれた実名を正とする。
+- 詳細と回帰テストは [`docs/tools.md`](docs/tools.md) の「リファレンス参照画像の解決」節を参照。
+
 ### 創作 DB 実物 API
 
 `addon-ai-tag` ブランチで公開している Cloudflare Workers API を src 側から参照できる。

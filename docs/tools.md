@@ -196,12 +196,56 @@ _ideas/
      - `form` フィールドがパスに反映されており、`_is_path_compatible_with_form()` で形態互換を確認
 3. `work_common.reference_images.{corefolder_reference[], humanoid_reference[]}` (作品共通設計図 `cnsp-fg_NTsCoreFolder.png` 等)
 
+### キャラクターの同定 — インデックスバッジ命名 (2026-08-02 追従)
+
+上流 creations-db が画像ファイル名の識別子を **インデックスバッジ** 体系へ一括改名した
+(NumberTales 574 件。上流ログ `_work_in_progress/2026-08-02_progress_image-rename-index-badge.md`)。
+
+```
+{prefix}_{kind}{Works_Code}-{バッジ本体}{接尾辞}
+
+cnsp_img57.png          →  cnsp_imgNTS-57.png
+cnsp_img2-alt.png       →  cnsp_imgNTS-2B.png
+attr_numberMark10alt.png →  attr_numberMarkNTS-10D.png
+art_img56,65-corefolderA.png → art_imgNTS-56,NTS-65-corefolderA.png   (連名)
+```
+
+| 要素          | 取得元                                                                       |
+| ------------- | ---------------------------------------------------------------------------- |
+| `Works_Code`  | `data/db_meta.json` の `CreationWorks.<work_key>.Works_Code` (NumberTales = `NTS`) |
+| `バッジ本体`  | 作品別 `db_type.json` の `$IndexDef.$badge`。NumberTales は `Num_Badge` 優先・無ければ `Num` |
+| `接尾辞`      | `-humanoid` / `-1` / `RZ` (旧 `-numberize`) / `MP` (旧 `-mp`) など。改名では touch されていない |
+
+**`Num` とバッジ本体は一致しないことがある。** `2-alt` → `2B` / `10-alt` → `10D` /
+`67-old` → `67B` / `67` → `67A`（旧ファイル名の A/B とバッジの A/B は逆転していたのがバッジ側を正として解消された）。
+
+そのため `_looks_like_target_character()` は **ファイル名からバッジを読み取ってレコードのバッジと厳密一致** させる。
+バッジ本体と接尾辞の間に区切り文字が無いため、切り出しは作品内バッジ語彙との **最長前方一致**
+(`_load_badge_vocabulary()` / `_badge_tokens_in_filename()`) で行う。`NTS-2B` を `2` と読むと
+2(ツグ) と 2-alt(バイナ) が混ざり、`NTS-57RZ` を `57RZ` と読むと 57 の numberize 版を取りこぼす。
+
+> 逆向き（バッジからファイル名を組み立てる）は実装しない。接尾辞と連名が復元できないため、
+> 上流も同じ理由で実装を持たない。DB の `images` に書かれた実名を正とする運用は変わらない。
+
+バッジを解決できないファイル名（`art_numbertalesAniv2nd.png` のようなイベント年月ベース命名）の扱いは呼び出し文脈で分かれる。
+
+| 収集経路                                  | `require_badge` | バッジ不明時の扱い                                     |
+| ----------------------------------------- | --------------- | ------------------------------------------------------ |
+| レコードの `images` (DB が紐付け済み)     | `False`         | 旧命名の部分一致へフォールバック（後方互換）           |
+| `_collect_forced_local_images()` の総当たり | `True`          | **採らない**。同定できないパスは他キャラの混入源になるため |
+
 ### URL → ローカル変換
 
 `_collect_work_common_reference_images()` 内で
 `https://database.numbertales-radiann.net/` → `_creations-ai/creations-db/` 変換を試み、
 ローカルにあれば実バイトで Gemini に渡せるようにしている。
 これにより、ネット越し DL を待たずに `Part.from_bytes` で確実に添付できる。
+
+### 回帰テスト
+
+`tests/test_badge_reference_images.py`（`python tests/test_badge_reference_images.py` で単体実行可）。
+最長前方一致・接尾辞の除外・連名・`require_badge` の分岐に加え、
+全キャラの参照画像に他キャラのバッジが混入しないことを実データで検証する。
 
 ---
 

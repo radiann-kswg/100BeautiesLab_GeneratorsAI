@@ -25,6 +25,7 @@ from src.utils.dataset import (  # noqa: E402
     collect_reference_images,
     extract_char_name,
     extract_color_palette,
+    _extract_record_badge,
     _filter_immutable_traits_by_form,
 )
 
@@ -140,6 +141,9 @@ def _save_db_summary(
 ) -> None:
     summary = {
         "num": record["data"]["Num"],
+        # 2026-08-02: 画像ファイル名の識別子はインデックスバッジ (`NTS-2B` 等) へ移行した。
+        # Num とバッジが一致しないキャラ (`2-alt` → `2B`) の参照解決を後から追えるよう残す。
+        "num_badge": _extract_record_badge(record),
         "name": extract_char_name(record, fallback=""),
         "form": form,
         "reference_url_count": len(references["urls"]),

@@ -87,9 +87,10 @@ output/
   "iteration": null,
   "reference_urls": ["https://database.numbertales-radiann.net/..."],
   "reference_local_paths": [
-    "_creations-ai/creations-db/data/Works_NumberTales/Images/.../emstk_corefolder57-1.png"
+    "_creations-ai/creations-db/data/Works_NumberTales/Images/.../emstk_corefolderNTS-57-1.png"
   ],
   "record_capabilities": {
+    "character_badge": "57",
     "current_form_hints_present": true,
     "form_hints_available": ["corefolder", "humanoid"],
     "outfit_features_count": 4,
@@ -115,6 +116,7 @@ output/
 | `reference_urls`        | プロンプトに含めた参照画像 URL リスト                                                  |
 | `reference_local_paths` | 実バイトを添付したローカル画像パスリスト (Gemini Part.from_bytes / OpenAI images.edit) |
 | `record_capabilities`   | キャラ/形態の AI ヒント有無、衣装語フィルタ前後件数、DB 画像存在チェック等             |
+| ↳ `character_badge`     | 参照画像の同定に使ったインデックスバッジ。`Num` と一致しないキャラがある (`2-alt` → `2B`) |
 | `status`                | `"ok"` / `"failed"` / `"partial"`                                                      |
 | `results[]`             | 各生成ファイルの結果。失敗時は `status: "failed"` + 簡易メッセージ                     |
 | `errors[]`              | 失敗時のエラー要旨 (型名 + メッセージ)                                                 |

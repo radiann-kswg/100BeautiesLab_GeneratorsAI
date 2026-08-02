@@ -383,7 +383,168 @@ def _extract_face_features_for_corefolder(silhouette_features: list[str]) -> lis
     return kept
 
 
-def _looks_like_target_character(path_text: str, num_value: Any) -> bool:
+# ── インデックスバッジ命名 (2026-08-02 上流一括改名) ───────────────────────────
+# 上流 creations-db が画像ファイル名の識別子を「インデックスバッジ」体系へ一括改名した
+# (`_work_in_progress/2026-08-02_progress_image-rename-index-badge.md`、NumberTales 574 件)。
+#
+#   旧: cnsp_img57.png     / cnsp_img2-alt.png  / attr_numberMark10alt.png / cnsp_img67-A.png
+#   新: cnsp_imgNTS-57.png / cnsp_imgNTS-2B.png / attr_numberMarkNTS-10D.png / cnsp_imgNTS-67B.png
+#
+# 命名規則は `{prefix}_{kind}{Works_Code}-{バッジ本体}{接尾辞}`。
+#   - `Works_Code`  … `data/db_meta.json` の `CreationWorks.<work_key>.Works_Code` (NumberTales = "NTS")
+#   - `バッジ本体`  … 作品別 `db_type.json` の `$IndexDef.$badge`。NumberTales は
+#                     `keys: ["Num_Badge", {key:"Num", whenMissing:"Num_Badge"}]` ＝ Num_Badge 優先、無ければ Num
+#   - `接尾辞`      … `-humanoid` / `-1` / `RZ` (旧 -numberize) / `MP` (旧 -mp) など。改名では触られていない
+#
+# 番号の直書きだった旧命名を前提にした部分一致では、新命名で次の破綻が起きる:
+#   - `Num:"2-alt"` (バッジ `2B`) は "2-alt" を含まないファイル名になり参照画像を全て失う
+#   - `Num:2` の部分一致が `NTS-2B` (=2-alt) や接尾辞 `-2` (`NTS-10-2` 等) を拾い他キャラが混入する
+#   - `Num:67` と `Num:"67-old"` がバッジ `67A` / `67B` に分かれ、互いの画像を取り違える
+#
+# そこで「ファイル名からバッジを読み取り、レコードのバッジと厳密一致させる」方向で照合する。
+# 逆向き (バッジからファイル名を組み立てる) は上流も実装していない — 接尾辞と連名が復元できないため。
+_BADGE_RUN_RE = re.compile(r"[0-9a-z]+")
+
+
+@lru_cache(maxsize=8)
+def _load_works_code(work_key: str, creations_db_base: str = "") -> str:
+    """作品の `Works_Code` (ファイル名に載る作品コード) を返す。取得できなければ空文字。
+
+    `data/db_meta.json` の `CreationWorks.<work_key>.Works_Code` が正。
+    """
+    roots: list[Path] = []
+    if creations_db_base:
+        roots.append(Path(creations_db_base))
+    roots.append(_creations_db_repo_root())
+
+    for root in roots:
+        meta_path = root / "data" / "db_meta.json"
+        try:
+            with meta_path.open(encoding="utf-8") as f:
+                meta = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            continue
+        works = meta.get("CreationWorks")
+        if not isinstance(works, dict):
+            continue
+        entry = works.get(work_key)
+        if not isinstance(entry, dict):
+            # `Works_NumberTales` のように `#` を欠いた指定でも引けるようにする。
+            entry = works.get(f"#{_extract_work_dir_from_key(work_key)}")
+        if isinstance(entry, dict):
+            code = entry.get("Works_Code")
+            if isinstance(code, str) and code.strip():
+                return code.strip()
+    return ""
+
+
+def _extract_record_badge(record: dict[str, Any]) -> str:
+    """レコードのインデックスバッジ本体を返す (`Num_Badge` 優先、無ければ `Num`)。
+
+    `$IndexDef.$badge` の `whenMissing` 宣言に対応する。バッジを持たない作品では空文字。
+    """
+    for source in (record.get("data"), record.get("db_record")):
+        if not isinstance(source, dict):
+            continue
+        for key in ("Num_Badge", "Num"):
+            value = source.get(key)
+            if value is None:
+                continue
+            text = str(value).strip()
+            if text:
+                return text
+    return ""
+
+
+@lru_cache(maxsize=8)
+def _load_badge_vocabulary(work_key: str, manifest_path: str = "") -> tuple[str, ...]:
+    """作品内に実在するバッジ本体を **長い順** に返す (最長前方一致で使う)。
+
+    ファイル名の `NTS-` 直後は `57` / `2B` / `10D` のようなバッジと、`RZ` / `MP` のような
+    接尾辞が地続きに並ぶ (`NTS-57RZ`)。区切り文字が無いため、語彙との最長前方一致でしか
+    バッジ本体を切り出せない。`2` と `2B`、`67A` と `67` を取り違えないための順序。
+    """
+    try:
+        records = load_manifest(manifest_path or None)
+    except (OSError, json.JSONDecodeError):
+        return ()
+
+    badges: set[str] = set()
+    for record in records:
+        if record.get("_type") != "character":
+            continue
+        if record.get("work_key") != work_key:
+            continue
+        badge = _extract_record_badge(record)
+        if badge:
+            badges.add(badge)
+    return tuple(sorted(badges, key=lambda b: (-len(b), b)))
+
+
+def _badge_tokens_in_filename(
+    path_text: str,
+    works_code: str,
+    vocabulary: tuple[str, ...],
+) -> set[str]:
+    """ファイル名に含まれる `{Works_Code}-{バッジ}` を語彙との最長前方一致で解決して返す。
+
+    連名 (`art_imgNTS-56,NTS-65-corefolderA.png`) は複数バッジを返す。
+    バッジ命名を持たないファイル名 (`art_numbertalesAniv2nd.png` 等) では空集合。
+    """
+    if not works_code or not vocabulary:
+        return set()
+
+    name = Path(path_text.replace("\\", "/")).name.lower()
+    prefix = f"{works_code.lower()}-"
+    found: set[str] = set()
+    cursor = 0
+    while True:
+        index = name.find(prefix, cursor)
+        if index < 0:
+            break
+        cursor = index + len(prefix)
+        run = _BADGE_RUN_RE.match(name, cursor)
+        if run is None:
+            continue
+        text = run.group(0)
+        for badge in vocabulary:  # 長い順なので最初の前方一致が最長一致
+            if text.startswith(badge.lower()):
+                found.add(badge)
+                break
+    return found
+
+
+def _looks_like_target_character(
+    path_text: str,
+    num_value: Any,
+    *,
+    badge: str = "",
+    work_key: str = "",
+    creations_db_base: str = "",
+    require_badge: bool = False,
+) -> bool:
+    """パスが対象キャラクター本人の画像かを判定する。
+
+    新命名 (インデックスバッジ) を第一の正とし、ファイル名からバッジを解決できた場合は
+    レコードのバッジとの **厳密一致** で判定する。
+
+    バッジを解決できないファイル名 (イベント年月ベースの `art_numbertalesAniv2nd.png` 等や、
+    バッジ命名を持たない作品) の扱いは呼び出し文脈で変える:
+
+    - ``require_badge=True``  … DB が紐付けていない **ディレクトリ総当たり** 由来。
+      キャラクターを同定できないパスは他キャラの混入源にしかならないため落とす。
+    - ``require_badge=False`` … DB の ``images`` が当該レコードへ紐付けたパス。
+      旧命名の部分一致へフォールバックして後方互換を保つ。
+    """
+    if badge and work_key:
+        works_code = _load_works_code(work_key, creations_db_base)
+        vocabulary = _load_badge_vocabulary(work_key)
+        tokens = _badge_tokens_in_filename(path_text, works_code, vocabulary)
+        if tokens:
+            return badge in tokens
+        if require_badge:
+            return False
+
     if num_value is None:
         return False
 
@@ -442,6 +603,7 @@ def _collect_forced_local_images(
         return []
 
     num_value = (record.get("data") or {}).get("Num")
+    badge = _extract_record_badge(record)
     allowed_suffixes = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
     found: list[str] = []
 
@@ -454,7 +616,16 @@ def _collect_forced_local_images(
         text = str(path)
         if not _is_path_compatible_with_form(text, form):
             continue
-        if _looks_like_target_character(text, num_value):
+        # DB の紐付けを介さない総当たり収集。バッジで同定できないパスは採らない
+        # (旧命名前提の部分一致では `NTS-10-2` の接尾辞 `-2` を Num:2 が拾う等の混入が起きる)。
+        if _looks_like_target_character(
+            text,
+            num_value,
+            badge=badge,
+            work_key=work_key,
+            creations_db_base=creations_db_base,
+            require_badge=True,
+        ):
             _append_unique(found, text)
 
     return found
@@ -548,12 +719,21 @@ def collect_reference_images(
       - カテゴリ优先順 (``_sort_paths_for_form``)
     """
     num_value = (record.get("data") or {}).get("Num")
+    badge = _extract_record_badge(record)
+    work_key = str(record.get("work_key") or "#Works_NumberTales")
 
     def _allow_path(path: str) -> bool:
         if not _is_path_compatible_with_form(path, form):
             return False
-        # 該当キャラクター番号を含まないパスは他キャラクターの装備・顔が混入するため捨てる。
-        if num_value is not None and not _looks_like_target_character(path, num_value):
+        # 該当キャラクターのバッジ (旧命名では番号) を含まないパスは
+        # 他キャラクターの装備・顔が混入するため捨てる。
+        if num_value is not None and not _looks_like_target_character(
+            path,
+            num_value,
+            badge=badge,
+            work_key=work_key,
+            creations_db_base=creations_db_base,
+        ):
             return False
         return True
 
@@ -613,7 +793,13 @@ def collect_reference_images(
                         except (TypeError, ValueError):
                             if str(num_value) not in char_ids:
                                 continue
-                    elif not _looks_like_target_character(path, num_value):
+                    elif not _looks_like_target_character(
+                        path,
+                        num_value,
+                        badge=badge,
+                        work_key=work_key,
+                        creations_db_base=creations_db_base,
+                    ):
                         continue
                     _append_unique(local_candidates, path)
         else:
@@ -721,6 +907,9 @@ def collect_record_capabilities(
     return {
         "has_ai_hints": bool(hints),
         "has_common_hints": bool(common),
+        # 2026-08-02: 参照画像の同定に使ったインデックスバッジ。新命名の追従漏れを
+        # run_meta.json から追えるようにする (例: Num:"2-alt" → "2B")。
+        "character_badge": _extract_record_badge(record),
         "form_hints_available": sorted(
             [name for name, value in forms.items() if value]
         ),
