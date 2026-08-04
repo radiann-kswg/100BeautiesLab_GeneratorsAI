@@ -65,3 +65,15 @@ CHANGELOG.md                                       |  21 +
 > Cowork の `daily-submodule-sync-optimize` タスク (Claude) に差分レビューを依頼し、
 > `src/` ・ `docs/` 側の追従最適化を行うこと。本スクリプトは git 同期とログ・コミットのみ担当。
 
+
+## Cowork 追従レビュー — 2026-08-03 (Claude / 57(イズナ))
+
+- 実機スクリプト実行: あり（本ログを 18:08 に生成し、`creations-db` を 66a6563→b3218ba に FF 取り込み済み）。
+- リモート HEAD 照合（GitHub コネクタ・読み取りのみ）:
+  - `creations-db` origin/addon-ai-tag = `b3218ba` … ローカルと一致（同期済み）。
+  - `creations-ai` origin/master = `e16ab41`（`chore: sync ai-dataset (creations-db@b3218ba) — ai_training allowed: 156`, 2026-08-03T09:08:55Z, github-actions[bot]）。ローカル `_creations-ai` は `531785f`。→ **リモートが 1 コミット先行**。実機フェッチ(≈09:08 UTC)と CI 自動 sync 生成がほぼ同時刻のためのタイミング差で、次回同期で取り込まれる見込み（エラーではない）。
+- 取り込み差分の影響判定: `src/` `docs/` への追従最適化は **不要**。
+  - 差分は creations-db サイト自身の相関図 UI（`lib/graph/*`・`pages/relations.*`・`tests/graph.*`）と、`Works_UnibyteLive` / `Works_PastDivers` の DB データ、`db_meta.json` の `$DetailLayout` / `hideText` 拡張（Un-Profiling 追加）に限定。
+  - 親リポ `src/` が消費するのは `CreationWorks.<work_key>.Works_Code`（`src/utils/dataset.py`）・`Works_NumberTales` の `db_Primary.json` / `db_type.json`（`$IndexDef.$badge`）・`ai-dataset/manifest-training.jsonl`。今回いずれも無変更（`Works_NumberTales/` 変更なし、`manifest-training.jsonl` 変更なし、`CreationWorks`/`Works_Code` 変更なし）。
+  - `ai_training allowed` は 156 で据え置き。`Works_UnibyteLive` は `AI_Optout: true` のため manifest への実体的影響なしと判断。過剰改変を避けるため親リポは無編集。
+- 先輩への申し送り（実機で実施）: 本追記を含む作業ツリーを実機の `git add` / `git commit`（または `scripts/daily-submodule-sync.ps1` の次回実行）で確定してね。次回同期で `_creations-ai` が `531785f→e16ab41` に進む見込み。
