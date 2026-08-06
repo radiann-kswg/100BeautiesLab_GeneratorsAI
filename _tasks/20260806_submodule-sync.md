@@ -1,4 +1,4 @@
-# サブモジュール同期ログ — 2026-08-06 19:20
+# サブモジュール同期ログ — 2026-08-06 19:21
 
 > 実機 PowerShell スクリプト `scripts/daily-submodule-sync.ps1` による自動実行。
 
@@ -6,12 +6,29 @@
 
 | サブモジュール | 追跡先 | 旧 | 新 | 判定 | 備考 |
 |---|---|---|---|---|---|
-| `_creations-ai` | origin/master | a47bfb8 | f23040f | SKIP | checkout 失敗 (master): git.exe : fatal: Unable to create 'C:/Visual Studio Code UserFile/100BeautiesLab_ GeneratorsAI/.git/modules/_creations-ai/index.lock': File exists. 発生場所 C:\Visual Studio Code UserFile\100BeautiesLab_GeneratorsAI\scripts\daily-sub module-sync.ps1:52 文字:17 +         $out = (& git @GitArgs 2>&1 / Out-String) +                 ~~~~~~~~~~~~~~~~~~~     + CategoryInfo          : NotSpecified: (fatal: Unable t...': File exists.:S     tring) [], RemoteException     + FullyQualifiedErrorId : NativeCommandError    Another git process seems to be running in this repository, e.g. an editor opened by 'git commit'. Please make sure all processes are terminated then try again. If it still fails, a git process may have crashed in this repository earlier: remove the file manually to continue. |
-| `_creations-ai/creations-db` | origin/addon-ai-tag | d87f25e | 8623b62 | SKIP | checkout 失敗 (addon-ai-tag): git.exe : fatal: Unable to create 'C:/Visual Studio Code UserFile/100BeautiesLab_ GeneratorsAI/.git/modules/_creations-ai/modules/creations-db/index.lock': File ex ists. 発生場所 C:\Visual Studio Code UserFile\100BeautiesLab_GeneratorsAI\scripts\daily-sub module-sync.ps1:52 文字:17 +         $out = (& git @GitArgs 2>&1 / Out-String) +                 ~~~~~~~~~~~~~~~~~~~     + CategoryInfo          : NotSpecified: (fatal: Unable t...': File exists.:S     tring) [], RemoteException     + FullyQualifiedErrorId : NativeCommandError    Another git process seems to be running in this repository, e.g. an editor opened by 'git commit'. Please make sure all processes are terminated then try again. If it still fails, a git process may have crashed in this repository earlier: remove the file manually to continue. |
+| `_creations-ai` | origin/master | f23040f | f23040f | NO-CHANGE | 最新 |
+| `_creations-ai/creations-db` | origin/addon-ai-tag | d87f25e | 8623b62 | UPDATED | FF 取り込み完了 |
 
 ## 取り込んだ更新の内容
 
-今回取り込んだ更新はありません。
+### `_creations-ai/creations-db` d87f25e..8623b62
+
+```
+8623b62 Merge branch 'develop' into addon-ai-tag
+43706d3 騾ｲ謐励ヵ繝ｩ繧ｰbugfix
+cb8d8d4 DB讒矩謨ｴ蛯・繝翫Φ繝舌・繝・・繝ｫ繧ｺ)
+```
+
+変更ファイル:
+
+```
+.../DataBases/db_SelfSecondary.json                |   3 +-
+ .../DataBases/db_SemiPrimary.json                  | 125 ++++++++++++---------
+ data/Works_NumberTales/DataBases/db_type.json      |  14 ++-
+ .../cnsp_imgNTS-222.png}                           | Bin
+ data/db_meta.json                                  |   1 +
+ 5 files changed, 87 insertions(+), 56 deletions(-)
+```
 
 ## 最適化メモ
 
