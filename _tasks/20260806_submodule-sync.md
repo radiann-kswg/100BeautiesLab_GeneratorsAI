@@ -1,4 +1,4 @@
-# サブモジュール同期ログ — 2026-08-06 09:00
+# サブモジュール同期ログ — 2026-08-06 19:20
 
 > 実機 PowerShell スクリプト `scripts/daily-submodule-sync.ps1` による自動実行。
 
@@ -6,8 +6,8 @@
 
 | サブモジュール | 追跡先 | 旧 | 新 | 判定 | 備考 |
 |---|---|---|---|---|---|
-| `_creations-ai` | origin/master | a47bfb8 | a47bfb8 | NO-CHANGE | 最新 |
-| `_creations-ai/creations-db` | origin/addon-ai-tag | d87f25e | d87f25e | NO-CHANGE | 最新 |
+| `_creations-ai` | origin/master | a47bfb8 | f23040f | SKIP | checkout 失敗 (master): git.exe : fatal: Unable to create 'C:/Visual Studio Code UserFile/100BeautiesLab_ GeneratorsAI/.git/modules/_creations-ai/index.lock': File exists. 発生場所 C:\Visual Studio Code UserFile\100BeautiesLab_GeneratorsAI\scripts\daily-sub module-sync.ps1:52 文字:17 +         $out = (& git @GitArgs 2>&1 / Out-String) +                 ~~~~~~~~~~~~~~~~~~~     + CategoryInfo          : NotSpecified: (fatal: Unable t...': File exists.:S     tring) [], RemoteException     + FullyQualifiedErrorId : NativeCommandError    Another git process seems to be running in this repository, e.g. an editor opened by 'git commit'. Please make sure all processes are terminated then try again. If it still fails, a git process may have crashed in this repository earlier: remove the file manually to continue. |
+| `_creations-ai/creations-db` | origin/addon-ai-tag | d87f25e | 8623b62 | SKIP | checkout 失敗 (addon-ai-tag): git.exe : fatal: Unable to create 'C:/Visual Studio Code UserFile/100BeautiesLab_ GeneratorsAI/.git/modules/_creations-ai/modules/creations-db/index.lock': File ex ists. 発生場所 C:\Visual Studio Code UserFile\100BeautiesLab_GeneratorsAI\scripts\daily-sub module-sync.ps1:52 文字:17 +         $out = (& git @GitArgs 2>&1 / Out-String) +                 ~~~~~~~~~~~~~~~~~~~     + CategoryInfo          : NotSpecified: (fatal: Unable t...': File exists.:S     tring) [], RemoteException     + FullyQualifiedErrorId : NativeCommandError    Another git process seems to be running in this repository, e.g. an editor opened by 'git commit'. Please make sure all processes are terminated then try again. If it still fails, a git process may have crashed in this repository earlier: remove the file manually to continue. |
 
 ## 取り込んだ更新の内容
 
