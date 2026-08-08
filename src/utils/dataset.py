@@ -1664,6 +1664,11 @@ _TAIL_SHAPE_TYPE_LABELS: dict[str, tuple[str, str]] = {
     "#TailShapeType_Octopus": ("蛸足(特殊)型", "Octopus-leg (Special) type"),
     "#TailShapeType_Mixed": ("多様(枝分かれ)型", "Mixed (branched) type"),
     "#TailShapeType_Reptile": ("爬虫類型", "Reptile-type"),
+    # 2026-08-08 の ai-dataset 更新 (888 / 999 / 1111) で新登場。
+    "#TailShapeType_BirdTailOnly": (
+        "尾羽のみ(翼部形状と併せて設計)",
+        "Tail feathers only (designed in conjunction with wing shape)",
+    ),
 }
 
 
@@ -1692,7 +1697,10 @@ def _describe_tails_unit_entry(entry: dict[str, Any]) -> tuple[str, str]:
     例: Periphery→Center) も 2026-07-10 の addon-ai-tag 更新で実データが入ったため反映する。
     """
     shape_code = str(entry.get("TailShapeType") or "")
-    shape_jp, shape_en = _TAIL_SHAPE_TYPE_LABELS.get(shape_code, ("", ""))
+    # 未知コードは捨てずに可読ラベルへ落とす (上流の列挙値追加に耐えるため)。
+    # _BODY_PART_LABELS / _COLOR_ROLE_LABELS と同じフォールバック方針。
+    _shape_fb = _hashtag_fallback_label(shape_code) if shape_code else ""
+    shape_jp, shape_en = _TAIL_SHAPE_TYPE_LABELS.get(shape_code, (_shape_fb, _shape_fb))
     count = entry.get("Count")
     segment = entry.get("Segment")
     note_jp = str(entry.get("Note_JP") or "").strip()
