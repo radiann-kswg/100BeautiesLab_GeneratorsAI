@@ -77,7 +77,7 @@ jobs:
           flags: >-
             --port=8080
             --allow-unauthenticated
-            --min-instances=1
+            --min-instances=0
             --max-instances=1
             --memory=1Gi
             --timeout=3600
