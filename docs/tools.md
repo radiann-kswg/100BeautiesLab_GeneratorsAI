@@ -269,6 +269,13 @@ env `CREATIONS_DB_PACKAGE_ENABLE` で動作切替。
 `_creations-ai/creations-db/` は read-only 扱いのため、指摘は直接編集ではなく
 [100BeautiesLab_CreationsDB](https://github.com/radiann-kswg/100BeautiesLab_CreationsDB) の Issue として送る。
 
+検査は 2 種類あり `--check` で切り替える。
+
+| `--check` | 問い | 出力 |
+| --- | --- | --- |
+| `match`（既定） | DB の記述は公式イラストと合っているか | `{日付}_appearance_num{NNN}_{form}.md` |
+| `coverage` | 配色検知ツールが動くだけの情報が揃っているか | `{日付}_coverage_num{NNN}_{form}.md` |
+
 ### コマンド
 
 ```bash
@@ -278,6 +285,12 @@ python -m src.tools.verify_appearance_detail --num 57 --form corefolder
 # 両形態を続けて照合 (Formation=null の共通エントリは両方で検査される)
 python -m src.tools.verify_appearance_detail --num 57 --form both
 
+# 配色検知ツール向けの充足性検査 (BodyPart / DesignElement の不足を洗い出す)
+python -m src.tools.verify_appearance_detail --num 57 --check coverage --form both
+
+# 作品内の AppearanceDetail 保有レコードを一括検査し、1 枚のレビューへまとめる
+python -m src.tools.verify_appearance_detail --all --check coverage
+
 # レビューを Issue として送る (form ごとに 1 Issue)
 python -m src.tools.verify_appearance_detail --num 57 --form both --submit
 ```
@@ -286,7 +299,9 @@ python -m src.tools.verify_appearance_detail --num 57 --form both --submit
 
 | フラグ | 既定 | 説明 |
 | --- | --- | --- |
-| `--num` | (必須) | キャラクター番号。`2-alt` のような特殊 ID も可 |
+| `--num` | — | キャラクター番号。`2-alt` のような特殊 ID も可（`--all` と排他・どちらか必須） |
+| `--all` | off | 作品内の `has_appearance_detail` 全レコードを一括検査（`--check coverage` 専用） |
+| `--check` | `match` | `match` = 記述と画像の照合 / `coverage` = 配色検知ツール向けの充足検査 |
 | `--form` | `corefolder` | `corefolder` / `humanoid` / `both` |
 | `--max-images` | `3` | Vision へ渡す公式画像の枚数。枚数が少ないと全身資料が入らず `unclear` が増える |
 | `--submit` | off | `gh issue create` でレビューを送る。**課金＋外部投稿を伴うので明示 opt-in** |
@@ -314,6 +329,37 @@ creations-db 側の `tools/extract-palette.mjs` の `listImageFields()` と同�
 | `match` | 画像から仕様どおりだと確認できた |
 | `mismatch` | 画像が仕様と明らかに異なる（位置・色・数・形状） |
 | `unclear` | 画角・遮蔽・解像度・未描画で**確認できない**。「DB が誤り」の意味ではない |
+
+### 充足性検査 (`--check coverage`) が見るもの
+
+配色検知ツール（creations-db `tools/patch-colorpalette.mjs`）は、`AppearanceDetail` の**色語**から
+`ColorPalette.AppliesTo`（その色がどの部位か）を転記する。したがって色語を含むエントリに
+`BodyPart` が無いと、検出した色を部位へ紐づけられない。この検査はその不足を洗い出す。
+
+判定は上流 `tools/extract-palette.mjs` の `collectColorHints()` / `colorWordMatchesHex()` を
+**node 経由でそのまま呼ぶ**（色語表 `COLOR_WORD_RANGES` をこちらへ再実装しない。policy と同じ方針）。
+
+| 節 | 内容 | 意味 |
+| --- | --- | --- |
+| 1. BodyPart 欠落 | 色語はあるのに `BodyPart` が空のエントリ | **最優先。** `AppliesTo` へ転記できない |
+| 2. 根拠なし ColorPalette | 対応する色語が 1 つも無い HEX | その色がどの部位か決められない |
+| 3. 色語ヒント 0 のエントリ | 色語表に載る語を含まないエントリ | 形状のみの記述なら正常。`blonde` / `amber` のような未対応色語の発見に使う |
+
+1 と 2 については、公式画像から `$EnumDef_DesignBodyPart` のコードで**部位候補を提案**する（半自動の下書き）。
+一覧に無いコードを返してきた場合は捨てるので、そのまま DB へ貼れる形になる。不足が 0 件のときは Vision を呼ばない。
+画像が無くても静的検査だけは実行する。
+
+### 一括検査 (`--all`)
+
+作品内の `has_appearance_detail` 全レコード（NumberTales で 111 件）を検査し、**1 枚のレビュー**へまとめる。
+各レコードは単体実行と同じ fail-closed ゲートを通る。形態では絞らない（欠落は形態に依らないため）。
+
+- 色語ヒント取得の node 呼び出しは **1 プロセスにまとめる**（レコードごとに起動すると起動コストで数十秒かかる）。
+- 節 1 は**色語表に無い色語の頻度表**。色語ヒント 0 の記述からユニーク文字列だけを LLM へ渡して
+  色を指す語を抽出する（画像は使わない）。`COLOR_WORD_RANGES` へ何を足すべきかの優先順になる。
+- 個別キャラの部位候補（画像からの提案）は一括では出さない。`--num <N> --check coverage` を使う。
+- 色語の抽出は実行のたびに結果が揺れる（LLM 判定のため）。`bright`（表情の明るさ）のような
+  色ではない語を拾うこともあるので、そのまま色語表へ入れず内容を確認すること。
 
 - 判定は AI の推定。`mismatch` は先輩の目視確認を前提とした指摘候補として扱う。
 - モデルが返さなかった行は握り潰さず `unclear` として残る（件数が黙って減らないようにするため）。

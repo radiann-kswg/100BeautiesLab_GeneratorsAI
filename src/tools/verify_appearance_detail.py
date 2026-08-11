@@ -22,6 +22,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 from datetime import datetime
 from pathlib import Path
 
@@ -35,6 +36,7 @@ from src.utils.dataset import (  # noqa: E402
     apply_generation_gate,
     collect_reference_images,
     find_character,
+    load_manifest,
 )
 from src.utils.image_io import detect_image_format  # noqa: E402
 
@@ -309,6 +311,439 @@ def build_review_md(
     return "\n".join(lines)
 
 
+# ──────────────────────────────────────────
+# 配色検知ツール向けの充足性検査 (--check coverage)
+# ──────────────────────────────────────────
+
+# 上流 `tools/extract-palette.mjs` をそのまま呼ぶ。色語表 (COLOR_WORD_RANGES) と
+# collectColorHints() は配色検知ツールの判定の正典で、こちらへ再実装すると必ず食い違う。
+_NODE_EVIDENCE_SCRIPT = """
+import { collectColorHints, colorWordMatchesHex } from %(module)s;
+import fs from 'node:fs';
+const records = JSON.parse(fs.readFileSync(process.argv[1], 'utf8'));
+const attrText = (a) => {
+    const vdict = Object.entries(a).filter(([k]) => k.startsWith('vdict_')).map(([, v]) => v).join(', ');
+    return `${a.AttrLabel ?? '?'}: ${a.value_EN ?? a.value_JP ?? vdict ?? ''}`;
+};
+const evidence = records.map((rec) => {
+    const details = Array.isArray(rec.AppearanceDetail) ? rec.AppearanceDetail : [];
+    const entries = details.map((e, i) => ({
+        index: i + 1,
+        formation: e.Formation ?? null,
+        bodyPart: Array.isArray(e.BodyPart) ? e.BodyPart : [],
+        element: e.DesignElement ?? null,
+        text: (Array.isArray(e.Attrs) ? e.Attrs : []).map(attrText).join(' / '),
+        hints: collectColorHints({ AppearanceDetail: [e] }),
+    }));
+    const allHints = collectColorHints(rec);
+    const palette = (Array.isArray(rec.ColorPalette) ? rec.ColorPalette : []).map((c) => ({
+        hex: c.Hex,
+        role: c.Role ?? null,
+        appliesTo: c.AppliesTo ?? null,
+        formation: c.Formation ?? null,
+        hints: typeof c.Hex === 'string' ? allHints.filter((h) => colorWordMatchesHex(h.word, c.Hex)) : [],
+    }));
+    return { entries, palette };
+});
+process.stdout.write(JSON.stringify(evidence));
+"""
+
+
+def collect_color_hint_evidence(
+    records: list[dict], creations_db_base: str = DEFAULT_DB_BASE
+) -> list[dict]:
+    """配色検知ツールが実際に拾える色語ヒントを、上流ツールを呼んで取得する。
+
+    node の起動コストがあるため、複数レコードは 1 プロセスでまとめて処理する。
+    """
+    module = Path(creations_db_base) / "tools" / "extract-palette.mjs"
+    if not module.exists():
+        raise SystemExit(f"[ERROR] 配色ツールが見つかりません: {module}")
+
+    payload = [r.get("db_record") or r.get("data") or {} for r in records]
+    with tempfile.TemporaryDirectory() as tmp:
+        rec_path = Path(tmp) / "records.json"
+        rec_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        proc = subprocess.run(
+            [
+                "node", "--input-type=module",
+                "-e", _NODE_EVIDENCE_SCRIPT % {"module": json.dumps(module.as_uri())},
+                str(rec_path),
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+    if proc.returncode != 0:
+        raise SystemExit(f"[ERROR] 色語ヒントの取得に失敗 (node): {(proc.stderr or '').strip()}")
+    return json.loads(proc.stdout)
+
+
+def audit_coverage(evidence: dict, form: str | None) -> dict:
+    """配色検知ツールが `AppliesTo` を埋められない箇所を洗い出す。
+
+    ``form=None`` は形態で絞らない (一括検査用。欠落は形態に関係なく欠落のため)。
+    """
+    def _in_form(item: dict) -> bool:
+        return form is None or item.get("formation") in (form, None)
+
+    entries = [e for e in evidence.get("entries") or [] if _in_form(e)]
+    palette = [c for c in evidence.get("palette") or [] if _in_form(c)]
+    return {
+        "entries": entries,
+        "palette": palette,
+        # 色語はあるのに部位が無い → AppliesTo へ転記できない。最優先。
+        "missing_body_part": [e for e in entries if e["hints"] and not e["bodyPart"]],
+        # 色語を 1 つも生まないエントリ → 色語表に無い語 (blonde / amber 等) の可能性。
+        "no_color_word": [e for e in entries if not e["hints"]],
+        # 根拠となる色語が無い HEX → その色がどの部位か決められない。
+        "unbacked_hex": [c for c in palette if not c["hints"]],
+    }
+
+
+def load_design_enums(creations_db_base: str = DEFAULT_DB_BASE) -> dict[str, dict[str, str]]:
+    """`$EnumDef_DesignBodyPart` / `$EnumDef_DesignElement` をコード → 日本語ラベルで返す。"""
+    meta_path = Path(creations_db_base) / "data" / "db_meta.json"
+    if not meta_path.exists():
+        return {"body_part": {}, "element": {}}
+    vars_def = (json.loads(meta_path.read_text(encoding="utf-8")).get("General") or {}).get("$VarsDef") or {}
+
+    def _labels(key: str, label_key: str) -> dict[str, str]:
+        return {
+            code: str(entry.get(label_key) or code)
+            for code, entry in (vars_def.get(key) or {}).items()
+            if isinstance(entry, dict)
+        }
+
+    return {
+        "body_part": _labels("$EnumDef_DesignBodyPart", "BodyPart_JP"),
+        "element": _labels("$EnumDef_DesignElement", "DesignElement_JP"),
+    }
+
+
+def suggest_body_parts(
+    audit: dict,
+    enums: dict,
+    image_paths: list[Path],
+    char_label: str,
+    form: str,
+    model: str,
+) -> dict[str, dict]:
+    """不足箇所に当てる BodyPart コードを公式画像から提案させる (半自動の下書き)。"""
+    items: list[str] = []
+    for entry in audit["missing_body_part"]:
+        items.append(f'A-{entry["index"]}. 記述: "{entry["text"]}" (DesignElement: {entry["element"]})')
+    for color in audit["unbacked_hex"]:
+        items.append(f'H-{color["hex"]}. 色 {color["hex"]} が塗られている部位')
+    if not items or not image_paths:
+        return {}
+
+    from openai import OpenAI
+
+    body_part_list = "\n".join(f"- {code} ({label})" for code, label in enums["body_part"].items())
+    system = (
+        f"あなたは創作 DB の記述を補う校正 AI です。対象は「{char_label}」の {form} 形態です。\n"
+        "添付画像は公式イラスト (原典) です。各項目について、当てはまる BodyPart コードを"
+        "**下の一覧から**選び、**JSON のみ**返してください。\n"
+        '{"suggestions": [{"id": "A-5", "body_parts": ["#BodyPart_Chest"], "note": "根拠を日本語で1文"}]}\n'
+        f"[BodyPart コード一覧]\n{body_part_list}\n"
+        "画像から判断できない項目は body_parts を空配列にし、note に理由を書いてください。"
+        "一覧に無いコードを作らないでください。"
+    )
+    content: list[dict] = [{"type": "text", "text": "以下の項目に当てはまる部位を挙げてください。\n\n" + "\n".join(items)}]
+    for path in image_paths:
+        mime, b64 = _encode_image(path)
+        content.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}})
+
+    client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+    response = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "system", "content": system}, {"role": "user", "content": content}],
+        max_tokens=1500,
+        response_format={"type": "json_object"},
+    )
+    raw = json.loads((response.choices[0].message.content or "{}").strip())
+
+    valid = set(enums["body_part"])
+    out: dict[str, dict] = {}
+    for item in raw.get("suggestions") or []:
+        if not isinstance(item, dict) or not item.get("id"):
+            continue
+        # 一覧に無いコードを提案してくることがあるので捨てる (そのまま DB へ貼れる形を保つ)。
+        parts = [p for p in (item.get("body_parts") or []) if p in valid]
+        out[str(item["id"])] = {"body_parts": parts, "note": str(item.get("note") or "").strip()}
+    return out
+
+
+def build_coverage_md(
+    char_label: str,
+    form: str,
+    audit: dict,
+    enums: dict,
+    suggestions: dict,
+    image_paths: list[Path],
+    model: str,
+    command: str,
+) -> str:
+    def _cell(text: str) -> str:
+        return str(text).replace("|", "\\|").replace("\n", " ")
+
+    def _parts(codes: list[str]) -> str:
+        return ", ".join(f"`{c}` ({enums['body_part'].get(c, '?')})" for c in codes) or "—"
+
+    def _suggestion(key: str) -> str:
+        found = suggestions.get(key)
+        if not found:
+            return "—"
+        if not found["body_parts"]:
+            return f"(判断できず) {_cell(found['note'])}"
+        return f"{_parts(found['body_parts'])} — {_cell(found['note'])}"
+
+    entries, palette = audit["entries"], audit["palette"]
+    with_hints = [e for e in entries if e["hints"]]
+    lines = [
+        f"# AppearanceDetail 充足性レビュー（配色検知ツール向け） — {char_label} / {form}",
+        "",
+        "配色検知ツール (`tools/patch-colorpalette.mjs`) は `AppearanceDetail` の色語から",
+        "`ColorPalette.AppliesTo`（その色がどの部位か）を転記する。したがって **色語を含むエントリに",
+        "`BodyPart` が無いと、検出した色を部位へ紐づけられない**。",
+        "以下は上流の `collectColorHints()` / `colorWordMatchesHex()` を直接呼んで得た充足状況で、",
+        "判定ロジックの再実装はしていない。",
+        "",
+        f"- 判定日: {datetime.now():%Y-%m-%d}",
+        f"- 色語ヒントを持つエントリ: {len(with_hints)} / {len(entries)}",
+        f"- **BodyPart 欠落: {len(audit['missing_body_part'])} 件**（AppliesTo へ転記できない）",
+        f"- **根拠となる色語が無い ColorPalette: {len(audit['unbacked_hex'])} 色** / 全 {len(palette)} 色",
+        f"- 色語ヒント 0 のエントリ: {len(audit['no_color_word'])} 件（色語表に無い語の可能性）",
+    ]
+    if suggestions:
+        lines.append(
+            "- 部位候補: 公式画像 " + ", ".join(f"`{p.name}`" for p in image_paths) + f" から `{model}` が提案"
+        )
+    lines.append("")
+
+    lines += ["## 1. BodyPart 欠落（最優先）", ""]
+    if audit["missing_body_part"]:
+        lines += ["| # | DesignElement | 記述 | 検出された色語 | 画像からの部位候補 |", "|---|---|---|---|---|"]
+        for entry in audit["missing_body_part"]:
+            words = ", ".join(sorted({h["word"] for h in entry["hints"]}))
+            element = f"`{entry['element']}`" if entry["element"] else "—"
+            hint = _suggestion(f"A-{entry['index']}")
+            lines.append(
+                f"| {entry['index']} | {element} | {_cell(entry['text'])} | {words} | {hint} |"
+            )
+        lines.append("")
+    else:
+        lines += ["なし。色語を含むエントリにはすべて `BodyPart` が入っている。", ""]
+
+    lines += ["## 2. 根拠となる色語が無い ColorPalette", ""]
+    if audit["unbacked_hex"]:
+        lines += ["| HEX | Role | 現在の AppliesTo | 画像からの部位候補 |", "|---|---|---|---|"]
+        for color in audit["unbacked_hex"]:
+            lines.append(
+                f"| `{color['hex']}` | {color['role'] or '—'} | {_parts(color['appliesTo'] or [])} |"
+                f" {_suggestion('H-' + str(color['hex']))} |"
+            )
+        lines.append("")
+    else:
+        lines += ["なし。すべての色に対応する色語がある。", ""]
+
+    lines += [
+        "## 3. 色語ヒント 0 のエントリ（参考）",
+        "",
+        "配色ツールの色語表に載っている語が記述に含まれていない。形状のみを述べたエントリなら正常。",
+        "`blonde` / `amber` のような色を指す語は現在の色語表に無いため、拾われない。",
+        "",
+    ]
+    if audit["no_color_word"]:
+        lines += ["| # | BodyPart | DesignElement | 記述 |", "|---|---|---|---|"]
+        for entry in audit["no_color_word"]:
+            element = f"`{entry['element']}`" if entry["element"] else "—"
+            lines.append(
+                f"| {entry['index']} | {_parts(entry['bodyPart'])} | {element} | {_cell(entry['text'])} |"
+            )
+        lines.append("")
+    else:
+        lines += ["なし。", ""]
+
+    lines += [
+        "---",
+        "",
+        "*部位候補は AI が公式画像から推定した**下書き**です。DB へ反映する前に原典設定で確認してください。*",
+        "",
+        f"自動生成: `{command}` (100BeautiesLab_GeneratorsAI)",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+# ──────────────────────────────────────────
+# 一括検査 (--all)
+# ──────────────────────────────────────────
+
+def extract_unknown_color_words(texts: list[str], model: str, batch_size: int = 60) -> dict[str, list[str]]:
+    """色語表に拾われなかった記述から、色を指す語を抽出する (テキストのみ・画像不要)。
+
+    `blonde` / `amber` のように配色ツールの `COLOR_WORD_RANGES` に無い語を洗い出すのが目的。
+    記述の語彙はキャラ間で重複が多いため、ユニークな文字列だけを投げる。
+    """
+    if not texts:
+        return {}
+    from openai import OpenAI
+
+    client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+    system = (
+        "あなたは創作 DB の外見記述を解析する AI です。\n"
+        "各記述について、**色を指している語**だけを抜き出し、**JSON のみ**返してください。\n"
+        '{"results": [{"text": "blonde ponytail", "color_words": ["blonde"]}]}\n'
+        "- 色を指す語がなければ color_words を空配列にしてください。\n"
+        "- 形状・素材・部位の語 (ponytail / fox / armband など) は色ではありません。\n"
+        "- 記述は原文のまま text に返してください。\n"
+        "- 全ての記述を漏れなく返してください。"
+    )
+
+    out: dict[str, list[str]] = {}
+    for start in range(0, len(texts), batch_size):
+        batch = texts[start : start + batch_size]
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": "\n".join(f"- {t}" for t in batch)},
+            ],
+            max_tokens=3000,
+            response_format={"type": "json_object"},
+        )
+        raw = json.loads((response.choices[0].message.content or "{}").strip())
+        known = set(batch)
+        for item in raw.get("results") or []:
+            if not isinstance(item, dict):
+                continue
+            text = str(item.get("text") or "")
+            words = [str(w).strip().lower() for w in (item.get("color_words") or []) if str(w).strip()]
+            # 原文を書き換えて返してくることがあるので、投げた文字列に一致するものだけ採る。
+            if text in known and words:
+                out[text] = words
+    return out
+
+
+def build_bulk_coverage_md(
+    audits: list[tuple[str, dict]],
+    enums: dict,
+    unknown_words: dict[str, list[str]],
+    work_key: str,
+    model: str,
+    command: str,
+) -> str:
+    def _cell(text: str) -> str:
+        return str(text).replace("|", "\\|").replace("\n", " ")
+
+    def _parts(codes: list[str]) -> str:
+        return ", ".join(f"`{c}` ({enums['body_part'].get(c, '?')})" for c in codes) or "—"
+
+    missing = [(label, e) for label, a in audits for e in a["missing_body_part"]]
+    unbacked = [(label, c) for label, a in audits for c in a["unbacked_hex"]]
+    chars_missing = len({label for label, _ in missing})
+    chars_unbacked = len({label for label, _ in unbacked})
+
+    # 拾われていない色語を出現数の多い順に集計する (色語表へ何を足すべきかの優先順)。
+    word_stats: dict[str, dict] = {}
+    for label, audit in audits:
+        for entry in audit["no_color_word"]:
+            for word in unknown_words.get(entry["text"], []):
+                stat = word_stats.setdefault(word, {"count": 0, "chars": set(), "examples": []})
+                stat["count"] += 1
+                stat["chars"].add(label)
+                if len(stat["examples"]) < 2 and entry["text"] not in stat["examples"]:
+                    stat["examples"].append(entry["text"])
+
+    lines = [
+        f"# AppearanceDetail 充足性レビュー（配色検知ツール向け・一括） — {work_key}",
+        "",
+        "配色検知ツール (`tools/patch-colorpalette.mjs`) は `AppearanceDetail` の色語から",
+        "`ColorPalette.AppliesTo` を転記する。**色語が拾えない／`BodyPart` が無い**と、",
+        "検出した色を部位へ紐づけられない。以下はその不足の一覧。",
+        "",
+        "判定は上流 `tools/extract-palette.mjs` の `collectColorHints()` / `colorWordMatchesHex()` を",
+        "直接呼んで得ている（判定ロジックの再実装なし）。形態では絞っていない（欠落は形態に依らないため）。",
+        "",
+        f"- 判定日: {datetime.now():%Y-%m-%d}",
+        f"- 対象レコード: {len(audits)} 件",
+        f"- **BodyPart 欠落: {len(missing)} 件 / {chars_missing} キャラ**",
+        f"- **根拠となる色語が無い ColorPalette: {len(unbacked)} 色 / {chars_unbacked} キャラ**",
+        f"- 色語表に無い色語: {len(word_stats)} 種",
+        "",
+    ]
+
+    lines += [
+        "## 1. 色語表に無い色語（配色ツール側で対応すると全キャラに効く）",
+        "",
+        "記述には色が書かれているのに `COLOR_WORD_RANGES` に該当語が無く、ヒントが生成されないもの。",
+        f"色語の抽出には `{model}` を使用（画像は見ていない）。",
+        "",
+    ]
+    def _example(text: str, limit: int = 70) -> str:
+        """`#DesignAttr_Overview: blonde ponytail` → `blonde ponytail`（表に収まる長さへ）。"""
+        short = " / ".join(part.split(": ", 1)[-1] for part in str(text).split(" / "))
+        short = _cell(short)
+        return short[:limit] + ("…" if len(short) > limit else "")
+
+    if word_stats:
+        lines += ["| 色語 | 出現 | キャラ数 | 記述例 |", "|---|---|---|---|"]
+        for word, stat in sorted(word_stats.items(), key=lambda kv: -kv[1]["count"]):
+            examples = " / ".join(f"`{_example(x)}`" for x in stat["examples"][:1])
+            lines.append(f"| **{_cell(word)}** | {stat['count']} | {len(stat['chars'])} | {examples} |")
+        lines.append("")
+    else:
+        lines += ["なし。", ""]
+
+    lines += [
+        "## 2. BodyPart 欠落（DB 側の記述で埋める）",
+        "",
+        "色語は拾えているのに `BodyPart` が空で、`AppliesTo` へ転記できないエントリ。",
+        "",
+    ]
+    if missing:
+        lines += ["| キャラ | # | DesignElement | 記述 | 色語 |", "|---|---|---|---|---|"]
+        for label, entry in missing:
+            words = ", ".join(sorted({h["word"] for h in entry["hints"]}))
+            element = f"`{entry['element']}`" if entry["element"] else "—"
+            lines.append(
+                f"| {label} | {entry['index']} | {element} | {_example(entry['text'], 90)} | {words} |"
+            )
+        lines.append("")
+    else:
+        lines += ["なし。", ""]
+
+    lines += [
+        "## 3. 根拠となる色語が無い ColorPalette",
+        "",
+        "検出済みの色に対応する色語が記述に無く、`AppliesTo` を決められないもの。",
+        "1 の色語を追加すると解消するものが含まれる。",
+        "",
+    ]
+    if unbacked:
+        lines += ["| キャラ | HEX | Role | 現在の AppliesTo |", "|---|---|---|---|"]
+        for label, color in unbacked:
+            lines.append(
+                f"| {label} | `{color['hex']}` | {color['role'] or '—'} | {_parts(color['appliesTo'] or [])} |"
+            )
+        lines.append("")
+    else:
+        lines += ["なし。", ""]
+
+    lines += [
+        "---",
+        "",
+        "*色語の抽出は AI による判定です。DB や色語表へ反映する前に確認してください。*",
+        "*個別キャラの部位候補（画像からの提案）は `--num <N> --check coverage` で出せます。*",
+        "",
+        f"自動生成: `{command}` (100BeautiesLab_GeneratorsAI)",
+        "",
+    ]
+    return "\n".join(lines)
+
+
 def submit_issue(repo: str, title: str, body_path: Path) -> str:
     proc = subprocess.run(
         ["gh", "issue", "create", "-R", repo, "--title", title, "--body-file", str(body_path)],
@@ -330,11 +765,83 @@ def _num_slug(num: object) -> str:
     return f"{int(text):03d}" if text.isdigit() else text.replace("/", "-")
 
 
+def _char_label(record: dict, fallback: object = "") -> str:
+    """Name_JP は "57(イズナ)" のように番号込みなので、Num を足すと二重になる。
+
+    改行を含む名前 (別名併記の "34(サトシ)\\nサンジ" 等) があるため空白へ潰す。
+    見出し・表・Issue タイトルのどこへ出しても崩れないようにするための正規化。
+    """
+    data = record.get("data") or {}
+    label = str(data.get("Name_JP") or data.get("Name_EN") or data.get("Num") or fallback)
+    return " ".join(label.split())
+
+
+def run_bulk_coverage(args: argparse.Namespace, out_dir: Path, model: str) -> None:
+    """作品内の全レコードを静的検査し、1 枚のレビューへまとめる。"""
+    records = [
+        r for r in load_manifest()
+        if r.get("work_key") == args.work_key and r.get("has_appearance_detail")
+    ]
+    # 公式データを LLM へ渡すので、単体実行と同じ fail-closed ゲートを各レコードに通す。
+    records = [
+        r for r in records
+        if apply_generation_gate(
+            r, usage="image", num=(r.get("data") or {}).get("Num"), printer=print
+        )[0]
+    ]
+    if not records:
+        raise SystemExit(f"[ERROR] 対象レコードがありません: {args.work_key}")
+
+    print(f"[all] {len(records)} 件の色語ヒントを取得中 (node)...")
+    evidence = collect_color_hint_evidence(records)
+    # 一括では形態で絞らない (BodyPart 欠落は形態に依らないため)。
+    audits = [
+        (_char_label(record), audit_coverage(ev, None))
+        for record, ev in zip(records, evidence)
+    ]
+
+    missing = sum(len(a["missing_body_part"]) for _, a in audits)
+    unbacked = sum(len(a["unbacked_hex"]) for _, a in audits)
+    texts = sorted({e["text"] for _, a in audits for e in a["no_color_word"] if e["text"]})
+    print(f"[all] BodyPart 欠落 {missing} 件 / 根拠なし色 {unbacked} 色 / 色語ヒント0 の記述 {len(texts)} 種")
+
+    print(f"[all] 色語表に無い色語を抽出中 ({model}, 記述 {len(texts)} 種)...")
+    unknown_words = extract_unknown_color_words(texts, model)
+    print(f"[all] 色語候補: {len(set(w for ws in unknown_words.values() for w in ws))} 種")
+
+    command = f"python -m src.tools.verify_appearance_detail --all --check coverage"
+    body = build_bulk_coverage_md(
+        audits, load_design_enums(), unknown_words, args.work_key, model, command
+    )
+    work_slug = str(args.work_key).lstrip("#")
+    out_path = out_dir / f"{datetime.now():%Y%m%d}_coverage_all_{work_slug}.md"
+    out_path.write_text(body, encoding="utf-8")
+    print(f"[all] レビュー生成: {out_path}")
+
+    if args.submit:
+        title = (
+            f"[AppearanceDetail 充足性・一括] {work_slug} {len(records)} 件"
+            f" — BodyPart 欠落 {missing} / 根拠なし色 {unbacked}"
+        )
+        print(f"[all] Issue 送信: {submit_issue(args.repo, title, out_path)}")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(
         description="AppearanceDetail を公式画像と照合し、レビュー Markdown を生成する"
     )
-    ap.add_argument("--num", required=True, help="キャラクター番号 (例: 57, 2-alt)")
+    ap.add_argument("--num", help="キャラクター番号 (例: 57, 2-alt)")
+    ap.add_argument(
+        "--all",
+        action="store_true",
+        help="作品内の AppearanceDetail を持つ全レコードを一括検査する (--check coverage 専用)",
+    )
+    ap.add_argument(
+        "--check",
+        default="match",
+        choices=["match", "coverage"],
+        help="match=記述と画像の照合 / coverage=配色検知ツール向けの BodyPart・DesignElement 充足検査",
+    )
     ap.add_argument("--form", default="corefolder", choices=[*_FORMS, "both"])
     ap.add_argument("--work-key", default="#Works_NumberTales")
     # 2 枚だと humanoid でバストアップ + 尾構造図に偏り、全身の設定画が入らず unclear が増える。
@@ -346,6 +853,18 @@ def main() -> None:
 
     if not os.environ.get("OPENAI_API_KEY"):
         raise SystemExit("[ERROR] OPENAI_API_KEY が未設定です (.env を確認してください)")
+    if args.all and args.check != "coverage":
+        raise SystemExit("[ERROR] --all は --check coverage でのみ使えます")
+    if not args.all and not args.num:
+        raise SystemExit("[ERROR] --num または --all を指定してください")
+
+    out_dir = Path(args.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    model = os.environ.get("GPT_MODEL", "gpt-4o")
+
+    if args.all:
+        run_bulk_coverage(args, out_dir, model)
+        return
 
     record = find_character(args.num, work_key=args.work_key)
     if not record:
@@ -357,12 +876,8 @@ def main() -> None:
         raise SystemExit(1)
 
     data = record.get("data") or {}
-    # Name_JP は "57(イズナ)" のように番号込みなので、Num を足すと二重になる。
-    char_label = str(data.get("Name_JP") or data.get("Name_EN") or data.get("Num") or args.num)
-    model = os.environ.get("GPT_MODEL", "gpt-4o")
+    char_label = _char_label(record, args.num)
     forms = _FORMS if args.form == "both" else (args.form,)
-    out_dir = Path(args.out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
 
     for form in forms:
         entries = entries_for_form(record, form)
@@ -383,18 +898,48 @@ def main() -> None:
             ]
             source_label = "参照画像フォールバック (`$palette.source` 宣言なし)"
         image_paths = image_paths[: args.max_images]
-        if not image_paths:
+        # coverage は静的検査が本体なので、画像が無くても続行する (部位候補の提案だけ省く)。
+        if not image_paths and args.check == "match":
             print(f"[SKIP] {form}: 照合できるローカル公式画像がありません")
             continue
 
+        print(f"[{form}] 使用する公式画像 ({source_label}): {', '.join(p.name for p in image_paths)}")
+        command = (
+            f"python -m src.tools.verify_appearance_detail --num {args.num}"
+            f" --check {args.check} --form {form}"
+        )
+
+        if args.check == "coverage":
+            audit = audit_coverage(collect_color_hint_evidence([record])[0], form)
+            print(
+                f"[{form}] BodyPart 欠落 {len(audit['missing_body_part'])} 件"
+                f" / 根拠なし色 {len(audit['unbacked_hex'])} 色"
+                f" / 色語ヒント0 {len(audit['no_color_word'])} 件"
+            )
+            enums = load_design_enums()
+            # 不足が無ければ Vision を呼ばない (提案する対象が無いので課金する意味がない)。
+            suggestions = suggest_body_parts(audit, enums, image_paths, char_label, form, model)
+            body = build_coverage_md(
+                char_label, form, audit, enums, suggestions, image_paths, model, command
+            )
+            out_path = out_dir / f"{datetime.now():%Y%m%d}_coverage_num{_num_slug(data.get('Num'))}_{form}.md"
+            out_path.write_text(body, encoding="utf-8")
+            print(f"[{form}] レビュー生成: {out_path}")
+            if args.submit:
+                title = (
+                    f"[AppearanceDetail 充足性] {char_label} / {form}"
+                    f" — BodyPart 欠落 {len(audit['missing_body_part'])}"
+                    f" / 根拠なし色 {len(audit['unbacked_hex'])}"
+                )
+                print(f"[{form}] Issue 送信: {submit_issue(args.repo, title, out_path)}")
+            continue
+
         entry_lines = [format_entry(i, e) for i, e in enumerate(entries, 1)]
-        print(f"[{form}] 照合に使う公式画像 ({source_label}): {', '.join(p.name for p in image_paths)}")
         print(f"[{form}] {len(entry_lines)} 件を {len(image_paths)} 枚の公式画像と照合中 ({model})...")
         results = analyze(entry_lines, image_paths, char_label, form, model)
         counts = summarize(results)
         print(f"[{form}] match {counts['match']} / mismatch {counts['mismatch']} / unclear {counts['unclear']}")
 
-        command = f"python -m src.tools.verify_appearance_detail --num {args.num} --form {form}"
         body = build_review_md(
             char_label, form, entry_lines, results, image_paths, model, command, source_label
         )

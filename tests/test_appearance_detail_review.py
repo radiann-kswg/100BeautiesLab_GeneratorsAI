@@ -11,6 +11,8 @@ pytest 非依存で書いてあり、どちらでも走る:
      判定が返らなかった行が黙って消えると「全件照合済み」に見え、レビューが嘘になる。
   3. `palette_source_image_keys()` が typedef の `$palette.source` 宣言だけを拾い、
      `conceptAlt_PNGName` → `concept_alt` の命名差を吸収すること。
+  4. `audit_coverage()` が「色語はあるのに BodyPart が無い」を最優先の欠落として拾い、
+     形態違いのエントリを混ぜないこと。配色検知ツールが AppliesTo を埋められない原因そのもの。
 """
 from __future__ import annotations
 
@@ -24,6 +26,8 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from src.tools.verify_appearance_detail import (  # noqa: E402
+    _char_label,
+    audit_coverage,
     entries_for_form,
     excluded_for_form,
     format_entry,
@@ -146,6 +150,49 @@ def test_palette_source_image_keys_missing_typedef_returns_empty() -> None:
         assert palette_source_image_keys("#Works_Unknown", tmp) == []
 
 
+# `collect_color_hint_evidence()` (node 経由で上流ツールを呼ぶ) の出力を模したもの。
+_EVIDENCE = {
+    "entries": [
+        # 色語あり + BodyPart あり = 配色ツールが AppliesTo を埋められる
+        {"index": 1, "formation": None, "bodyPart": ["#BodyPart_Chest"], "element": "#Element_CostumeItem",
+         "text": "Overview: blue inner shirt", "hints": [{"word": "blue", "bodyPart": "#BodyPart_Chest"}]},
+        # 色語あり + BodyPart なし = 転記できない (最優先の欠落)
+        {"index": 2, "formation": "humanoid", "bodyPart": [], "element": "#Element_Motif",
+         "text": "Overview: yellow blazer", "hints": [{"word": "yellow", "bodyPart": None}]},
+        # 色語なし = 色語表に無い語 (blonde) の可能性
+        {"index": 3, "formation": None, "bodyPart": ["#BodyPart_Hair"], "element": "#Element_Motif",
+         "text": "Overview: blonde ponytail", "hints": []},
+        # 別形態のエントリは混ぜない
+        {"index": 4, "formation": "corefolder", "bodyPart": [], "element": "#Element_Motif",
+         "text": "Overview: yellow sphere", "hints": [{"word": "yellow", "bodyPart": None}]},
+    ],
+    "palette": [
+        {"hex": "#4B79BE", "role": "#ColorRole_Sub", "appliesTo": ["#BodyPart_Chest"], "formation": None,
+         "hints": [{"word": "blue"}]},
+        {"hex": "#F7FFB9", "role": "#ColorRole_Accent", "appliesTo": None, "formation": None, "hints": []},
+    ],
+}
+
+
+def test_char_label_squashes_newlines() -> None:
+    # 別名併記で Name_JP に改行が入るレコードがある。表・見出し・Issue タイトルが崩れないこと。
+    assert _char_label({"data": {"Name_JP": "34(サトシ)\nサンジ"}}) == "34(サトシ) サンジ"
+    assert _char_label({"data": {"Num": 57}}) == "57"
+    assert _char_label({}, fallback="2-alt") == "2-alt"
+
+
+def test_audit_coverage_flags_missing_body_part_per_form() -> None:
+    audit = audit_coverage(_EVIDENCE, "humanoid")
+    # humanoid + 形態共通(null) のみ。corefolder 専用の index 4 は入らない。
+    assert [e["index"] for e in audit["entries"]] == [1, 2, 3]
+    assert [e["index"] for e in audit["missing_body_part"]] == [2]
+    assert [e["index"] for e in audit["no_color_word"]] == [3]
+    assert [c["hex"] for c in audit["unbacked_hex"]] == ["#F7FFB9"]
+
+    # corefolder 側では index 4 が欠落として挙がる。
+    assert [e["index"] for e in audit_coverage(_EVIDENCE, "corefolder")["missing_body_part"]] == [4]
+
+
 if __name__ == "__main__":
     test_entries_for_form_keeps_shared_and_drops_other_form()
     test_format_entry_keeps_enum_and_text_values()
@@ -154,4 +201,6 @@ if __name__ == "__main__":
     test_palette_source_image_keys_reads_typedef_declaration()
     test_excluded_for_form_keeps_form_neutral_material()
     test_palette_source_image_keys_missing_typedef_returns_empty()
+    test_char_label_squashes_newlines()
+    test_audit_coverage_flags_missing_body_part_per_form()
     print("OK: tests/test_appearance_detail_review.py")

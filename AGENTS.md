@@ -234,6 +234,10 @@ PowerShell で `npm test` が解決できない環境では `npm.cmd test` を�
 - 創作 DB の `AppearanceDetail` 各行を公式イラストと Vision で照合し、レビュー Markdown を生成する。
   照合画像は作品 typedef で `$palette.source`（配色抽出対象）が宣言されたフィールドから選ぶ。
 - 生成のみ: `python -m src.tools.verify_appearance_detail --num 57 --form both`（出力: `_ideas/db-reviews/`）
+- 配色検知ツール向けの充足検査（`BodyPart` / `DesignElement` の不足を洗い出す半自動検査）:
+  `python -m src.tools.verify_appearance_detail --num 57 --check coverage --form both`。
+  判定は上流 `tools/extract-palette.mjs` の `collectColorHints()` を node 経由で呼ぶ（色語表は再実装しない）。
+  作品内の全レコードを 1 枚のレビューへまとめる一括検査は `--all --check coverage`。
 - 送信 (課金＋外部投稿・明示 opt-in): 上記に `--submit` を付けると `100BeautiesLab_CreationsDB` へ Issue を立てる。
   `_creations-ai/creations-db/` は read-only 扱いのため、指摘は直接編集ではなく Issue 経由で返す。
 - 実装: [`src/tools/verify_appearance_detail.py`](src/tools/verify_appearance_detail.py)、詳細は [`docs/tools.md`](docs/tools.md) のセクション6。
