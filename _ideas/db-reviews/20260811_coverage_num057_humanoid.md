@@ -7,24 +7,20 @@
 判定ロジックの再実装はしていない。
 
 - 判定日: 2026-08-11
-- 色語ヒントを持つエントリ: 6 / 10
-- **BodyPart 欠落: 2 件**（AppliesTo へ転記できない）
-- **根拠となる色語が無い ColorPalette: 1 色** / 全 5 色
-- 色語ヒント 0 のエントリ: 4 件（色語表に無い語の可能性）
-- 部位候補: 公式画像 `cnsp_imgNTS-57.png`, `chr-dsgn_catalogNTS-57.png` から `gpt-4o` が提案
+- 色語ヒントを持つエントリ: 8 / 10
+- **BodyPart 欠落: 0 件**（AppliesTo へ転記できない）
+- **根拠となる色語が無い ColorPalette: 1 色** / 全 6 色
+- 色語ヒント 0 のエントリ: 2 件（色語表に無い語の可能性）
 
 ## 1. BodyPart 欠落（最優先）
 
-| # | DesignElement | 記述 | 検出された色語 | 画像からの部位候補 |
-|---|---|---|---|---|
-| 6 | `#Element_Motif` | #DesignAttr_Overview: yellow blazer | yellow | `#BodyPart_Shoulder` (肩) — 黄色のブレザーは肩に見られる。 |
-| 9 | `#Element_Motif` | #DesignAttr_Overview: yellow sailor-collar uniform with white stripes | white, yellow | `#BodyPart_Chest` (胸) — セーラーカラーの制服は胸に見られる。 |
+なし。色語を含むエントリにはすべて `BodyPart` が入っている。
 
 ## 2. 根拠となる色語が無い ColorPalette
 
 | HEX | Role | 現在の AppliesTo | 画像からの部位候補 |
 |---|---|---|---|
-| `#F7FFB9` | #ColorRole_Accent | — | `#BodyPart_Hair` (髪), `#BodyPart_Ear` (耳), `#BodyPart_Tail` (尻尾) — 色#F7FFB9は耳や髪、尻尾に使用されている。 |
+| `#F7FFB9` | #ColorRole_Accent | — | — |
 
 ## 3. 色語ヒント 0 のエントリ（参考）
 
@@ -34,8 +30,6 @@
 | # | BodyPart | DesignElement | 記述 |
 |---|---|---|---|
 | 3 | `#BodyPart_Ear` (耳) | `#Element_Ear` | #DesignAttr_Ear: #EarShapeType_Fox |
-| 4 | `#BodyPart_Hair` (髪) | `#Element_Motif` | #DesignAttr_Overview: blonde ponytail |
-| 5 | `#BodyPart_Eye` (目・瞳) | `#Element_Motif` | #DesignAttr_Overview: amber eyes |
 | 11 | `#BodyPart_Shoulder` (肩), `#BodyPart_Arm` (腕) | `#Element_Motif` | #DesignAttr_Overview: armband with number on right shoulder |
 
 ---
