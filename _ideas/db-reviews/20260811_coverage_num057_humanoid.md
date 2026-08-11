@@ -17,14 +17,14 @@
 
 | # | DesignElement | 記述 | 検出された色語 | 画像からの部位候補 |
 |---|---|---|---|---|
-| 6 | `#Element_Motif` | #DesignAttr_Overview: yellow blazer | yellow | `#BodyPart_Chest` (胸), `#BodyPart_Shoulder` (肩), `#BodyPart_Arm` (腕) — 黄色いブレザーが着られているため。 |
-| 9 | `#Element_Motif` | #DesignAttr_Overview: yellow sailor-collar uniform with white stripes | white, yellow | `#BodyPart_Chest` (胸), `#BodyPart_Shoulder` (肩), `#BodyPart_Arm` (腕) — 黄色のセーラーカラーの制服が確認できるため。 |
+| 6 | `#Element_Motif` | #DesignAttr_Overview: yellow blazer | yellow | `#BodyPart_Shoulder` (肩) — 黄色のブレザーは肩に見られる。 |
+| 9 | `#Element_Motif` | #DesignAttr_Overview: yellow sailor-collar uniform with white stripes | white, yellow | `#BodyPart_Chest` (胸) — セーラーカラーの制服は胸に見られる。 |
 
 ## 2. 根拠となる色語が無い ColorPalette
 
 | HEX | Role | 現在の AppliesTo | 画像からの部位候補 |
 |---|---|---|---|
-| `#F7FFB9` | #ColorRole_Accent | — | `#BodyPart_Ear` (耳) — 耳に色#F7FFB9が塗られているため。 |
+| `#F7FFB9` | #ColorRole_Accent | — | `#BodyPart_Hair` (髪), `#BodyPart_Ear` (耳), `#BodyPart_Tail` (尻尾) — 色#F7FFB9は耳や髪、尻尾に使用されている。 |
 
 ## 3. 色語ヒント 0 のエントリ（参考）
 

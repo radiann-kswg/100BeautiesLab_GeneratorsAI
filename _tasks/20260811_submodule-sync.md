@@ -1,4 +1,4 @@
-# サブモジュール同期ログ — 2026-08-11 11:42
+# サブモジュール同期ログ — 2026-08-11 13:20
 
 > 実機 PowerShell スクリプト `scripts/daily-submodule-sync.ps1` による自動実行。
 
@@ -6,29 +6,38 @@
 
 | サブモジュール | 追跡先 | 旧 | 新 | 判定 | 備考 |
 |---|---|---|---|---|---|
-| `_creations-ai` | origin/master | e0acd17 | e0acd17 | NO-CHANGE | 最新 |
-| `_creations-ai/creations-db` | origin/addon-ai-tag | 5bd5619 | 0beee71 | UPDATED | FF 取り込み完了 |
+| `_creations-ai` | origin/master | e0acd17 | 7d97557 | UPDATED | FF 取り込み完了 |
+| `_creations-ai/creations-db` | origin/addon-ai-tag | 3d1a2c3 | 3d1a2c3 | NO-CHANGE | 最新 |
 
 ## 取り込んだ更新の内容
 
-### `_creations-ai/creations-db` 5bd5619..0beee71
+### `_creations-ai` e0acd17..7d97557
 
 ```
-0beee71 Merge branch 'develop' into addon-ai-tag
-5415b95 DB諠・ｱ謗ｨ謨ｲ(驟崎牡蜻ｨ繧・ 縺昴・・・0629b5e DB騾ｲ謐玲峩譁ｰ(繝上Φ繧ｫ繧ｯ繝ｩ繧､繝・ 邯壹″
+7d97557 chore: sync ai-dataset (creations-db@3d1a2c3) 窶・ai_training allowed: 158 [skip ci]
 ```
 
 変更ファイル:
 
 ```
-CHANGELOG.md                                       |  16 +
- .../2026-08-11_progress_colorpalette-slots.md      | 155 +++++
- data/Works_NumberTales/DataBases/db_Primary.json   |  84 +--
- data/Works_UnibyteLive/DataBases/db_Primary.json   |  10 +
- data/db_meta.json                                  |   4 +-
- tests/patch-colorpalette.test.js                   | 146 +++++
- tools/patch-colorpalette.mjs                       | 638 +++++++++++++++++++++
- 7 files changed, 996 insertions(+), 57 deletions(-)
+ai-dataset/build-info.json                        |  4 +-
+ ai-dataset/image-index.json                       |  2 +-
+ ai-dataset/index.json                             |  4 +-
+ ai-dataset/manifest-training.jsonl                | 90 +++++++++++------------
+ ai-dataset/manifest.jsonl                         | 90 +++++++++++------------
+ ai-dataset/policy.json                            |  2 +-
+ ai-dataset/works/Works_CommonReferences.json      |  2 +-
+ ai-dataset/works/Works_DestinyFoxRecords.json     |  2 +-
+ ai-dataset/works/Works_FLInvestigator78.json      |  2 +-
+ ai-dataset/works/Works_NumberTales.json           |  2 +-
+ ai-dataset/works/Works_PastDivers.json            |  2 +-
+ ai-dataset/works/Works_ShouArRiders.json          |  2 +-
+ ai-dataset/works/Works_SinisterChangingGirls.json |  2 +-
+ ai-dataset/works/Works_UnauthedLogica.json        |  2 +-
+ ai-dataset/works/Works_UnibyteLive.json           |  2 +-
+ ai-dataset/works/Works_VirtuesUs.json             |  2 +-
+ creations-db                                      |  2 +-
+ 17 files changed, 107 insertions(+), 107 deletions(-)
 ```
 
 ## 最適化メモ
