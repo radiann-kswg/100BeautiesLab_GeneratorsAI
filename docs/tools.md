@@ -275,6 +275,7 @@ env `CREATIONS_DB_PACKAGE_ENABLE` で動作切替。
 | --- | --- | --- |
 | `match`（既定） | DB の記述は公式イラストと合っているか | `{日付}_appearance_num{NNN}_{form}.md` |
 | `coverage` | 配色検知ツールが動くだけの情報が揃っているか | `{日付}_coverage_num{NNN}_{form}.md` |
+| `hexmap` | どのエントリがどの HEX の色か（`--all` 専用） | `{日付}_hexmap_{work}.md` |
 
 ### コマンド
 
@@ -291,8 +292,11 @@ python -m src.tools.verify_appearance_detail --num 57 --check coverage --form bo
 # 作品内の AppearanceDetail 保有レコードを一括検査し、1 枚のレビューへまとめる
 python -m src.tools.verify_appearance_detail --all --check coverage
 
-# 既存 Issue へ「Attrs 色情報の補完案」をコメント追記する (LLM 不使用)
+# 既存 Issue へ「Attrs 色情報の補完案」をコメント追記する
 python -m src.tools.verify_appearance_detail --all --check coverage --comment 20 --submit
+
+# エントリ別の HEX 対応を出して新規 Issue で送る (--comment を付ければ既存 Issue へ追記)
+python -m src.tools.verify_appearance_detail --all --check hexmap --submit
 
 # レビューを Issue として送る (form ごとに 1 Issue)
 python -m src.tools.verify_appearance_detail --num 57 --form both --submit
@@ -328,6 +332,20 @@ creations-db 側の `tools/extract-palette.mjs` の `listImageFields()` と同�
   設定資料のような形態非依存の資料は両形態の照合に使う。
 - `$palette.source` 宣言が無い作品では `collect_reference_images()`（生成側と同じ参照画像）へ自動フォールバックする。
   どちらを使ったかはレビュー冒頭の「画像の選定」行に記録される。
+
+### エントリ別 HEX 対応 (`--check hexmap`)
+
+色語は 13 語しかないため、`yellow blazer` と `yellow boots` が同じ `yellow` になり、
+`ColorPalette` のどの HEX がどのエントリの色なのか一意に決まらない。この検査は
+**各エントリに実際に塗られている HEX** を画像から特定して、その重複を解消する。
+
+- 候補は「`ColorPalette` の登録色」＋「透過イラストからの実測色」の和集合。
+  モデルには候補から**選ばせる**（HEX を生成させると当てにならないため）。候補に無い HEX は捨てる。
+- 出力は 2 表。**登録済みとの対応**（`AppliesTo` に部位を足せばよい）と、
+  **未登録の実測色との対応**（その HEX を追加したうえで `AppliesTo` を入れる）。
+- 画像で確認できない要素・候補のどれとも違う要素は表に出さない（推測で埋めない）。
+- `--submit` で新規 Issue、`--comment <番号>` を併せると既存 Issue へ追記。
+- 対応づけ結果は `.mappings.json` にキャッシュされ、`--reuse-detections` で無料再生成できる。
 
 ### 判定の読み方
 

@@ -34,6 +34,7 @@ from src.tools.verify_appearance_detail import (  # noqa: E402
     format_entry,
     normalize_color_suggestions,
     normalize_hex_locations,
+    normalize_hex_mappings,
     normalize_results,
     palette_source_image_keys,
     summarize,
@@ -195,6 +196,20 @@ def test_proposal_excludes_common_colors_from_gaps() -> None:
     assert "| `white` (白) |" not in md, md
 
 
+def test_normalize_hex_mappings_rejects_invented_hexes() -> None:
+    """候補に無い HEX は捨てること。モデルが色を作ると DB へ嘘の値が入る。"""
+    raw = [
+        {"index": 1, "hex": "#e8f152", "note": "腕章"},
+        {"index": 2, "hex": "#123456", "note": "候補に無い色は捨てる"},
+        {"index": 3, "hex": "none", "note": "確認できず"},
+        {"index": 1, "hex": "#FFEE62", "note": "重複は先勝ち"},
+        {"index": 99, "hex": "#E8F152", "note": "範囲外"},
+    ]
+    out = normalize_hex_mappings(raw, {1, 2, 3}, {"#E8F152", "#FFEE62"})
+    assert sorted(out) == [1], out
+    assert out[1]["hex"] == "#E8F152"
+
+
 def test_normalize_hex_locations_keeps_rejections() -> None:
     """「配色ではない」判定 (body_parts 空) を捨てないこと。ノイズ除外の根拠に要る。"""
     raw = [
@@ -255,6 +270,7 @@ if __name__ == "__main__":
     test_excluded_for_form_keeps_form_neutral_material()
     test_palette_source_image_keys_missing_typedef_returns_empty()
     test_proposal_excludes_common_colors_from_gaps()
+    test_normalize_hex_mappings_rejects_invented_hexes()
     test_normalize_hex_locations_keeps_rejections()
     test_normalize_color_suggestions_drops_unknown_words()
     test_char_label_squashes_newlines()

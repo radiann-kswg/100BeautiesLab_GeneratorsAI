@@ -353,10 +353,10 @@ const records = payload.map((p) => p.record);
 const commonColors = readCommonColors(process.argv[2]) ?? [];
 
 /**
- * 透過イラストから実測した色のうち、既存 ColorPalette のどれとも一致しないものを返す。
- * 抽出条件は上流 `patch-colorpalette.mjs --from-artwork` と揃える（共通造形色を除外）。
+ * 透過イラストから実測した色を返す。抽出条件は上流 `patch-colorpalette.mjs --from-artwork`
+ * と揃える（共通造形色を除外）。`missing` は既存 ColorPalette のどれとも一致しないもの。
  */
-function detectMissingColors(rec, artworkPaths) {
+function detectArtworkColors(rec, artworkPaths) {
     const images = [];
     for (const p of artworkPaths ?? []) {
         try {
@@ -364,12 +364,12 @@ function detectMissingColors(rec, artworkPaths) {
             if (isTransparentArtwork(img)) images.push(img);
         } catch { /* 読めない画像は黙って飛ばす */ }
     }
-    if (!images.length) return [];
+    if (!images.length) return { all: [], missing: [] };
     const existing = (rec.ColorPalette ?? []).map((c) => c.Hex).filter((h) => typeof h === 'string');
+    const all = extractSolidColors(images, { exclude: commonColors });
     // ponytail: 「既存と同じ色」の許容差は上流の mergeTol(10) に合わせた固定値。
     // 取りこぼし/過剰報告が出るようならここを調整する。
-    return extractSolidColors(images, { exclude: commonColors })
-        .filter((d) => !existing.some((h) => colorDistance(h, d.hex) <= 10));
+    return { all, missing: all.filter((d) => !existing.some((h) => colorDistance(h, d.hex) <= 10)) };
 }
 const attrText = (a) => {
     const vdict = Object.entries(a).filter(([k]) => k.startsWith('vdict_')).map(([, v]) => v).join(', ');
@@ -397,7 +397,12 @@ const evidence = records.map((rec, ri) => {
             ? COLOR_WORD_KEYS.filter((w) => colorWordMatchesHex(w, c.Hex))
             : [],
     }));
-    return { entries, palette, missingColors: detectMissingColors(rec, payload[ri].artwork) };
+    const artworkColors = detectArtworkColors(rec, payload[ri].artwork);
+    return {
+        entries, palette,
+        missingColors: artworkColors.missing,
+        artworkColors: artworkColors.all,
+    };
 });
 // 共通造形色 (肌色・毛色など) は設計上 ColorPalette から除外されるため、
 // 「画像にあるのに ColorPalette に無い」の指摘対象から外す必要がある。
@@ -469,6 +474,7 @@ def audit_coverage(evidence: dict, form: str | None) -> dict:
         "palette": palette,
         # 透過イラストから実測したが ColorPalette に無い色 (形態別ではないので素通し)。
         "missing_colors": evidence.get("missingColors") or [],
+        "artwork_colors": evidence.get("artworkColors") or [],
         # 色語はあるのに部位が無い → AppliesTo へ転記できない。最優先。
         "missing_body_part": [e for e in entries if e["hints"] and not e["bodyPart"]],
         # 色語を 1 つも生まないエントリ → 色語表に無い語 (blonde / amber 等) の可能性。
@@ -905,6 +911,102 @@ def detect_colors_from_images(
     }
 
 
+def hex_candidates(audit: dict) -> list[dict]:
+    """エントリへ割り当てる HEX の候補を作る（登録色 + 実測色）。
+
+    実測色は `ColorPalette` に無いものも含める。エントリの色が未登録なら、
+    そのまま「この色を足すべき」という指摘になる。
+    """
+    out: list[dict] = []
+    seen: set[str] = set()
+    for color in audit.get("palette") or []:
+        hex_value = str(color.get("hex") or "").upper()
+        if hex_value and hex_value not in seen:
+            seen.add(hex_value)
+            out.append({"hex": hex_value, "source": "palette", "role": color.get("role"), "ratio": None})
+    for color in audit.get("artwork_colors") or []:
+        hex_value = str(color.get("hex") or "").upper()
+        if hex_value and hex_value not in seen:
+            seen.add(hex_value)
+            out.append({"hex": hex_value, "source": "artwork", "role": None, "ratio": color.get("ratio")})
+    return out
+
+
+def map_entries_to_hex(
+    entries: list[dict],
+    candidates: list[dict],
+    image_paths: list[Path],
+    char_label: str,
+    model: str,
+) -> dict[int, dict]:
+    """各エントリに実際に使われている HEX を、候補から**選ばせて**特定する。
+
+    色語 (13 語) では `yellow blazer` と `yellow boots` が同じ語になり、どの HEX が
+    どのエントリの色か決まらない。HEX を生成させると当てにならないので、登録色と
+    実測色を候補として提示し、そこから選ばせる。
+    """
+    if not entries or not candidates or not image_paths:
+        return {}
+    from openai import OpenAI
+
+    def _label(c: dict) -> str:
+        if c["source"] == "palette":
+            return f"{c['hex']} (ColorPalette: {_plain(c['role']) or '?'})"
+        return f"{c['hex']} (実測のみ・面積 {(c['ratio'] or 0) * 100:.1f}%)"
+
+    system = (
+        f"あなたは創作 DB の外見記述と配色を対応づける AI です。対象は「{char_label}」です。\n"
+        "添付画像は公式イラスト (原典) で、これが唯一の根拠です。\n"
+        "各記述について、画像でその要素に**実際に塗られている色**を下の候補から 1 つ選び、"
+        "**JSON のみ**返してください。\n"
+        '{"mappings": [{"index": 1, "hex": "#E8F152", "note": "根拠を日本語で1文"}]}\n'
+        f"[候補 HEX]\n" + "\n".join(f"- {_label(c)}" for c in candidates) + "\n"
+        "- 候補に無い色は選ばないでください（HEX を自分で作らない）。\n"
+        "- 複数色が使われている要素は、面積が最も大きい主要な色を選んでください。\n"
+        "- 画像で該当箇所が確認できない、または候補のどれとも違う場合は hex を \"none\" にし、"
+        "note に理由を書いてください。\n"
+        "- 推測で選ばないでください。"
+    )
+    items = "\n".join(f"{e['index']}. {e['text']}" for e in entries)
+    content: list[dict] = [
+        {"type": "text", "text": "以下の記述それぞれに、実際に使われている色を candidate から選んでください。\n\n" + items}
+    ]
+    for path in image_paths:
+        mime, b64 = _encode_image(path)
+        content.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}})
+
+    client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+    response = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "system", "content": system}, {"role": "user", "content": content}],
+        max_tokens=2500,
+        response_format={"type": "json_object"},
+    )
+    raw = json.loads((response.choices[0].message.content or "{}").strip())
+    return normalize_hex_mappings(
+        raw.get("mappings"), {e["index"] for e in entries}, {c["hex"] for c in candidates}
+    )
+
+
+def normalize_hex_mappings(
+    raw_mappings: object, valid_index: set[int], valid_hexes: set[str]
+) -> dict[int, dict]:
+    """候補に無い HEX を捨てる。モデルが色を作り出すと DB へ嘘の値が入るため。"""
+    out: dict[int, dict] = {}
+    for item in raw_mappings if isinstance(raw_mappings, list) else []:
+        if not isinstance(item, dict):
+            continue
+        try:
+            index = int(item.get("index"))
+        except (TypeError, ValueError):
+            continue
+        hex_value = str(item.get("hex") or "").upper()
+        if index not in valid_index or index in out or hex_value not in valid_hexes:
+            continue
+        out[index] = {"hex": hex_value, "note": str(item.get("note") or "").strip()}
+    return out
+
+
 def normalize_hex_locations(
     raw_locations: object, valid_hexes: set[str], valid_parts: set[str]
 ) -> dict[str, dict]:
@@ -1141,14 +1243,101 @@ def build_color_attr_proposal_md(
 _GITHUB_BODY_LIMIT = 65536
 
 
-def comment_issue(repo: str, issue: str, body_path: Path) -> str:
+def build_hexmap_md(
+    rows: list[tuple[str, dict, dict, dict]],
+    enums: dict,
+    work_key: str,
+    model: str,
+    command: str,
+) -> str:
+    """エントリ別の HEX 対応表を組み立てる (Issue 用)。"""
+    def _cell(text: str) -> str:
+        return str(text).replace("|", "\\|").replace("\n", " ")
+
+    def _parts(codes: list[str]) -> str:
+        return "/".join(enums["body_part"].get(c, _plain(c)) for c in codes) or "—"
+
+    def _short(text: str, limit: int = 30) -> str:
+        """`#DesignAttr_Overview: yellow blazer` → `yellow blazer`（表に収まる長さへ）。"""
+        body = " / ".join(p.split(": ", 1)[-1] for p in str(text).split(" / "))
+        body = _cell(body)
+        return body[:limit] + ("…" if len(body) > limit else "")
+
+    registered = [r for r in rows if r[3]["source"] == "palette"]
+    unregistered = [r for r in rows if r[3]["source"] == "artwork"]
+
+    lines = [
+        f"# AppearanceDetail エントリ別 HEX 対応 — {str(work_key).lstrip('#')}",
+        "",
+        "色語（13 語）だけでは `yellow blazer` と `yellow boots` が同じ語になり、",
+        "`ColorPalette` のどの HEX がどのエントリの色なのか一意に決まらない。",
+        "そこで **各エントリに実際に塗られている HEX** を画像から特定した。",
+        "",
+        "候補は「`ColorPalette` の登録色」＋「透過イラストからの実測色」の和集合で、",
+        f"`{model}` には候補から**選ばせている**（HEX を生成させると当てにならないため）。",
+        "候補に無い HEX を返した場合は捨てている。",
+        "",
+        f"- 判定日: {datetime.now():%Y-%m-%d}",
+        f"- 対応づけできたエントリ: **{len(rows)} 件**",
+        f"- うち登録済みの色: {len(registered)} 件 / **未登録の実測色: {len(unregistered)} 件**",
+        "",
+        "## 1. 登録済み `ColorPalette` との対応",
+        "",
+        "`AppliesTo` へそのエントリの `BodyPart` を足せば、その色の使用部位が埋まる。",
+        "",
+        "| キャラ | # | 記述 | 部位 | HEX | Role |",
+        "|---|---|---|---|---|---|",
+    ]
+    for label, entry, found, cand in registered:
+        lines.append(
+            f"| {_cell(label)} | {entry['index']} | {_short(entry['text'])} |"
+            f" {_parts(entry['bodyPart'])} | `{found['hex']}` | {_plain(cand['role']) or '—'} |"
+        )
+    lines.append("")
+
+    if unregistered:
+        lines += [
+            "## 2. 未登録の実測色との対応",
+            "",
+            "エントリの色が `ColorPalette` に無いもの。**その HEX を追加**したうえで、",
+            "`AppliesTo` にそのエントリの `BodyPart` を入れる形になる。",
+            "",
+            "| キャラ | # | 記述 | 部位 | 追加する HEX | 面積比 | 根拠 |",
+            "|---|---|---|---|---|---|---|",
+        ]
+        for label, entry, found, cand in unregistered:
+            ratio = f"{(cand['ratio'] or 0) * 100:.1f}%"
+            lines.append(
+                f"| {_cell(label)} | {entry['index']} | {_short(entry['text'])} |"
+                f" {_parts(entry['bodyPart'])} | `{found['hex']}` | {ratio} |"
+                f" {_cell(found['note'])[:35]} |"
+            )
+        lines.append("")
+
+    lines += [
+        "---",
+        "",
+        "*色の対応づけは AI が公式画像から判断した推定です。DB へ反映する前に確認してください。*",
+        "*候補に無い色・画像で確認できない要素は表から除いてあります（推測で埋めていません）。*",
+        "",
+        f"自動生成: `{command}` (100BeautiesLab_GeneratorsAI)",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def _check_body_size(body_path: Path) -> None:
     size = len(body_path.read_text(encoding="utf-8"))
     if size > _GITHUB_BODY_LIMIT:
         raise SystemExit(
             f"[ERROR] 本文が GitHub の上限を超えています ({size} > {_GITHUB_BODY_LIMIT} 文字)。\n"
             f"        生成物: {body_path}\n"
-            f"        --max-images を減らすか、対象を絞って分割してください。"
+            f"        対象を絞る (--work-key / --num) か、表の列を減らしてください。"
         )
+
+
+def comment_issue(repo: str, issue: str, body_path: Path) -> str:
+    _check_body_size(body_path)
     proc = subprocess.run(
         ["gh", "issue", "comment", str(issue), "-R", repo, "--body-file", str(body_path)],
         capture_output=True,
@@ -1161,6 +1350,7 @@ def comment_issue(repo: str, issue: str, body_path: Path) -> str:
 
 
 def submit_issue(repo: str, title: str, body_path: Path) -> str:
+    _check_body_size(body_path)
     proc = subprocess.run(
         ["gh", "issue", "create", "-R", repo, "--title", title, "--body-file", str(body_path)],
         capture_output=True,
@@ -1217,22 +1407,93 @@ def detect_colors_for_records(
         return dict(pool.map(_one, targets))
 
 
-def run_bulk_coverage(args: argparse.Namespace, out_dir: Path, model: str) -> None:
-    """作品内の全レコードを静的検査し、1 枚のレビューへまとめる。"""
+def map_hex_for_records(
+    targets: list[tuple[dict, str, dict]], model: str, max_images: int, workers: int
+) -> dict[str, dict[int, dict]]:
+    """レコードごとにエントリ→HEX の対応を取る。API 待ちが支配的なのでスレッドで並べる。"""
+    def _one(target: tuple[dict, str, dict]) -> tuple[str, dict[int, dict]]:
+        record, label, audit = target
+        images = collect_palette_source_images(record, None)[:max_images]
+        try:
+            return label, map_entries_to_hex(
+                audit["entries"], hex_candidates(audit), images, label, model
+            )
+        except Exception as err:  # 1 キャラの失敗で全体を止めない
+            print(f"[WARN] {label}: HEX 対応づけに失敗 ({type(err).__name__}: {err})")
+            return label, {}
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        return dict(pool.map(_one, targets))
+
+
+def run_bulk_hexmap(args: argparse.Namespace, out_dir: Path, model: str, records: list[dict]) -> None:
+    """全レコードのエントリへ HEX を対応づけ、1 枚のレビューへまとめる。"""
+    evidence, _common = collect_color_hint_evidence(records, work_key=args.work_key)
+    audits = [
+        (_char_label(record), audit_coverage(ev, None)) for record, ev in zip(records, evidence)
+    ]
+    targets = [
+        (record, label, audit)
+        for record, (label, audit) in zip(records, audits)
+        if audit["entries"] and hex_candidates(audit)
+    ]
+
+    out_path = out_dir / f"{datetime.now():%Y%m%d}_hexmap_{str(args.work_key).lstrip('#')}.md"
+    cache_path = out_path.with_suffix(".mappings.json")
+    if args.reuse_detections and cache_path.exists():
+        mappings = {k: {int(i): v for i, v in d.items()}
+                    for k, d in json.loads(cache_path.read_text(encoding="utf-8")).items()}
+        print(f"[hexmap] 対応づけ結果を再利用: {cache_path}")
+    else:
+        print(f"[hexmap] エントリへ HEX を対応づけ中 ({len(targets)} キャラ, {model})...")
+        mappings = map_hex_for_records(targets, model, args.max_images, args.workers)
+        cache_path.write_text(json.dumps(mappings, ensure_ascii=False, indent=1), encoding="utf-8")
+
+    rows: list[tuple[str, dict, dict, dict]] = []
+    for label, audit in audits:
+        by_hex = {c["hex"]: c for c in hex_candidates(audit)}
+        for entry in audit["entries"]:
+            found = (mappings.get(label) or {}).get(entry["index"])
+            if found and found["hex"] in by_hex:
+                rows.append((label, entry, found, by_hex[found["hex"]]))
+    unregistered = sum(1 for r in rows if r[3]["source"] == "artwork")
+    print(f"[hexmap] 対応づけ {len(rows)} 件 (うち未登録の実測色 {unregistered} 件)")
+
+    command = f"python -m src.tools.verify_appearance_detail --all --check hexmap"
+    body = build_hexmap_md(rows, load_design_enums(), args.work_key, model, command)
+    out_path.write_text(body, encoding="utf-8")
+    print(f"[hexmap] レビュー生成: {out_path}")
+
+    if not args.submit:
+        print("[hexmap] 送るには --submit を付ける")
+        return
+    title = (
+        f"[AppearanceDetail × ColorPalette] {str(args.work_key).lstrip('#')}"
+        f" エントリ別 HEX 対応 {len(rows)} 件（未登録色 {unregistered} 件）"
+    )
+    if args.comment:
+        print(f"[hexmap] Issue #{args.comment} へ追記: {comment_issue(args.repo, args.comment, out_path)}")
+    else:
+        print(f"[hexmap] Issue 送信: {submit_issue(args.repo, title, out_path)}")
+
+
+def bulk_records(work_key: str) -> list[dict]:
+    """一括検査の対象レコード。公式データを LLM へ渡すので単体と同じ fail-closed ゲートを通す。"""
     records = [
         r for r in load_manifest()
-        if r.get("work_key") == args.work_key and r.get("has_appearance_detail")
-    ]
-    # 公式データを LLM へ渡すので、単体実行と同じ fail-closed ゲートを各レコードに通す。
-    records = [
-        r for r in records
-        if apply_generation_gate(
+        if r.get("work_key") == work_key and r.get("has_appearance_detail")
+        and apply_generation_gate(
             r, usage="image", num=(r.get("data") or {}).get("Num"), printer=print
         )[0]
     ]
     if not records:
-        raise SystemExit(f"[ERROR] 対象レコードがありません: {args.work_key}")
+        raise SystemExit(f"[ERROR] 対象レコードがありません: {work_key}")
+    return records
 
+
+def run_bulk_coverage(args: argparse.Namespace, out_dir: Path, model: str) -> None:
+    """作品内の全レコードを静的検査し、1 枚のレビューへまとめる。"""
+    records = bulk_records(args.work_key)
     print(f"[all] {len(records)} 件の色語ヒントを取得中 (node)...")
     evidence, common_words = collect_color_hint_evidence(records, work_key=args.work_key)
     # 一括では形態で絞らない (BodyPart 欠落は形態に依らないため)。
@@ -1330,8 +1591,8 @@ def main() -> None:
     ap.add_argument(
         "--check",
         default="match",
-        choices=["match", "coverage"],
-        help="match=記述と画像の照合 / coverage=配色検知ツール向けの BodyPart・DesignElement 充足検査",
+        choices=["match", "coverage", "hexmap"],
+        help="match=記述と画像の照合 / coverage=BodyPart・DesignElement 充足検査 / hexmap=エントリ別の HEX 対応 (--all 専用)",
     )
     ap.add_argument("--form", default="corefolder", choices=[*_FORMS, "both"])
     ap.add_argument("--work-key", default="#Works_NumberTales")
@@ -1361,8 +1622,10 @@ def main() -> None:
 
     if not os.environ.get("OPENAI_API_KEY"):
         raise SystemExit("[ERROR] OPENAI_API_KEY が未設定です (.env を確認してください)")
-    if args.all and args.check != "coverage":
-        raise SystemExit("[ERROR] --all は --check coverage でのみ使えます")
+    if args.all and args.check not in ("coverage", "hexmap"):
+        raise SystemExit("[ERROR] --all は --check coverage / hexmap でのみ使えます")
+    if args.check == "hexmap" and not args.all:
+        raise SystemExit("[ERROR] --check hexmap は --all と併用してください")
     if not args.all and not args.num:
         raise SystemExit("[ERROR] --num または --all を指定してください")
 
@@ -1371,7 +1634,10 @@ def main() -> None:
     model = os.environ.get("GPT_MODEL", "gpt-4o")
 
     if args.all:
-        run_bulk_coverage(args, out_dir, model)
+        if args.check == "hexmap":
+            run_bulk_hexmap(args, out_dir, model, bulk_records(args.work_key))
+        else:
+            run_bulk_coverage(args, out_dir, model)
         return
 
     record = find_character(args.num, work_key=args.work_key)

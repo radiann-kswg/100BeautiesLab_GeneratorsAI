@@ -234,6 +234,9 @@ PowerShell で `npm test` が解決できない環境では `npm.cmd test` を�
 - 創作 DB の `AppearanceDetail` 各行を公式イラストと Vision で照合し、レビュー Markdown を生成する。
   照合画像は作品 typedef で `$palette.source`（配色抽出対象）が宣言されたフィールドから選ぶ。
 - 生成のみ: `python -m src.tools.verify_appearance_detail --num 57 --form both`（出力: `_ideas/db-reviews/`）
+- エントリ別の HEX 対応（色語 13 語では部位が重複して一意に決まらないため、実際に塗られている
+  HEX を画像から特定する）: `python -m src.tools.verify_appearance_detail --all --check hexmap --submit`。
+  候補は `ColorPalette` の登録色＋実測色で、モデルには生成させず**選ばせる**。
 - 配色検知ツール向けの充足検査（`BodyPart` / `DesignElement` の不足を洗い出す半自動検査）:
   `python -m src.tools.verify_appearance_detail --num 57 --check coverage --form both`。
   判定は上流 `tools/extract-palette.mjs` の `collectColorHints()` を node 経由で呼ぶ（色語表は再実装しない）。
