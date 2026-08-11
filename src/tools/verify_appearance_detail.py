@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import json
 import os
 import re
@@ -1440,14 +1441,15 @@ def run_bulk_hexmap(args: argparse.Namespace, out_dir: Path, model: str, records
 
     out_path = out_dir / f"{datetime.now():%Y%m%d}_hexmap_{str(args.work_key).lstrip('#')}.md"
     cache_path = out_path.with_suffix(".mappings.json")
-    if args.reuse_detections and cache_path.exists():
-        mappings = {k: {int(i): v for i, v in d.items()}
-                    for k, d in json.loads(cache_path.read_text(encoding="utf-8")).items()}
-        print(f"[hexmap] 対応づけ結果を再利用: {cache_path}")
+    signature = entries_signature(audits)
+    cached = load_cache(cache_path, signature) if args.reuse_detections else None
+    if cached is not None:
+        mappings = {k: {int(i): v for i, v in d.items()} for k, d in cached.items()}
+        print(f"[hexmap] 対応づけ結果を再利用: {cache_path.name}")
     else:
         print(f"[hexmap] エントリへ HEX を対応づけ中 ({len(targets)} キャラ, {model})...")
         mappings = map_hex_for_records(targets, model, args.max_images, args.workers)
-        cache_path.write_text(json.dumps(mappings, ensure_ascii=False, indent=1), encoding="utf-8")
+        save_cache(cache_path, signature, mappings)
 
     rows: list[tuple[str, dict, dict, dict]] = []
     for label, audit in audits:
@@ -1475,6 +1477,35 @@ def run_bulk_hexmap(args: argparse.Namespace, out_dir: Path, model: str, records
         print(f"[hexmap] Issue #{args.comment} へ追記: {comment_issue(args.repo, args.comment, out_path)}")
     else:
         print(f"[hexmap] Issue 送信: {submit_issue(args.repo, title, out_path)}")
+
+
+def entries_signature(audits: list[tuple[str, dict]]) -> str:
+    """エントリ構成の指紋。上流でエントリが増減すると index がずれ、キャッシュが嘘になる。"""
+    payload = "\n".join(
+        f"{label}:{e['index']}:{e['text']}" for label, audit in audits for e in audit["entries"]
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def load_cache(path: Path, signature: str) -> object | None:
+    """指紋が一致するキャッシュだけを返す。合わなければ黙って捨てず警告する。"""
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict) or data.get("signature") != signature:
+        print(f"[WARN] キャッシュが現在の DB と一致しません。取り直します: {path.name}")
+        return None
+    return data.get("payload")
+
+
+def save_cache(path: Path, signature: str, payload: object) -> None:
+    path.write_text(
+        json.dumps({"signature": signature, "payload": payload}, ensure_ascii=False, indent=1),
+        encoding="utf-8",
+    )
 
 
 def bulk_records(work_key: str) -> list[dict]:
@@ -1513,13 +1544,14 @@ def run_bulk_coverage(args: argparse.Namespace, out_dir: Path, model: str) -> No
         # 画像の読み取りは有料なので結果を隣へ残し、レポートの手直しは無料で回せるようにする。
         cache_path = out_path.with_suffix(".detections.json")
         enums = load_design_enums()
-        if args.reuse_detections and cache_path.exists():
+        cached = load_cache(cache_path, entries_signature(audits)) if args.reuse_detections else None
+        if cached is not None:
             detections = {
                 label: {"colors": {int(i): v for i, v in (d.get("colors") or {}).items()},
                         "hex_parts": d.get("hex_parts") or {}}
-                for label, d in json.loads(cache_path.read_text(encoding="utf-8")).items()
+                for label, d in cached.items()
             }
-            print(f"[all] 画像読み取り結果を再利用: {cache_path}")
+            print(f"[all] 画像読み取り結果を再利用: {cache_path.name}")
         else:
             targets = [
                 (record, label, audit)
@@ -1530,9 +1562,7 @@ def run_bulk_coverage(args: argparse.Namespace, out_dir: Path, model: str) -> No
             detections = detect_colors_for_records(
                 targets, model, args.max_images, args.workers, enums["body_part"]
             )
-            cache_path.write_text(
-                json.dumps(detections, ensure_ascii=False, indent=1), encoding="utf-8"
-            )
+            save_cache(cache_path, entries_signature(audits), detections)
         found = sum(len(d.get("colors") or {}) for d in detections.values())
         located = sum(len(d.get("hex_parts") or {}) for d in detections.values())
         print(f"[all] 画像から色を読めたエントリ: {found} 件 / 実測色の部位を特定: {located} 件")

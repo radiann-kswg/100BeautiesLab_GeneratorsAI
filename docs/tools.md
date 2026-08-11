@@ -346,6 +346,8 @@ creations-db 側の `tools/extract-palette.mjs` の `listImageFields()` と同�
 - 画像で確認できない要素・候補のどれとも違う要素は表に出さない（推測で埋めない）。
 - `--submit` で新規 Issue、`--comment <番号>` を併せると既存 Issue へ追記。
 - 対応づけ結果は `.mappings.json` にキャッシュされ、`--reuse-detections` で無料再生成できる。
+  キャッシュにはエントリ構成の指紋を持たせてあり、**上流でエントリが増減すると自動で取り直す**。
+  対応づけはエントリの index を鍵にするため、指紋を見ないと上流の追加・削除で嘘の表になる。
 
 ### 判定の読み方
 

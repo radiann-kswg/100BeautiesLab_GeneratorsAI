@@ -30,13 +30,16 @@ from src.tools.verify_appearance_detail import (  # noqa: E402
     audit_coverage,
     build_color_attr_proposal_md,
     entries_for_form,
+    entries_signature,
     excluded_for_form,
+    load_cache,
     format_entry,
     normalize_color_suggestions,
     normalize_hex_locations,
     normalize_hex_mappings,
     normalize_results,
     palette_source_image_keys,
+    save_cache,
     summarize,
 )
 
@@ -196,6 +199,26 @@ def test_proposal_excludes_common_colors_from_gaps() -> None:
     assert "| `white` (白) |" not in md, md
 
 
+def test_cache_is_rejected_when_entries_change() -> None:
+    """上流でエントリが増減したらキャッシュを使わないこと。index がずれて嘘の対応表になる。"""
+    audit = audit_coverage(_EVIDENCE, None)
+    before = [("57(イズナ)", audit)]
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "x.mappings.json"
+        save_cache(path, entries_signature(before), {"57(イズナ)": {"1": {"hex": "#E8F152"}}})
+        assert load_cache(path, entries_signature(before)) is not None
+
+        # エントリが 1 件増えた状態 (上流でエントリが追加された想定)。
+        changed_evidence = {
+            "entries": [*_EVIDENCE["entries"],
+                        {"index": 5, "formation": None, "bodyPart": [], "element": None,
+                         "text": "Overview: new entry", "hints": []}],
+            "palette": _EVIDENCE["palette"],
+        }
+        after = [("57(イズナ)", audit_coverage(changed_evidence, None))]
+        assert load_cache(path, entries_signature(after)) is None
+
+
 def test_normalize_hex_mappings_rejects_invented_hexes() -> None:
     """候補に無い HEX は捨てること。モデルが色を作ると DB へ嘘の値が入る。"""
     raw = [
@@ -270,6 +293,7 @@ if __name__ == "__main__":
     test_excluded_for_form_keeps_form_neutral_material()
     test_palette_source_image_keys_missing_typedef_returns_empty()
     test_proposal_excludes_common_colors_from_gaps()
+    test_cache_is_rejected_when_entries_change()
     test_normalize_hex_mappings_rejects_invented_hexes()
     test_normalize_hex_locations_keeps_rejections()
     test_normalize_color_suggestions_drops_unknown_words()
