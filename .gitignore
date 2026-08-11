@@ -26,6 +26,9 @@ output/
 generated/
 *.log
 
+# DB レビューの中間生成物 (画像読み取り・HEX 対応づけのキャッシュ)。レビュー本体の .md は残す
+_ideas/db-reviews/*.json
+
 # OS
 .DS_Store
 Thumbs.db
