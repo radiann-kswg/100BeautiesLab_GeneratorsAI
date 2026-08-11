@@ -832,37 +832,61 @@ _COLOR_WORD_JP = {
 
 def detect_colors_from_images(
     entries: list[dict],
+    hexes: list[str],
     image_paths: list[Path],
     char_label: str,
     model: str,
-) -> dict[int, dict]:
-    """色情報が無いエントリについて、**公式画像を正典として**色語を読み取る。
+    body_part_labels: dict[str, str],
+) -> dict:
+    """公式画像を正典として、(1) 色情報が無いエントリの色語、(2) 実測 HEX の使用部位を読む。
 
     `ColorPalette` の HEX は配色検知ツールが画像から起こした出力であり、それ自体が
     不完全でありうる（補完したい対象そのもの）。HEX から色語を逆引きすると誤りを
     自己肯定してしまうため、色の根拠は公式画像に置く。
+
+    2 つを 1 コールにまとめるのは、同じ画像を 2 回送ると費用が倍になるだけだから。
     """
-    if not entries or not image_paths:
-        return {}
+    if not image_paths or (not entries and not hexes):
+        return {"colors": {}, "hex_parts": {}}
     from openai import OpenAI
 
     word_list = " / ".join(f"{w} ({jp})" for w, jp in _COLOR_WORD_JP.items())
+    part_list = "\n".join(f"- {code} ({label})" for code, label in body_part_labels.items())
     system = (
         f"あなたは創作 DB の外見記述を補う校正 AI です。対象は「{char_label}」です。\n"
-        "添付画像は公式イラスト (原典) で、これが色の唯一の根拠です。\n"
-        "各項目について、画像でその要素が実際に何色に塗られているかを読み取り、"
-        "**下の色語一覧から**選んで**JSON のみ**返してください。\n"
-        '{"suggestions": [{"index": 1, "color_words": ["yellow"], "note": "根拠を日本語で1文"}]}\n'
-        f"[色語一覧]\n{word_list}\n"
-        "- 一覧に無い語を作らないでください（一覧は配色検知ツールが認識できる語の全てです）。\n"
-        "- 中間色は近い語を複数挙げて構いません（例: 黄緑なら yellow と green）。\n"
-        "- 画像で該当箇所が確認できない項目は color_words を空配列にし、note に理由を書いてください。\n"
-        "- 推測で色を決めないでください。"
+        "添付画像は公式イラスト (原典) で、これが唯一の根拠です。**JSON のみ**返してください。\n"
+        '{"suggestions": [{"index": 1, "color_words": ["yellow"], "note": "根拠を日本語で1文"}],'
+        ' "hex_locations": [{"hex": "#F4C5A8", "body_parts": ["#BodyPart_Hair"],'
+        ' "description_en": "pale hair highlight", "note": "根拠を日本語で1文"}]}\n'
+        "\n[A. suggestions — 記述の色を読む]\n"
+        "各項目が画像で実際に何色に塗られているかを、下の色語一覧から選ぶ。\n"
+        f"{word_list}\n"
+        "- 一覧に無い語を作らない（一覧は配色検知ツールが認識できる語の全て）。\n"
+        "- 中間色は近い語を複数挙げてよい（例: 黄緑なら yellow と green）。\n"
+        "- 確認できない項目は color_words を空配列にし、note に理由を書く。\n"
+        "\n[B. hex_locations — 実測色の使用部位を特定する]\n"
+        "提示する HEX は画像から機械的に抽出した実測色。画像を見て、その色が**どの部位に"
+        "塗られているか**を下の BodyPart コードから選び、`AppearanceDetail[].Attrs` へ書ける"
+        "短い英語の記述 (description_en) を添える。\n"
+        f"{part_list}\n"
+        "- 一覧に無いコードを作らない。\n"
+        "- 輪郭線・紙面・背景・ハイライトなど配色ではないものは body_parts を空配列にし、"
+        "note にその旨を書く（例: 「輪郭線の黒」）。\n"
+        "- 推測で決めない。"
     )
-    items = "\n".join(f"{e['index']}. {e['text']}" for e in entries)
-    content: list[dict] = [
-        {"type": "text", "text": "以下は色情報が入っていない記述です。画像から実際の色を読み取ってください。\n\n" + items}
-    ]
+
+    sections: list[str] = []
+    if entries:
+        sections.append(
+            "[A] 色情報が入っていない記述です。画像から実際の色を読み取ってください。\n"
+            + "\n".join(f"{e['index']}. {e['text']}" for e in entries)
+        )
+    if hexes:
+        sections.append(
+            "[B] 画像から抽出した実測色です。各色がどの部位に使われているか答えてください。\n"
+            + "\n".join(f"- {h}" for h in hexes)
+        )
+    content: list[dict] = [{"type": "text", "text": "\n\n".join(sections)}]
     for path in image_paths:
         mime, b64 = _encode_image(path)
         content.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}})
@@ -871,11 +895,37 @@ def detect_colors_from_images(
     response = client.chat.completions.create(
         model=model,
         messages=[{"role": "system", "content": system}, {"role": "user", "content": content}],
-        max_tokens=2000,
+        max_tokens=2500,
         response_format={"type": "json_object"},
     )
     raw = json.loads((response.choices[0].message.content or "{}").strip())
-    return normalize_color_suggestions(raw.get("suggestions"), {e["index"] for e in entries})
+    return {
+        "colors": normalize_color_suggestions(raw.get("suggestions"), {e["index"] for e in entries}),
+        "hex_parts": normalize_hex_locations(raw.get("hex_locations"), set(hexes), set(body_part_labels)),
+    }
+
+
+def normalize_hex_locations(
+    raw_locations: object, valid_hexes: set[str], valid_parts: set[str]
+) -> dict[str, dict]:
+    """実測 HEX の部位特定を検証する。一覧に無い BodyPart コードは捨てる。
+
+    `body_parts` が空でも捨てない。「輪郭線なので配色ではない」という判定自体が、
+    実測色の一覧からノイズを外すのに要る情報だから。
+    """
+    out: dict[str, dict] = {}
+    for item in raw_locations if isinstance(raw_locations, list) else []:
+        if not isinstance(item, dict):
+            continue
+        hex_value = str(item.get("hex") or "").upper()
+        if hex_value not in valid_hexes or hex_value in out:
+            continue
+        out[hex_value] = {
+            "body_parts": [p for p in (item.get("body_parts") or []) if p in valid_parts],
+            "description_en": str(item.get("description_en") or "").strip(),
+            "note": str(item.get("note") or "").strip(),
+        }
+    return out
 
 
 def normalize_color_suggestions(raw_suggestions: object, valid_index: set[int]) -> dict[int, dict]:
@@ -902,8 +952,9 @@ def normalize_color_suggestions(raw_suggestions: object, valid_index: set[int]) 
 
 def build_color_attr_proposal_md(
     audits: list[tuple[str, dict]],
-    detections: dict[str, dict[int, dict]],
+    detections: dict[str, dict],
     common_words: list[str],
+    enums: dict,
     before: dict[str, int] | None,
     model: str,
     command: str,
@@ -916,19 +967,18 @@ def build_color_attr_proposal_md(
     def _cell(text: str) -> str:
         return str(text).replace("|", "\\|").replace("\n", " ")
 
-    def _attr_json(word: str) -> str:
-        return (
-            '`{"AttrLabel": "#DesignAttr_Color", '
-            f'"value_JP": "{_COLOR_WORD_JP.get(word, word)}", "value_EN": "{word}"'
-            "}`"
-        )
+    def _parts(codes: list[str]) -> str:
+        return ", ".join(f"`{c}` ({enums['body_part'].get(c, '?')})" for c in codes) or "—"
+
+    def _colors_of(label: str) -> dict[int, dict]:
+        return (detections.get(label) or {}).get("colors") or {}
 
     missing = [(label, e) for label, a in audits for e in a["missing_body_part"]]
     proposals = [
-        (label, entry, detections[label][entry["index"]])
+        (label, entry, _colors_of(label)[entry["index"]])
         for label, audit in audits
         for entry in audit["no_color_word"]
-        if label in detections and entry["index"] in detections[label]
+        if entry["index"] in _colors_of(label)
     ]
 
     lines = [
@@ -982,7 +1032,16 @@ def build_color_attr_proposal_md(
     lines.append("")
 
     # 透過イラストからの実測色で ColorPalette に無いもの = そのまま追記できる欠落配色。
-    missing_colors = [(label, c) for label, a in audits for c in a.get("missing_colors") or []]
+    # 画像照合で「配色ではない」と判定されたもの (輪郭線など) は別表へ分ける。
+    missing_colors: list[tuple[str, dict, dict]] = []
+    rejected_colors: list[tuple[str, dict, dict]] = []
+    for label, audit in audits:
+        for color in audit.get("missing_colors") or []:
+            found = (detections.get(label) or {}).get("hex_parts", {}).get(color["hex"].upper(), {})
+            (missing_colors if found.get("body_parts") or not found else rejected_colors).append(
+                (label, color, found)
+            )
+
     if missing_colors:
         lines += [
             f"### 創作 DB に無い配色（実測 HEX・{len(missing_colors)} 件）",
@@ -990,19 +1049,35 @@ def build_color_attr_proposal_md(
             "公式の透過イラスト（`$palette.source: artwork`）から**実測**した色のうち、",
             "`ColorPalette` のどの HEX とも一致しないもの（色距離 10 以内を同じ色とみなす）。",
             "抽出条件は上流 `patch-colorpalette.mjs --from-artwork` と同じで、共通造形色は除外済み。",
+            "**部位と記述案は画像から読み取ったもの**で、`AppliesTo` と `Attrs` の両方へそのまま書ける。",
             "",
-            "**確認してほしい点**: 純黒に近い色（`#010000` など）は輪郭線が彩度条件をすり抜けたもの、",
-            "白に近い色は紙面・ハイライトの可能性がある。面積比が大きくても配色とは限らないので、",
-            "`ColorPalette` へ入れる前に画像で確かめてほしい。",
+            "| キャラ | 実測 HEX | 面積比 | 使用部位（画像から） | `Attrs` 記述案 | 根拠 |",
+            "|---|---|---|---|---|---|",
+        ]
+        for label, color, found in missing_colors:
+            lines.append(
+                f"| {_cell(label)} | `{color['hex']}` | {color['ratio'] * 100:.1f}% |"
+                f" {_parts(found.get('body_parts') or [])} |"
+                f" {_cell(found.get('description_en') or '—')[:45]} |"
+                f" {_cell(found.get('note') or '')[:40]} |"
+            )
+        lines.append("")
+
+    if rejected_colors:
+        lines += [
+            f"### 実測はされたが配色ではないと判定した色（{len(rejected_colors)} 件）",
             "",
-            "| キャラ | 実測 HEX | 面積比 | 現在の ColorPalette |",
+            "画像照合で輪郭線・紙面・背景などと判定されたもの。上流の純黒除外は彩度条件付き",
+            "（濃い有彩色を守るため）なので `#010000` のような線画色がすり抜けることがある。",
+            "参考として残すので、`ColorPalette` へ入れる必要はないはず。",
+            "",
+            "| キャラ | 実測 HEX | 面積比 | 判定理由 |",
             "|---|---|---|---|",
         ]
-        for label, color in missing_colors:
-            audit = next(a for l, a in audits if l == label)
-            existing = ", ".join(f"`{c['hex']}`" for c in audit["palette"]) or "—"
+        for label, color, found in rejected_colors:
             lines.append(
-                f"| {_cell(label)} | `{color['hex']}` | {color['ratio'] * 100:.1f}% | {existing} |"
+                f"| {_cell(label)} | `{color['hex']}` | {color['ratio'] * 100:.1f}% |"
+                f" {_cell(found.get('note') or '—')[:60]} |"
             )
         lines.append("")
 
@@ -1011,7 +1086,7 @@ def build_color_attr_proposal_md(
     common = set(common_words)
     gaps: list[tuple[str, str, list[str]]] = []
     for label, audit in audits:
-        detected = {w for idx in detections.get(label, {}) for w in detections[label][idx]["color_words"]}
+        detected = {w for found in _colors_of(label).values() for w in found["color_words"]}
         if not detected:
             continue
         in_palette = {w for c in audit["palette"] for w in (c.get("colorWords") or [])}
@@ -1122,17 +1197,21 @@ def detect_colors_for_records(
     model: str,
     max_images: int,
     workers: int,
-) -> dict[str, dict[int, dict]]:
-    """レコードごとに公式画像から色語を読み取る。API 待ちが支配的なのでスレッドで並べる。"""
-    def _one(target: tuple[dict, str, dict]) -> tuple[str, dict[int, dict]]:
+    body_part_labels: dict[str, str],
+) -> dict[str, dict]:
+    """レコードごとに公式画像から色語と実測色の部位を読む。API 待ちが支配的なのでスレッドで並べる。"""
+    def _one(target: tuple[dict, str, dict]) -> tuple[str, dict]:
         record, label, audit = target
         # 一括では形態で絞らない (設定資料に両形態が載っているため)。
         images = collect_palette_source_images(record, None)[:max_images]
+        hexes = [c["hex"] for c in audit.get("missing_colors") or []]
         try:
-            return label, detect_colors_from_images(audit["no_color_word"], images, label, model)
+            return label, detect_colors_from_images(
+                audit["no_color_word"], hexes, images, label, model, body_part_labels
+            )
         except Exception as err:  # 1 キャラの失敗で全体を止めない
             print(f"[WARN] {label}: 色の読み取りに失敗 ({type(err).__name__}: {err})")
-            return label, {}
+            return label, {"colors": {}, "hex_parts": {}}
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
         return dict(pool.map(_one, targets))
@@ -1172,23 +1251,30 @@ def run_bulk_coverage(args: argparse.Namespace, out_dir: Path, model: str) -> No
         out_path = out_dir / f"{datetime.now():%Y%m%d}_color-attr-proposal_{str(args.work_key).lstrip('#')}.md"
         # 画像の読み取りは有料なので結果を隣へ残し、レポートの手直しは無料で回せるようにする。
         cache_path = out_path.with_suffix(".detections.json")
+        enums = load_design_enums()
         if args.reuse_detections and cache_path.exists():
-            detections = {k: {int(i): v for i, v in d.items()}
-                          for k, d in json.loads(cache_path.read_text(encoding="utf-8")).items()}
+            detections = {
+                label: {"colors": {int(i): v for i, v in (d.get("colors") or {}).items()},
+                        "hex_parts": d.get("hex_parts") or {}}
+                for label, d in json.loads(cache_path.read_text(encoding="utf-8")).items()
+            }
             print(f"[all] 画像読み取り結果を再利用: {cache_path}")
         else:
             targets = [
                 (record, label, audit)
                 for record, (label, audit) in zip(records, audits)
-                if audit["no_color_word"]
+                if audit["no_color_word"] or audit.get("missing_colors")
             ]
-            print(f"[all] 公式画像から色語を読み取り中 ({len(targets)} キャラ, {model})...")
-            detections = detect_colors_for_records(targets, model, args.max_images, args.workers)
+            print(f"[all] 公式画像から色と部位を読み取り中 ({len(targets)} キャラ, {model})...")
+            detections = detect_colors_for_records(
+                targets, model, args.max_images, args.workers, enums["body_part"]
+            )
             cache_path.write_text(
                 json.dumps(detections, ensure_ascii=False, indent=1), encoding="utf-8"
             )
-        found = sum(len(d) for d in detections.values())
-        print(f"[all] 画像から色を読めたエントリ: {found} 件")
+        found = sum(len(d.get("colors") or {}) for d in detections.values())
+        located = sum(len(d.get("hex_parts") or {}) for d in detections.values())
+        print(f"[all] 画像から色を読めたエントリ: {found} 件 / 実測色の部位を特定: {located} 件")
 
         proposal_command = (
             f"python -m src.tools.verify_appearance_detail --all --check coverage"
@@ -1200,7 +1286,7 @@ def run_bulk_coverage(args: argparse.Namespace, out_dir: Path, model: str) -> No
             else None
         )
         body = build_color_attr_proposal_md(
-            audits, detections, common_words, before, model, proposal_command
+            audits, detections, common_words, enums, before, model, proposal_command
         )
         out_path.write_text(body, encoding="utf-8")
         print(f"[all] 提案生成: {out_path}")

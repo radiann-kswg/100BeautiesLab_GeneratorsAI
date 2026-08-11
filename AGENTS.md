@@ -242,8 +242,9 @@ PowerShell で `npm test` が解決できない環境では `npm.cmd test` を�
   **色の根拠は公式画像**（`$palette.source` 宣言画像）に置く。`ColorPalette` の HEX は配色検知ツールの
   出力＝補完対象そのものなので、そこから色語を逆引きしない（誤りを自己肯定するため）。
   併せて `$palette.source: artwork` の透過イラストから実測した HEX のうち `ColorPalette` に無い色も提案する
-  （上流 `extractSolidColors()` を node 経由で呼ぶ）。画像読み取りは `.detections.json` にキャッシュされ、
-  `--reuse-detections` でレポートを課金なしに作り直せる。
+  （上流 `extractSolidColors()` を node 経由で呼ぶ）。実測 HEX は画像照合で使用部位（`$EnumDef_DesignBodyPart`）と
+  `Attrs` 記述案まで特定するので、`AppliesTo` と `Attrs` の両方へそのまま書ける。
+  画像読み取りは `.detections.json` にキャッシュされ、`--reuse-detections` でレポートを課金なしに作り直せる。
 - 送信 (課金＋外部投稿・明示 opt-in): 上記に `--submit` を付けると `100BeautiesLab_CreationsDB` へ Issue を立てる。
   `_creations-ai/creations-db/` は read-only 扱いのため、指摘は直接編集ではなく Issue 経由で返す。
 - 実装: [`src/tools/verify_appearance_detail.py`](src/tools/verify_appearance_detail.py)、詳細は [`docs/tools.md`](docs/tools.md) のセクション6。

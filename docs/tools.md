@@ -380,15 +380,21 @@ creations-db 側の `tools/extract-palette.mjs` の `listImageFields()` と同�
 | 節 | 内容 |
 | --- | --- |
 | 補完案 | 色情報が無いエントリについて、画像から読んだ色語と `#DesignAttr_Color` の追記案 |
-| 創作 DB に無い配色（実測 HEX） | 透過イラストから**実測**した色のうち `ColorPalette` に無いもの。そのまま追記できる |
+| 創作 DB に無い配色（実測 HEX） | 透過イラストから**実測**した色のうち `ColorPalette` に無いもの。**使用部位と `Attrs` 記述案つき** |
+| 実測はされたが配色ではない色 | 画像照合で輪郭線・紙面と判定されたもの（参考） |
 | ColorPalette に見当たらない色 | 画像から読めたのに `ColorPalette` のどの HEX も該当しない色（色語レベル） |
 | 残っている BodyPart 欠落 | 部位が空のまま残っているエントリ |
 
 実測 HEX は上流の `extractSolidColors()` / `colorDistance()` を node 経由で呼んで得る（抽出条件は
 `patch-colorpalette.mjs --from-artwork` と同じ・共通造形色は除外）。対象は `$palette.source: artwork` を
 宣言した透過イラストのみで、色距離 10 以内を「既存と同じ色」とみなす。
-上流の純黒除外は彩度条件付き（濃い有彩色を守るため）なので `#010000` のような輪郭線がすり抜けることがある。
-レポートにもその旨を注記してある。
+
+**実測 HEX は画像照合で使用部位まで特定する。** `$EnumDef_DesignBodyPart` のコードと `Attrs` へ書ける
+短い英語記述を返させるので、`ColorPalette.AppliesTo` と `AppearanceDetail[].Attrs` の両方へそのまま書ける。
+上流の純黒除外は彩度条件付き（濃い有彩色を守るため）で `#010000` のような輪郭線がすり抜けるが、
+画像照合が「配色ではない」と判定したものは別表へ回るので、追記候補の表には混ざらない。
+
+色語の読み取りと部位の特定は**同じ 1 コール**にまとめる（同じ画像を 2 回送ると費用が倍になるだけなので）。
 
 「見当たらない色」からは**共通造形色**（`$EnumDef_CommonColor` の肌色・舌色・毛色など）に該当する色語を除外する。
 これらは設計上 `ColorPalette` へ載らないため、指摘すると誤検出になる。除外語は上流 `readCommonColors()` から取る。

@@ -33,6 +33,7 @@ from src.tools.verify_appearance_detail import (  # noqa: E402
     excluded_for_form,
     format_entry,
     normalize_color_suggestions,
+    normalize_hex_locations,
     normalize_results,
     palette_source_image_keys,
     summarize,
@@ -180,14 +181,34 @@ def test_proposal_excludes_common_colors_from_gaps() -> None:
     """共通造形色 (肌色・毛色) は設計上 ColorPalette に載らないので指摘しないこと。"""
     audit = audit_coverage(_EVIDENCE, None)
     # index 3 (blonde ponytail) は色語が無いエントリ。画像から white と green を読んだ想定。
-    detections = {"57(イズナ)": {3: {"color_words": ["white", "green"], "note": "画像より"}}}
+    detections = {"57(イズナ)": {
+        "colors": {3: {"color_words": ["white", "green"], "note": "画像より"}},
+        "hex_parts": {},
+    }}
     md = build_color_attr_proposal_md(
-        [("57(イズナ)", audit)], detections, ["white"], None, "gpt-4o", "cmd"
+        [("57(イズナ)", audit)], detections, ["white"],
+        {"body_part": {}, "element": {}}, None, "gpt-4o", "cmd"
     )
     # ColorPalette には blue しか無いので green は取りこぼし候補、white は共通色として除外。
     assert "ColorPalette に見当たらない色（1 件）" in md, md
     assert "| `green` (緑) |" in md, md
     assert "| `white` (白) |" not in md, md
+
+
+def test_normalize_hex_locations_keeps_rejections() -> None:
+    """「配色ではない」判定 (body_parts 空) を捨てないこと。ノイズ除外の根拠に要る。"""
+    raw = [
+        {"hex": "#f4c5a8", "body_parts": ["#BodyPart_Hair", "#NotReal"],
+         "description_en": "pale hair", "note": "髪"},
+        {"hex": "#010000", "body_parts": [], "note": "輪郭線の黒"},
+        {"hex": "#FFFFFF", "body_parts": ["#BodyPart_Hair"], "note": "対象外の HEX"},
+    ]
+    out = normalize_hex_locations(raw, {"#F4C5A8", "#010000"}, {"#BodyPart_Hair"})
+    assert sorted(out) == ["#010000", "#F4C5A8"], out
+    # 一覧に無い BodyPart コードは捨てる。
+    assert out["#F4C5A8"]["body_parts"] == ["#BodyPart_Hair"]
+    # 配色ではないという判定は残す (別表に出すため)。
+    assert out["#010000"]["body_parts"] == [] and out["#010000"]["note"]
 
 
 def test_normalize_color_suggestions_drops_unknown_words() -> None:
@@ -234,6 +255,7 @@ if __name__ == "__main__":
     test_excluded_for_form_keeps_form_neutral_material()
     test_palette_source_image_keys_missing_typedef_returns_empty()
     test_proposal_excludes_common_colors_from_gaps()
+    test_normalize_hex_locations_keeps_rejections()
     test_normalize_color_suggestions_drops_unknown_words()
     test_char_label_squashes_newlines()
     test_audit_coverage_flags_missing_body_part_per_form()
