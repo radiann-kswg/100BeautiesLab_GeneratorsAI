@@ -262,7 +262,69 @@ env `CREATIONS_DB_PACKAGE_ENABLE` で動作切替。
 
 ---
 
-## 6. 今後ツールを追加するときの規約
+## 6. AppearanceDetail 照合レビュー (`verify_appearance_detail`)
+
+創作 DB の `AppearanceDetail` に書かれた各仕様行が、**同じ DB に登録された公式イラスト**と
+食い違っていないかを OpenAI Vision で 1 行ずつ照合し、レビュー Markdown を生成する。
+`_creations-ai/creations-db/` は read-only 扱いのため、指摘は直接編集ではなく
+[100BeautiesLab_CreationsDB](https://github.com/radiann-kswg/100BeautiesLab_CreationsDB) の Issue として送る。
+
+### コマンド
+
+```bash
+# 生成のみ (既定・副作用なし)。_ideas/db-reviews/ に Markdown を書き出す
+python -m src.tools.verify_appearance_detail --num 57 --form corefolder
+
+# 両形態を続けて照合 (Formation=null の共通エントリは両方で検査される)
+python -m src.tools.verify_appearance_detail --num 57 --form both
+
+# レビューを Issue として送る (form ごとに 1 Issue)
+python -m src.tools.verify_appearance_detail --num 57 --form both --submit
+```
+
+### フラグ
+
+| フラグ | 既定 | 説明 |
+| --- | --- | --- |
+| `--num` | (必須) | キャラクター番号。`2-alt` のような特殊 ID も可 |
+| `--form` | `corefolder` | `corefolder` / `humanoid` / `both` |
+| `--max-images` | `3` | Vision へ渡す公式画像の枚数。枚数が少ないと全身資料が入らず `unclear` が増える |
+| `--submit` | off | `gh issue create` でレビューを送る。**課金＋外部投稿を伴うので明示 opt-in** |
+| `--repo` | `radiann-kswg/100BeautiesLab_CreationsDB` | 送付先 |
+| `--out-dir` | `_ideas/db-reviews/` | Markdown 出力先 |
+
+### 照合に使う公式画像の選び方
+
+作品 typedef（`data/Works_<work>/DataBases/db_type.json`）の `Images` 子要素のうち、
+**`$palette: { "source": ... }` が宣言されているフィールドの画像**を使う。配色抽出の入力に選ばれている画像は
+キャラの色と造形が正確に描かれた資料（設定原画・設定資料・コアフォルダ画像）で、照合の根拠として最も強い。
+creations-db 側の `tools/extract-palette.mjs` の `listImageFields()` と同じ考え方で、
+フィールド名をこちらのコードに書かないための入口になっている。
+
+- NumberTales の対象: `concept_PNGName`（設定原画）/ `catalog_PNGName`（設定資料）/ `corefolder_PNGPath`（コアフォルダ画像）
+- 他形態専用と判る画像（`corefolder` 照合における `/humanoid` 配下など）だけを除外する。
+  設定資料のような形態非依存の資料は両形態の照合に使う。
+- `$palette.source` 宣言が無い作品では `collect_reference_images()`（生成側と同じ参照画像）へ自動フォールバックする。
+  どちらを使ったかはレビュー冒頭の「画像の選定」行に記録される。
+
+### 判定の読み方
+
+| verdict | 意味 |
+| --- | --- |
+| `match` | 画像から仕様どおりだと確認できた |
+| `mismatch` | 画像が仕様と明らかに異なる（位置・色・数・形状） |
+| `unclear` | 画角・遮蔽・解像度・未描画で**確認できない**。「DB が誤り」の意味ではない |
+
+- 判定は AI の推定。`mismatch` は先輩の目視確認を前提とした指摘候補として扱う。
+- モデルが返さなかった行は握り潰さず `unclear` として残る（件数が黙って減らないようにするため）。
+- 前提: `OPENAI_API_KEY`（モデルは `GPT_MODEL`、既定 `gpt-4o`）、`--submit` 時は `gh auth login` 済みであること。
+- 生成入口と同じ fail-closed オプトアウトゲート（`apply_generation_gate(usage="image")`）を通す。
+- 実装: [src/tools/verify_appearance_detail.py](../src/tools/verify_appearance_detail.py) /
+  回帰テスト: [tests/test_appearance_detail_review.py](../tests/test_appearance_detail_review.py)
+
+---
+
+## 7. 今後ツールを追加するときの規約
 
 新ツールを `src/tools/` に置く場合:
 

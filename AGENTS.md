@@ -229,6 +229,15 @@ PowerShell で `npm test` が解決できない環境では `npm.cmd test` を�
 - 実装: [`src/tools/check_image_mime.py`](src/tools/check_image_mime.py)
 - 保存側の根本対策として [`src/utils/image_io.py`](src/utils/image_io.py) の `save_image_bytes()` を利用しており、`gemini/generate.py` / `openai/generate.py` はバイト列の先頭マジックを見て拡張子を自動補正する。
 
+## AppearanceDetail 照合レビュー
+
+- 創作 DB の `AppearanceDetail` 各行を公式イラストと Vision で照合し、レビュー Markdown を生成する。
+  照合画像は作品 typedef で `$palette.source`（配色抽出対象）が宣言されたフィールドから選ぶ。
+- 生成のみ: `python -m src.tools.verify_appearance_detail --num 57 --form both`（出力: `_ideas/db-reviews/`）
+- 送信 (課金＋外部投稿・明示 opt-in): 上記に `--submit` を付けると `100BeautiesLab_CreationsDB` へ Issue を立てる。
+  `_creations-ai/creations-db/` は read-only 扱いのため、指摘は直接編集ではなく Issue 経由で返す。
+- 実装: [`src/tools/verify_appearance_detail.py`](src/tools/verify_appearance_detail.py)、詳細は [`docs/tools.md`](docs/tools.md) のセクション6。
+
 ## output レイアウト規約
 
 - 物理レイアウトは `output/{YYYYMMDD}/{ts}_{provider}_{form}_num{NNN}/` の2階層 (`作業日 / 実行`)。旧 3 階層の時間帯フォルダ `{YYYYMMDD_HH}/` は廃止済み。パイプラインの各ステージ配下の子生成は日付フォルダを作らずフラットに置く。
