@@ -1,4 +1,4 @@
-# サブモジュール同期ログ — 2026-08-11 14:28
+# サブモジュール同期ログ — 2026-08-11 16:52
 
 > 実機 PowerShell スクリプト `scripts/daily-submodule-sync.ps1` による自動実行。
 
@@ -6,15 +6,16 @@
 
 | サブモジュール | 追跡先 | 旧 | 新 | 判定 | 備考 |
 |---|---|---|---|---|---|
-| `_creations-ai` | origin/master | 7d97557 | 279b14b | UPDATED | FF 取り込み完了 |
-| `_creations-ai/creations-db` | origin/addon-ai-tag | 5a5d158 | 5a5d158 | NO-CHANGE | 最新 |
+| `_creations-ai` | origin/master | 279b14b | 032bdb8 | UPDATED | FF 取り込み完了 |
+| `_creations-ai/creations-db` | origin/addon-ai-tag | 6e4f3e2 | 6e4f3e2 | NO-CHANGE | 最新 |
 
 ## 取り込んだ更新の内容
 
-### `_creations-ai` 7d97557..279b14b
+### `_creations-ai` 279b14b..032bdb8
 
 ```
-279b14b chore: sync ai-dataset (creations-db@5a5d158) 窶・ai_training allowed: 158 [skip ci]
+032bdb8 chore: sync ai-dataset (creations-db@6e4f3e2) 窶・ai_training allowed: 158 [skip ci]
+0a824bd chore: sync ai-dataset (creations-db@801ac6d) 窶・ai_training allowed: 158 [skip ci]
 ```
 
 変更ファイル:
@@ -23,8 +24,8 @@
 ai-dataset/build-info.json                        |   4 +-
  ai-dataset/image-index.json                       |   2 +-
  ai-dataset/index.json                             |   4 +-
- ai-dataset/manifest-training.jsonl                |  96 ++++++++++----------
- ai-dataset/manifest.jsonl                         | 102 +++++++++++-----------
+ ai-dataset/manifest-training.jsonl                | 226 +++++++--------
+ ai-dataset/manifest.jsonl                         | 322 +++++++++++-----------
  ai-dataset/policy.json                            |   2 +-
  ai-dataset/works/Works_CommonReferences.json      |   2 +-
  ai-dataset/works/Works_DestinyFoxRecords.json     |   2 +-
@@ -37,7 +38,7 @@ ai-dataset/build-info.json                        |   4 +-
  ai-dataset/works/Works_UnibyteLive.json           |   2 +-
  ai-dataset/works/Works_VirtuesUs.json             |   2 +-
  creations-db                                      |   2 +-
- 17 files changed, 116 insertions(+), 116 deletions(-)
+ 17 files changed, 291 insertions(+), 291 deletions(-)
 ```
 
 ## 最適化メモ
