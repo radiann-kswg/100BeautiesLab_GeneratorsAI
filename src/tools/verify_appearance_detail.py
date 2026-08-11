@@ -23,6 +23,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 
@@ -52,8 +53,12 @@ _VERDICTS = ("match", "mismatch", "unclear")
 # 照合に使う公式画像の選定
 # ──────────────────────────────────────────
 
-def palette_source_image_keys(work_key: str, creations_db_base: str = DEFAULT_DB_BASE) -> list[str]:
+def palette_source_image_keys(
+    work_key: str, creations_db_base: str = DEFAULT_DB_BASE, source: str | None = None
+) -> list[str]:
     """作品 typedef の `Images` 子要素のうち `$palette.source` 宣言を持つものの images キーを返す。
+
+    ``source`` を指定するとその宣言値のものだけ（``"artwork"`` = 透過キャラ単体イラスト等）。
 
     配色抽出の入力に選ばれている画像は、キャラの色と造形が正確に描かれた資料
     (設定原画・設定資料・コアフォルダ画像)。AppearanceDetail の照合にも同じものを使う。
@@ -75,7 +80,10 @@ def palette_source_image_keys(work_key: str, creations_db_base: str = DEFAULT_DB
     )
     keys: list[str] = []
     for child in (images_def or {}).get("$type") or []:
-        if not isinstance(child, dict) or not (child.get("$palette") or {}).get("source"):
+        if not isinstance(child, dict):
+            continue
+        declared = (child.get("$palette") or {}).get("source")
+        if not declared or (source is not None and declared != source):
             continue
         matched = re.match(r"^(.+)_PNG(?:Name|Path)$", str(child.get("hashTag") or ""))
         if not matched:
@@ -99,10 +107,19 @@ def excluded_for_form(path_text: str, form: str) -> bool:
 
 
 def collect_palette_source_images(
-    record: dict, form: str, creations_db_base: str = DEFAULT_DB_BASE
+    record: dict,
+    form: str | None,
+    creations_db_base: str = DEFAULT_DB_BASE,
+    source: str | None = None,
 ) -> list[Path]:
-    """`$palette.source` 宣言のある画像のうち、指定 form の照合に使えるものを返す。"""
-    keys = palette_source_image_keys(record.get("work_key") or "#Works_NumberTales", creations_db_base)
+    """`$palette.source` 宣言のある画像のうち、指定 form の照合に使えるものを返す。
+
+    ``form=None`` は形態で絞らない（両形態を 1 度に見たい一括検査用）。
+    ``source`` は `$palette.source` の宣言値で絞る（``"artwork"`` = 実測色の抽出元）。
+    """
+    keys = palette_source_image_keys(
+        record.get("work_key") or "#Works_NumberTales", creations_db_base, source
+    )
     images = record.get("images") or {}
     paths: list[Path] = []
     for key in keys:
@@ -110,10 +127,14 @@ def collect_palette_source_images(
             if not isinstance(rel, str) or not rel:
                 continue
             path = Path(creations_db_base) / rel
-            if path.exists() and not excluded_for_form(rel, form) and path not in paths:
-                paths.append(path)
-    # 形態名を含む画像を先頭へ (安定ソートなので typedef の宣言順は保たれる)。
-    paths.sort(key=lambda p: 0 if f"/{form}" in str(p).replace("\\", "/").lower() else 1)
+            if not path.exists() or path in paths:
+                continue
+            if form is not None and excluded_for_form(rel, form):
+                continue
+            paths.append(path)
+    if form is not None:
+        # 形態名を含む画像を先頭へ (安定ソートなので typedef の宣言順は保たれる)。
+        paths.sort(key=lambda p: 0 if f"/{form}" in str(p).replace("\\", "/").lower() else 1)
     return paths
 
 
@@ -318,14 +339,43 @@ def build_review_md(
 # 上流 `tools/extract-palette.mjs` をそのまま呼ぶ。色語表 (COLOR_WORD_RANGES) と
 # collectColorHints() は配色検知ツールの判定の正典で、こちらへ再実装すると必ず食い違う。
 _NODE_EVIDENCE_SCRIPT = """
-import { collectColorHints, colorWordMatchesHex } from %(module)s;
+import {
+    collectColorHints, colorWordMatchesHex, readCommonColors,
+    decodePng, extractSolidColors, isTransparentArtwork, colorDistance,
+} from %(module)s;
 import fs from 'node:fs';
-const records = JSON.parse(fs.readFileSync(process.argv[1], 'utf8'));
+// ponytail: 色語 key の一覧だけこちらに持つ。判定自体は上流の colorWordMatchesHex に委ねるので、
+// 上流が語を増やしたらここへ追記が要る（提案が出ないだけで、誤った提案は出ない）。
+const COLOR_WORD_KEYS = ['red', 'red orange', 'orange', 'yellow', 'green', 'cyan', 'blue',
+    'purple', 'pink', 'brown', 'white', 'black', 'gray'];
+const payload = JSON.parse(fs.readFileSync(process.argv[1], 'utf8'));
+const records = payload.map((p) => p.record);
+const commonColors = readCommonColors(process.argv[2]) ?? [];
+
+/**
+ * 透過イラストから実測した色のうち、既存 ColorPalette のどれとも一致しないものを返す。
+ * 抽出条件は上流 `patch-colorpalette.mjs --from-artwork` と揃える（共通造形色を除外）。
+ */
+function detectMissingColors(rec, artworkPaths) {
+    const images = [];
+    for (const p of artworkPaths ?? []) {
+        try {
+            const img = decodePng(fs.readFileSync(p));
+            if (isTransparentArtwork(img)) images.push(img);
+        } catch { /* 読めない画像は黙って飛ばす */ }
+    }
+    if (!images.length) return [];
+    const existing = (rec.ColorPalette ?? []).map((c) => c.Hex).filter((h) => typeof h === 'string');
+    // ponytail: 「既存と同じ色」の許容差は上流の mergeTol(10) に合わせた固定値。
+    // 取りこぼし/過剰報告が出るようならここを調整する。
+    return extractSolidColors(images, { exclude: commonColors })
+        .filter((d) => !existing.some((h) => colorDistance(h, d.hex) <= 10));
+}
 const attrText = (a) => {
     const vdict = Object.entries(a).filter(([k]) => k.startsWith('vdict_')).map(([, v]) => v).join(', ');
     return `${a.AttrLabel ?? '?'}: ${a.value_EN ?? a.value_JP ?? vdict ?? ''}`;
 };
-const evidence = records.map((rec) => {
+const evidence = records.map((rec, ri) => {
     const details = Array.isArray(rec.AppearanceDetail) ? rec.AppearanceDetail : [];
     const entries = details.map((e, i) => ({
         index: i + 1,
@@ -342,25 +392,49 @@ const evidence = records.map((rec) => {
         appliesTo: c.AppliesTo ?? null,
         formation: c.Formation ?? null,
         hints: typeof c.Hex === 'string' ? allHints.filter((h) => colorWordMatchesHex(h.word, c.Hex)) : [],
+        // その HEX に該当する色語 (記述へ書けば配色ツールが拾える語)。
+        colorWords: typeof c.Hex === 'string'
+            ? COLOR_WORD_KEYS.filter((w) => colorWordMatchesHex(w, c.Hex))
+            : [],
     }));
-    return { entries, palette };
+    return { entries, palette, missingColors: detectMissingColors(rec, payload[ri].artwork) };
 });
-process.stdout.write(JSON.stringify(evidence));
+// 共通造形色 (肌色・毛色など) は設計上 ColorPalette から除外されるため、
+// 「画像にあるのに ColorPalette に無い」の指摘対象から外す必要がある。
+const commonWords = [...new Set(
+    commonColors.flatMap((hex) => COLOR_WORD_KEYS.filter((w) => colorWordMatchesHex(w, hex)))
+)];
+process.stdout.write(JSON.stringify({ evidence, commonWords }));
 """
 
 
 def collect_color_hint_evidence(
-    records: list[dict], creations_db_base: str = DEFAULT_DB_BASE
-) -> list[dict]:
+    records: list[dict],
+    creations_db_base: str = DEFAULT_DB_BASE,
+    work_key: str = "#Works_NumberTales",
+) -> tuple[list[dict], list[str]]:
     """配色検知ツールが実際に拾える色語ヒントを、上流ツールを呼んで取得する。
 
     node の起動コストがあるため、複数レコードは 1 プロセスでまとめて処理する。
+    返り値は ``(レコードごとの evidence, 共通造形色に該当する色語)``。
     """
     module = Path(creations_db_base) / "tools" / "extract-palette.mjs"
     if not module.exists():
         raise SystemExit(f"[ERROR] 配色ツールが見つかりません: {module}")
+    work_dir = Path(creations_db_base) / "data" / str(work_key).lstrip("#")
 
-    payload = [r.get("db_record") or r.get("data") or {} for r in records]
+    payload = [
+        {
+            "record": r.get("db_record") or r.get("data") or {},
+            # 実測色の抽出元は `$palette.source: artwork` の透過イラストのみ。
+            "artwork": [
+                str(p) for p in collect_palette_source_images(
+                    r, None, creations_db_base, source="artwork"
+                )
+            ],
+        }
+        for r in records
+    ]
     with tempfile.TemporaryDirectory() as tmp:
         rec_path = Path(tmp) / "records.json"
         rec_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
@@ -368,7 +442,7 @@ def collect_color_hint_evidence(
             [
                 "node", "--input-type=module",
                 "-e", _NODE_EVIDENCE_SCRIPT % {"module": json.dumps(module.as_uri())},
-                str(rec_path),
+                str(rec_path), str(work_dir),
             ],
             capture_output=True,
             text=True,
@@ -376,7 +450,8 @@ def collect_color_hint_evidence(
         )
     if proc.returncode != 0:
         raise SystemExit(f"[ERROR] 色語ヒントの取得に失敗 (node): {(proc.stderr or '').strip()}")
-    return json.loads(proc.stdout)
+    result = json.loads(proc.stdout)
+    return result["evidence"], result.get("commonWords") or []
 
 
 def audit_coverage(evidence: dict, form: str | None) -> dict:
@@ -392,6 +467,8 @@ def audit_coverage(evidence: dict, form: str | None) -> dict:
     return {
         "entries": entries,
         "palette": palette,
+        # 透過イラストから実測したが ColorPalette に無い色 (形態別ではないので素通し)。
+        "missing_colors": evidence.get("missingColors") or [],
         # 色語はあるのに部位が無い → AppliesTo へ転記できない。最優先。
         "missing_body_part": [e for e in entries if e["hints"] and not e["bodyPart"]],
         # 色語を 1 つも生まないエントリ → 色語表に無い語 (blonde / amber 等) の可能性。
@@ -744,6 +821,270 @@ def build_bulk_coverage_md(
     return "\n".join(lines)
 
 
+# 色語 key → 日本語。上流 COLOR_WORD_RANGES の jp[0] に合わせる。
+# ponytail: 判定は上流が持つのでラベルだけの写し。上流が語を増やしたら追記が要る（欠けても英語だけ出る）。
+_COLOR_WORD_JP = {
+    "red": "赤", "red orange": "朱", "orange": "橙", "yellow": "黄", "green": "緑",
+    "cyan": "水色", "blue": "青", "purple": "紫", "pink": "桃", "brown": "茶",
+    "white": "白", "black": "黒", "gray": "灰",
+}
+
+
+def detect_colors_from_images(
+    entries: list[dict],
+    image_paths: list[Path],
+    char_label: str,
+    model: str,
+) -> dict[int, dict]:
+    """色情報が無いエントリについて、**公式画像を正典として**色語を読み取る。
+
+    `ColorPalette` の HEX は配色検知ツールが画像から起こした出力であり、それ自体が
+    不完全でありうる（補完したい対象そのもの）。HEX から色語を逆引きすると誤りを
+    自己肯定してしまうため、色の根拠は公式画像に置く。
+    """
+    if not entries or not image_paths:
+        return {}
+    from openai import OpenAI
+
+    word_list = " / ".join(f"{w} ({jp})" for w, jp in _COLOR_WORD_JP.items())
+    system = (
+        f"あなたは創作 DB の外見記述を補う校正 AI です。対象は「{char_label}」です。\n"
+        "添付画像は公式イラスト (原典) で、これが色の唯一の根拠です。\n"
+        "各項目について、画像でその要素が実際に何色に塗られているかを読み取り、"
+        "**下の色語一覧から**選んで**JSON のみ**返してください。\n"
+        '{"suggestions": [{"index": 1, "color_words": ["yellow"], "note": "根拠を日本語で1文"}]}\n'
+        f"[色語一覧]\n{word_list}\n"
+        "- 一覧に無い語を作らないでください（一覧は配色検知ツールが認識できる語の全てです）。\n"
+        "- 中間色は近い語を複数挙げて構いません（例: 黄緑なら yellow と green）。\n"
+        "- 画像で該当箇所が確認できない項目は color_words を空配列にし、note に理由を書いてください。\n"
+        "- 推測で色を決めないでください。"
+    )
+    items = "\n".join(f"{e['index']}. {e['text']}" for e in entries)
+    content: list[dict] = [
+        {"type": "text", "text": "以下は色情報が入っていない記述です。画像から実際の色を読み取ってください。\n\n" + items}
+    ]
+    for path in image_paths:
+        mime, b64 = _encode_image(path)
+        content.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{b64}"}})
+
+    client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+    response = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "system", "content": system}, {"role": "user", "content": content}],
+        max_tokens=2000,
+        response_format={"type": "json_object"},
+    )
+    raw = json.loads((response.choices[0].message.content or "{}").strip())
+    return normalize_color_suggestions(raw.get("suggestions"), {e["index"] for e in entries})
+
+
+def normalize_color_suggestions(raw_suggestions: object, valid_index: set[int]) -> dict[int, dict]:
+    """モデルが返した色語提案を検証する。
+
+    色語表に無い語は捨てる。配色ツールが認識できない語を提案しても記述を足す意味がなく、
+    「提案どおり書いたのに拾われない」という一番たちの悪い結果になる。
+    """
+    out: dict[int, dict] = {}
+    for item in raw_suggestions if isinstance(raw_suggestions, list) else []:
+        if not isinstance(item, dict):
+            continue
+        try:
+            index = int(item.get("index"))
+        except (TypeError, ValueError):
+            continue
+        if index not in valid_index:
+            continue
+        words = [w for w in (item.get("color_words") or []) if w in _COLOR_WORD_JP]
+        if words:
+            out[index] = {"color_words": words, "note": str(item.get("note") or "").strip()}
+    return out
+
+
+def build_color_attr_proposal_md(
+    audits: list[tuple[str, dict]],
+    detections: dict[str, dict[int, dict]],
+    common_words: list[str],
+    before: dict[str, int] | None,
+    model: str,
+    command: str,
+) -> str:
+    """公式画像から読み取った色語で `#DesignAttr_Color` の追記案を組み立てる (Issue コメント用)。
+
+    色の根拠は**公式画像**。`ColorPalette` の HEX は補完対象そのものなので根拠に使わず、
+    「画像から読めた色が HEX 側にあるか」の突き合わせにだけ使う。
+    """
+    def _cell(text: str) -> str:
+        return str(text).replace("|", "\\|").replace("\n", " ")
+
+    def _attr_json(word: str) -> str:
+        return (
+            '`{"AttrLabel": "#DesignAttr_Color", '
+            f'"value_JP": "{_COLOR_WORD_JP.get(word, word)}", "value_EN": "{word}"'
+            "}`"
+        )
+
+    missing = [(label, e) for label, a in audits for e in a["missing_body_part"]]
+    proposals = [
+        (label, entry, detections[label][entry["index"]])
+        for label, audit in audits
+        for entry in audit["no_color_word"]
+        if label in detections and entry["index"] in detections[label]
+    ]
+
+    lines = [
+        "## `AppearanceDetail[].Attrs` 色情報の補完案（自動生成・画像根拠）",
+        "",
+        f"再検査日: {datetime.now():%Y-%m-%d} / 対象 {len(audits)} 件",
+        "",
+    ]
+    if before:
+        lines += [
+            "### BodyPart 補完の効果",
+            "",
+            f"- BodyPart 欠落: **{before['missing']} 件 → {len(missing)} 件**"
+            f"（{before['missing_chars']} キャラ → {len({l for l, _ in missing})} キャラ）",
+            "",
+            "残っているものは装飾・アクセント系（`four white buttons` / `orange accents` など）が中心で、",
+            "部位を 1 つに決めにくいものが多い。末尾に一覧を置いた。",
+            "",
+        ]
+
+    lines += [
+        "### 色の根拠について",
+        "",
+        "**色語は公式画像から読み取っている。** `ColorPalette` の HEX は配色検知ツールが画像から",
+        "起こした出力であり、いま補完しようとしている対象そのもの。HEX から色語を逆引きすると",
+        "不完全な値を根拠に記述を書くことになるため、根拠は typedef `$palette.source` 宣言画像",
+        "（設定原画・設定資料・コアフォルダ画像）に置いた。",
+        f"読み取りには `{model}` を使用し、配色検知ツールが認識できる色語のみを選ばせている。",
+        "",
+        f"### 補完案（{len(proposals)} 件）",
+        "",
+        "色情報が入っていないエントリについて、画像から読み取った色。",
+        "各行の `#` は `AppearanceDetail[]` のインデックス（1 始まり）。",
+        "「読めた色」の先頭語を使って、そのエントリの `Attrs` へ次を足すと `AppliesTo` へ転記されるようになる。",
+        "",
+        "```json",
+        '{ "AttrLabel": "#DesignAttr_Color", "value_JP": "<日本語>", "value_EN": "<色語>" }',
+        "```",
+        "",
+        "| キャラ | # | 記述 | 読めた色 | 根拠 |",
+        "|---|---|---|---|---|",
+    ]
+    for label, entry, found in proposals:
+        words = found["color_words"]
+        jp = "・".join(_COLOR_WORD_JP.get(w, w) for w in words)
+        text = " / ".join(p.split(": ", 1)[-1] for p in str(entry["text"]).split(" / "))
+        lines.append(
+            f"| {_cell(label)} | {entry['index']} | {_cell(text)[:55]} |"
+            f" {', '.join(f'`{w}`' for w in words)} ({jp}) | {_cell(found['note'])[:45]} |"
+        )
+    lines.append("")
+
+    # 透過イラストからの実測色で ColorPalette に無いもの = そのまま追記できる欠落配色。
+    missing_colors = [(label, c) for label, a in audits for c in a.get("missing_colors") or []]
+    if missing_colors:
+        lines += [
+            f"### 創作 DB に無い配色（実測 HEX・{len(missing_colors)} 件）",
+            "",
+            "公式の透過イラスト（`$palette.source: artwork`）から**実測**した色のうち、",
+            "`ColorPalette` のどの HEX とも一致しないもの（色距離 10 以内を同じ色とみなす）。",
+            "抽出条件は上流 `patch-colorpalette.mjs --from-artwork` と同じで、共通造形色は除外済み。",
+            "",
+            "**確認してほしい点**: 純黒に近い色（`#010000` など）は輪郭線が彩度条件をすり抜けたもの、",
+            "白に近い色は紙面・ハイライトの可能性がある。面積比が大きくても配色とは限らないので、",
+            "`ColorPalette` へ入れる前に画像で確かめてほしい。",
+            "",
+            "| キャラ | 実測 HEX | 面積比 | 現在の ColorPalette |",
+            "|---|---|---|---|",
+        ]
+        for label, color in missing_colors:
+            audit = next(a for l, a in audits if l == label)
+            existing = ", ".join(f"`{c['hex']}`" for c in audit["palette"]) or "—"
+            lines.append(
+                f"| {_cell(label)} | `{color['hex']}` | {color['ratio'] * 100:.1f}% | {existing} |"
+            )
+        lines.append("")
+
+    # 画像から読めた色が ColorPalette 側に無い = HEX の取りこぼし候補。
+    # 共通造形色 (肌色・毛色) は設計上 ColorPalette へ載らないので指摘対象から外す。
+    common = set(common_words)
+    gaps: list[tuple[str, str, list[str]]] = []
+    for label, audit in audits:
+        detected = {w for idx in detections.get(label, {}) for w in detections[label][idx]["color_words"]}
+        if not detected:
+            continue
+        in_palette = {w for c in audit["palette"] for w in (c.get("colorWords") or [])}
+        for word in sorted(detected - in_palette - common):
+            gaps.append((label, word, [c["hex"] for c in audit["palette"]]))
+    if gaps:
+        lines += [
+            f"### ColorPalette に見当たらない色（{len(gaps)} 件）",
+            "",
+            "画像から読み取れたのに、`ColorPalette` のどの HEX も該当しない色。",
+            "**配色検知の取りこぼし候補**（抽出漏れ、または面積比の下限で落ちたもの）。",
+            f"共通造形色に該当する色（{', '.join(f'`{w}`' for w in sorted(common)) or 'なし'}）は"
+            "設計上 `ColorPalette` へ載らないため除外済み。",
+            "",
+            "| キャラ | 画像から読めた色 | 現在の ColorPalette |",
+            "|---|---|---|",
+        ]
+        for label, word, hexes in gaps:
+            lines.append(
+                f"| {_cell(label)} | `{word}` ({_COLOR_WORD_JP.get(word, word)}) |"
+                f" {', '.join(f'`{h}`' for h in hexes) or '—'} |"
+            )
+        lines.append("")
+
+    if missing:
+        lines += [
+            "### 残っている BodyPart 欠落",
+            "",
+            "| キャラ | # | DesignElement | 記述 | 色語 |",
+            "|---|---|---|---|---|",
+        ]
+        for label, entry in missing:
+            words = ", ".join(sorted({h["word"] for h in entry["hints"]}))
+            element = f"`{entry['element']}`" if entry["element"] else "—"
+            text = " / ".join(p.split(": ", 1)[-1] for p in str(entry["text"]).split(" / "))
+            lines.append(f"| {_cell(label)} | {entry['index']} | {element} | {_cell(text)[:90]} | {words} |")
+        lines.append("")
+
+    lines += [
+        "---",
+        "",
+        "*色語は AI が公式画像から読み取った推定です。DB へ反映する前に確認してください。*",
+        "*個別キャラの部位候補は `--num <N> --check coverage` で画像から提案できます。*",
+        "",
+        f"自動生成: `{command}` (100BeautiesLab_GeneratorsAI)",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+# GitHub の Issue 本文・コメントの上限。超えると gh が 422 で弾く。
+_GITHUB_BODY_LIMIT = 65536
+
+
+def comment_issue(repo: str, issue: str, body_path: Path) -> str:
+    size = len(body_path.read_text(encoding="utf-8"))
+    if size > _GITHUB_BODY_LIMIT:
+        raise SystemExit(
+            f"[ERROR] 本文が GitHub の上限を超えています ({size} > {_GITHUB_BODY_LIMIT} 文字)。\n"
+            f"        生成物: {body_path}\n"
+            f"        --max-images を減らすか、対象を絞って分割してください。"
+        )
+    proc = subprocess.run(
+        ["gh", "issue", "comment", str(issue), "-R", repo, "--body-file", str(body_path)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    if proc.returncode != 0:
+        raise SystemExit(f"[ERROR] gh issue comment 失敗: {(proc.stderr or '').strip()}")
+    return (proc.stdout or "").strip()
+
+
 def submit_issue(repo: str, title: str, body_path: Path) -> str:
     proc = subprocess.run(
         ["gh", "issue", "create", "-R", repo, "--title", title, "--body-file", str(body_path)],
@@ -776,6 +1117,27 @@ def _char_label(record: dict, fallback: object = "") -> str:
     return " ".join(label.split())
 
 
+def detect_colors_for_records(
+    targets: list[tuple[dict, str, dict]],
+    model: str,
+    max_images: int,
+    workers: int,
+) -> dict[str, dict[int, dict]]:
+    """レコードごとに公式画像から色語を読み取る。API 待ちが支配的なのでスレッドで並べる。"""
+    def _one(target: tuple[dict, str, dict]) -> tuple[str, dict[int, dict]]:
+        record, label, audit = target
+        # 一括では形態で絞らない (設定資料に両形態が載っているため)。
+        images = collect_palette_source_images(record, None)[:max_images]
+        try:
+            return label, detect_colors_from_images(audit["no_color_word"], images, label, model)
+        except Exception as err:  # 1 キャラの失敗で全体を止めない
+            print(f"[WARN] {label}: 色の読み取りに失敗 ({type(err).__name__}: {err})")
+            return label, {}
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        return dict(pool.map(_one, targets))
+
+
 def run_bulk_coverage(args: argparse.Namespace, out_dir: Path, model: str) -> None:
     """作品内の全レコードを静的検査し、1 枚のレビューへまとめる。"""
     records = [
@@ -793,7 +1155,7 @@ def run_bulk_coverage(args: argparse.Namespace, out_dir: Path, model: str) -> No
         raise SystemExit(f"[ERROR] 対象レコードがありません: {args.work_key}")
 
     print(f"[all] {len(records)} 件の色語ヒントを取得中 (node)...")
-    evidence = collect_color_hint_evidence(records)
+    evidence, common_words = collect_color_hint_evidence(records, work_key=args.work_key)
     # 一括では形態で絞らない (BodyPart 欠落は形態に依らないため)。
     audits = [
         (_char_label(record), audit_coverage(ev, None))
@@ -804,6 +1166,49 @@ def run_bulk_coverage(args: argparse.Namespace, out_dir: Path, model: str) -> No
     unbacked = sum(len(a["unbacked_hex"]) for _, a in audits)
     texts = sorted({e["text"] for _, a in audits for e in a["no_color_word"] if e["text"]})
     print(f"[all] BodyPart 欠落 {missing} 件 / 根拠なし色 {unbacked} 色 / 色語ヒント0 の記述 {len(texts)} 種")
+
+    # 既存 Issue へのコメント: 公式画像を根拠に色語を読み取って補完案を出す。
+    if args.comment:
+        out_path = out_dir / f"{datetime.now():%Y%m%d}_color-attr-proposal_{str(args.work_key).lstrip('#')}.md"
+        # 画像の読み取りは有料なので結果を隣へ残し、レポートの手直しは無料で回せるようにする。
+        cache_path = out_path.with_suffix(".detections.json")
+        if args.reuse_detections and cache_path.exists():
+            detections = {k: {int(i): v for i, v in d.items()}
+                          for k, d in json.loads(cache_path.read_text(encoding="utf-8")).items()}
+            print(f"[all] 画像読み取り結果を再利用: {cache_path}")
+        else:
+            targets = [
+                (record, label, audit)
+                for record, (label, audit) in zip(records, audits)
+                if audit["no_color_word"]
+            ]
+            print(f"[all] 公式画像から色語を読み取り中 ({len(targets)} キャラ, {model})...")
+            detections = detect_colors_for_records(targets, model, args.max_images, args.workers)
+            cache_path.write_text(
+                json.dumps(detections, ensure_ascii=False, indent=1), encoding="utf-8"
+            )
+        found = sum(len(d) for d in detections.values())
+        print(f"[all] 画像から色を読めたエントリ: {found} 件")
+
+        proposal_command = (
+            f"python -m src.tools.verify_appearance_detail --all --check coverage"
+            f" --comment {args.comment}"
+        )
+        before = (
+            {"missing": args.before_missing[0], "missing_chars": args.before_missing[1]}
+            if args.before_missing
+            else None
+        )
+        body = build_color_attr_proposal_md(
+            audits, detections, common_words, before, model, proposal_command
+        )
+        out_path.write_text(body, encoding="utf-8")
+        print(f"[all] 提案生成: {out_path}")
+        if args.submit:
+            print(f"[all] Issue #{args.comment} へ追記: {comment_issue(args.repo, args.comment, out_path)}")
+        else:
+            print(f"[all] 追記するには --submit を付ける (Issue #{args.comment})")
+        return
 
     print(f"[all] 色語表に無い色語を抽出中 ({model}, 記述 {len(texts)} 種)...")
     unknown_words = extract_unknown_color_words(texts, model)
@@ -847,6 +1252,23 @@ def main() -> None:
     # 2 枚だと humanoid でバストアップ + 尾構造図に偏り、全身の設定画が入らず unclear が増える。
     ap.add_argument("--max-images", type=int, default=3, help="Vision へ渡す公式画像の枚数")
     ap.add_argument("--repo", default=DEFAULT_REPO, help="レビュー送付先リポジトリ")
+    ap.add_argument(
+        "--comment",
+        help="新規 Issue を立てず、指定 Issue 番号へ色情報の補完案をコメント追記する (--all 用)",
+    )
+    ap.add_argument("--workers", type=int, default=4, help="一括の画像読み取りの並列数")
+    ap.add_argument(
+        "--reuse-detections",
+        action="store_true",
+        help="同日の画像読み取り結果 (.detections.json) があれば再利用する (レポート手直し用)",
+    )
+    ap.add_argument(
+        "--before-missing",
+        nargs=2,
+        type=int,
+        metavar=("件数", "キャラ数"),
+        help="前回の BodyPart 欠落数。指定すると補完の効果を提案コメントに載せる",
+    )
     ap.add_argument("--submit", action="store_true", help="生成したレビューを Issue として送る (既定は生成のみ)")
     ap.add_argument("--out-dir", default=str(_PROJECT_ROOT / "_ideas" / "db-reviews"))
     args = ap.parse_args()
@@ -910,7 +1332,9 @@ def main() -> None:
         )
 
         if args.check == "coverage":
-            audit = audit_coverage(collect_color_hint_evidence([record])[0], form)
+            audit = audit_coverage(
+                collect_color_hint_evidence([record], work_key=args.work_key)[0][0], form
+            )
             print(
                 f"[{form}] BodyPart 欠落 {len(audit['missing_body_part'])} 件"
                 f" / 根拠なし色 {len(audit['unbacked_hex'])} 色"

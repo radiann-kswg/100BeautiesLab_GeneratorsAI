@@ -291,6 +291,9 @@ python -m src.tools.verify_appearance_detail --num 57 --check coverage --form bo
 # 作品内の AppearanceDetail 保有レコードを一括検査し、1 枚のレビューへまとめる
 python -m src.tools.verify_appearance_detail --all --check coverage
 
+# 既存 Issue へ「Attrs 色情報の補完案」をコメント追記する (LLM 不使用)
+python -m src.tools.verify_appearance_detail --all --check coverage --comment 20 --submit
+
 # レビューを Issue として送る (form ごとに 1 Issue)
 python -m src.tools.verify_appearance_detail --num 57 --form both --submit
 ```
@@ -304,7 +307,11 @@ python -m src.tools.verify_appearance_detail --num 57 --form both --submit
 | `--check` | `match` | `match` = 記述と画像の照合 / `coverage` = 配色検知ツール向けの充足検査 |
 | `--form` | `corefolder` | `corefolder` / `humanoid` / `both` |
 | `--max-images` | `3` | Vision へ渡す公式画像の枚数。枚数が少ないと全身資料が入らず `unclear` が増える |
-| `--submit` | off | `gh issue create` でレビューを送る。**課金＋外部投稿を伴うので明示 opt-in** |
+| `--comment <番号>` | — | 新規 Issue を立てず、既存 Issue へ**色情報の補完案**をコメント追記（`--all` 用） |
+| `--workers` | `4` | 一括の画像読み取りの並列数 |
+| `--reuse-detections` | off | 同日の `.detections.json` があれば画像読み取りを再利用（レポート手直し用・課金なし） |
+| `--before-missing <件数> <キャラ数>` | — | 前回の BodyPart 欠落数。補完の効果を提案コメントへ載せる |
+| `--submit` | off | Issue を送る／追記する。**外部投稿を伴うので明示 opt-in** |
 | `--repo` | `radiann-kswg/100BeautiesLab_CreationsDB` | 送付先 |
 | `--out-dir` | `_ideas/db-reviews/` | Markdown 出力先 |
 
@@ -360,6 +367,37 @@ creations-db 側の `tools/extract-palette.mjs` の `listImageFields()` と同�
 - 個別キャラの部位候補（画像からの提案）は一括では出さない。`--num <N> --check coverage` を使う。
 - 色語の抽出は実行のたびに結果が揺れる（LLM 判定のため）。`bright`（表情の明るさ）のような
   色ではない語を拾うこともあるので、そのまま色語表へ入れず内容を確認すること。
+
+### `Attrs` 色情報の補完案 (`--comment`)
+
+`--comment <Issue番号>` を付けると、レビュー全文ではなく**補完案だけ**を組み立てて既存 Issue へ追記する。
+
+**色の根拠は公式画像に置く。** `ColorPalette` の HEX は配色検知ツールが画像から起こした出力であり、
+いま補完しようとしている対象そのもの。HEX から色語を逆引きすると不完全な値を根拠に記述を書くことになり、
+誤りを自己肯定してしまう。したがって色語は typedef `$palette.source` 宣言画像（設定原画・設定資料・
+コアフォルダ画像）から Vision で読み取る。
+
+| 節 | 内容 |
+| --- | --- |
+| 補完案 | 色情報が無いエントリについて、画像から読んだ色語と `#DesignAttr_Color` の追記案 |
+| 創作 DB に無い配色（実測 HEX） | 透過イラストから**実測**した色のうち `ColorPalette` に無いもの。そのまま追記できる |
+| ColorPalette に見当たらない色 | 画像から読めたのに `ColorPalette` のどの HEX も該当しない色（色語レベル） |
+| 残っている BodyPart 欠落 | 部位が空のまま残っているエントリ |
+
+実測 HEX は上流の `extractSolidColors()` / `colorDistance()` を node 経由で呼んで得る（抽出条件は
+`patch-colorpalette.mjs --from-artwork` と同じ・共通造形色は除外）。対象は `$palette.source: artwork` を
+宣言した透過イラストのみで、色距離 10 以内を「既存と同じ色」とみなす。
+上流の純黒除外は彩度条件付き（濃い有彩色を守るため）なので `#010000` のような輪郭線がすり抜けることがある。
+レポートにもその旨を注記してある。
+
+「見当たらない色」からは**共通造形色**（`$EnumDef_CommonColor` の肌色・舌色・毛色など）に該当する色語を除外する。
+これらは設計上 `ColorPalette` へ載らないため、指摘すると誤検出になる。除外語は上流 `readCommonColors()` から取る。
+
+- モデルには**色語表の語だけ**を選ばせ、一覧外の語は捨てる。「提案どおり書いたのに拾われない」を防ぐため。
+- 一括では形態で絞らず `$palette.source` 画像を最大 `--max-images` 枚渡す（設定資料に両形態が載っているため）。
+- API 待ちが支配的なので `--workers`（既定 4）でスレッド並列。1 キャラの失敗は警告のみで全体を止めない。
+- 色語 key の一覧と日本語ラベルだけはこちらに持つ（`ponytail:` コメント付き）。判定は常に上流。
+  上流が語を増やしたら追記が要るが、漏れても提案が出ないだけで誤った提案は出ない。
 
 - 判定は AI の推定。`mismatch` は先輩の目視確認を前提とした指摘候補として扱う。
 - モデルが返さなかった行は握り潰さず `unclear` として残る（件数が黙って減らないようにするため）。

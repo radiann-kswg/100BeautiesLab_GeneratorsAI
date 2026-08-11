@@ -28,9 +28,11 @@ if str(_ROOT) not in sys.path:
 from src.tools.verify_appearance_detail import (  # noqa: E402
     _char_label,
     audit_coverage,
+    build_color_attr_proposal_md,
     entries_for_form,
     excluded_for_form,
     format_entry,
+    normalize_color_suggestions,
     normalize_results,
     palette_source_image_keys,
     summarize,
@@ -150,7 +152,7 @@ def test_palette_source_image_keys_missing_typedef_returns_empty() -> None:
         assert palette_source_image_keys("#Works_Unknown", tmp) == []
 
 
-# `collect_color_hint_evidence()` (node 経由で上流ツールを呼ぶ) の出力を模したもの。
+# `collect_color_hint_evidence()` (node 経由で上流ツールを呼ぶ) の evidence 部分を模したもの。
 _EVIDENCE = {
     "entries": [
         # 色語あり + BodyPart あり = 配色ツールが AppliesTo を埋められる
@@ -172,6 +174,36 @@ _EVIDENCE = {
         {"hex": "#F7FFB9", "role": "#ColorRole_Accent", "appliesTo": None, "formation": None, "hints": []},
     ],
 }
+
+
+def test_proposal_excludes_common_colors_from_gaps() -> None:
+    """共通造形色 (肌色・毛色) は設計上 ColorPalette に載らないので指摘しないこと。"""
+    audit = audit_coverage(_EVIDENCE, None)
+    # index 3 (blonde ponytail) は色語が無いエントリ。画像から white と green を読んだ想定。
+    detections = {"57(イズナ)": {3: {"color_words": ["white", "green"], "note": "画像より"}}}
+    md = build_color_attr_proposal_md(
+        [("57(イズナ)", audit)], detections, ["white"], None, "gpt-4o", "cmd"
+    )
+    # ColorPalette には blue しか無いので green は取りこぼし候補、white は共通色として除外。
+    assert "ColorPalette に見当たらない色（1 件）" in md, md
+    assert "| `green` (緑) |" in md, md
+    assert "| `white` (白) |" not in md, md
+
+
+def test_normalize_color_suggestions_drops_unknown_words() -> None:
+    raw = [
+        {"index": 1, "color_words": ["yellow", "white"], "note": "金髪"},
+        # 色語表に無い語は捨てる (提案どおり書いても配色ツールが拾えないため)。
+        {"index": 2, "color_words": ["turquoise", "blue"], "note": "混在"},
+        {"index": 3, "color_words": ["chartreuse"], "note": "全部未知なら採らない"},
+        {"index": 4, "color_words": [], "note": "確認できず"},
+        {"index": 99, "color_words": ["red"], "note": "範囲外"},
+        "壊れた要素",
+    ]
+    out = normalize_color_suggestions(raw, {1, 2, 3, 4})
+    assert sorted(out) == [1, 2], out
+    assert out[1]["color_words"] == ["yellow", "white"]
+    assert out[2]["color_words"] == ["blue"]
 
 
 def test_char_label_squashes_newlines() -> None:
@@ -201,6 +233,8 @@ if __name__ == "__main__":
     test_palette_source_image_keys_reads_typedef_declaration()
     test_excluded_for_form_keeps_form_neutral_material()
     test_palette_source_image_keys_missing_typedef_returns_empty()
+    test_proposal_excludes_common_colors_from_gaps()
+    test_normalize_color_suggestions_drops_unknown_words()
     test_char_label_squashes_newlines()
     test_audit_coverage_flags_missing_body_part_per_form()
     print("OK: tests/test_appearance_detail_review.py")
