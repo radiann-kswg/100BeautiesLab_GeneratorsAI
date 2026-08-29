@@ -135,14 +135,12 @@ def _build_name_lookup() -> dict[str, str]:
         return _NAME_LOOKUP_CACHE
 
     lookup: dict[str, str] = {}
-    if not _DB_PRIMARY_PATH.exists():
-        _NAME_LOOKUP_CACHE = lookup
-        return lookup
 
-    try:
-        records = json.loads(_DB_PRIMARY_PATH.read_bytes().decode("utf-8"))
-        if isinstance(records, dict):
-            records = records.get("records", [])
+    # 2026-08-29: db_Primary.json 直読みをやめ manifest ベース (get_characters) に変更。
+    # SemiPrimary / SelfSecondary のキャラ名 (トレッド=3x11 等) も辞書に載り、
+    # 「自然文で名前解決できない」既知制限 (AGENTS §5.1) が解消される。
+    # 特殊 ID (非整数 Num) は既存の special_ids 経路がそのまま処理する。
+    def _feed(records: list[dict]) -> None:
         for r in records:
             num = r.get("Num")
             if num is None:
@@ -153,8 +151,22 @@ def _build_name_lookup() -> dict[str, str]:
                 for alias in _extract_name_aliases(val):
                     if alias not in lookup:
                         lookup[alias] = num_str
+
+    try:
+        from src.utils.dataset import get_characters
+        _feed([r.get("data") or {} for r in get_characters()])
     except Exception as err:
-        print(f"[WARN] キャラクター名辞書の構築に失敗: {err}")
+        print(f"[WARN] manifest からの名前辞書構築に失敗: {err}")
+
+    if not lookup and _DB_PRIMARY_PATH.exists():
+        # フォールバック: 旧来の db_Primary.json 直読み (manifest 不在環境向け)
+        try:
+            records = json.loads(_DB_PRIMARY_PATH.read_bytes().decode("utf-8"))
+            if isinstance(records, dict):
+                records = records.get("records", [])
+            _feed(records)
+        except Exception as err:
+            print(f"[WARN] キャラクター名辞書の構築に失敗: {err}")
 
     _NAME_LOOKUP_CACHE = lookup
     return lookup
