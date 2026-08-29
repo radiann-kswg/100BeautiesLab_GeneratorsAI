@@ -417,6 +417,16 @@ def _build_multi_char_composition_prompt(
         raw_num = d.get("Num")
         return extract_char_name(r, fallback=f"#{_fmt_num(raw_num)}")
 
+    def _joint_art_style_line() -> str:
+        # 2026-08-29: ハードコード文字列をやめ、単体生成と同じ作風キーワード
+        # (preferred_art_style + style_analysis_summary) を単一ソースから使う。
+        from src.utils.dataset import get_art_style_keywords
+
+        keywords = get_art_style_keywords() or [
+            "Cute", "Deformed", "Chibi", "Pastel colors", "Simple background",
+        ]
+        return ", ".join(keywords)
+
     def _get_num_key(r: dict) -> int | str:
         d = r.get("data") or {}
         raw = d.get("Num")
@@ -484,7 +494,7 @@ def _build_multi_char_composition_prompt(
         *form_rules,
         "",
         "[共通作風]",
-        "Cute, Deformed, Chibi, Thick lines, Pastel colors, Cel shading, Simple background",
+        _joint_art_style_line(),
         "",
     ]
     if scene:
