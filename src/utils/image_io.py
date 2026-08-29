@@ -32,33 +32,47 @@ MIME_TO_EXTENSION: dict[str, str] = {
 }
 
 
-def load_reference_bytes(path: Path | str, max_side: int = 2048) -> tuple[bytes, str]:
+def load_reference_bytes(path: Path | str, max_side: int = 2048) -> tuple[bytes, str] | None:
     """参照画像のバイト列と MIME を返す。長辺が max_side を超える場合は縮小する。
 
     2026-08-29: catalog (キャラデザ表 9000×6000 級) を参照許可したため、
     巨大画像をそのまま API へ添付してリクエスト上限超過・トークン浪費に
     ならないようにする共有ガード (Gemini / OpenAI 両経路で使用)。
-    PIL 不在・読込失敗時は原本バイトへフォールバック。
+
+    加えて壊れ画像ガード (同日追記・CreationsDB#28 の PNG シグネチャ不正報告を受けて):
+    - シグネチャと拡張子が食い違う画像は PIL で開けたら PNG へ正規化して返す
+      (宣言 MIME と実体の不一致は API 側で 400 になるため)。
+    - 画像として読めないファイルは **None を返す** (呼び出し側はスキップする)。
+    PIL 不在時は既知シグネチャの画像のみ原本バイトで返す。
     """
     p = Path(path)
     raw = p.read_bytes()
     fmt = detect_image_format(raw[:16])
-    mime = fmt[1] if fmt else "image/png"
+    mime = fmt[1] if fmt else None
     try:
         from io import BytesIO
 
         from PIL import Image
 
         with Image.open(BytesIO(raw)) as im:
-            if max(im.size) <= max_side:
+            if mime and max(im.size) <= max_side:
                 return raw, mime
-            im.thumbnail((max_side, max_side), Image.LANCZOS)
+            if max(im.size) > max_side:
+                im.thumbnail((max_side, max_side), Image.LANCZOS)
+                print(f"[INFO] 参照画像を縮小して添付: {p.name} -> 長辺 {max(im.size)}px")
+            else:
+                print(f"[WARN] 画像シグネチャ不一致のため PNG へ正規化: {p.name}")
             buf = BytesIO()
             im.convert("RGBA").save(buf, format="PNG")
-            print(f"[INFO] 参照画像を縮小して添付: {p.name} -> 長辺 {max(im.size)}px")
             return buf.getvalue(), "image/png"
+    except ImportError:
+        return (raw, mime) if mime else None
     except Exception:  # noqa: BLE001
-        return raw, mime
+        if mime:
+            # シグネチャは正常だが PIL で開けない → 原本のまま返す (縮小なし)
+            return raw, mime
+        print(f"[WARN] 参照画像として読めないためスキップ: {p.name}")
+        return None
 
 
 def detect_image_format(header: bytes) -> tuple[str, str] | None:
