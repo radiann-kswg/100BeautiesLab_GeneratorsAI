@@ -149,13 +149,14 @@ def _build_reference_parts(
 ) -> list[Any]:
     parts: list[Any] = []
 
+    from src.utils.image_io import load_reference_bytes
+
     for path in ref_local_paths:
         p = Path(path)
         if not p.exists() or not p.is_file():
             continue
-        parts.append(
-            types_module.Part.from_bytes(data=p.read_bytes(), mime_type=_guess_mime_type(str(p)))
-        )
+        data, mime = load_reference_bytes(p)
+        parts.append(types_module.Part.from_bytes(data=data, mime_type=mime))
         if len(parts) >= limit:
             return parts
 

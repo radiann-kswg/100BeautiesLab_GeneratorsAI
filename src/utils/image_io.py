@@ -32,6 +32,35 @@ MIME_TO_EXTENSION: dict[str, str] = {
 }
 
 
+def load_reference_bytes(path: Path | str, max_side: int = 2048) -> tuple[bytes, str]:
+    """参照画像のバイト列と MIME を返す。長辺が max_side を超える場合は縮小する。
+
+    2026-08-29: catalog (キャラデザ表 9000×6000 級) を参照許可したため、
+    巨大画像をそのまま API へ添付してリクエスト上限超過・トークン浪費に
+    ならないようにする共有ガード (Gemini / OpenAI 両経路で使用)。
+    PIL 不在・読込失敗時は原本バイトへフォールバック。
+    """
+    p = Path(path)
+    raw = p.read_bytes()
+    fmt = detect_image_format(raw[:16])
+    mime = fmt[1] if fmt else "image/png"
+    try:
+        from io import BytesIO
+
+        from PIL import Image
+
+        with Image.open(BytesIO(raw)) as im:
+            if max(im.size) <= max_side:
+                return raw, mime
+            im.thumbnail((max_side, max_side), Image.LANCZOS)
+            buf = BytesIO()
+            im.convert("RGBA").save(buf, format="PNG")
+            print(f"[INFO] 参照画像を縮小して添付: {p.name} -> 長辺 {max(im.size)}px")
+            return buf.getvalue(), "image/png"
+    except Exception:  # noqa: BLE001
+        return raw, mime
+
+
 def detect_image_format(header: bytes) -> tuple[str, str] | None:
     """先頭バイトから (短い拡張子, MIME) を判定する。判別不能なら None。"""
     if len(header) < 4:

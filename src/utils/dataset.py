@@ -41,7 +41,7 @@ def _infer_image_category(path_text: str) -> str:
     for segment in parts:
         if segment == "cocneptalt":
             return "conceptalt"
-        if segment in {"corefolder", "arts", "design", "designalt", "concept", "conceptalt"}:
+        if segment in {"corefolder", "arts", "design", "designalt", "concept", "conceptalt", "catalog"}:
             return segment
     return "other"
 
@@ -50,9 +50,12 @@ def _get_category_priority(form: str) -> dict[str, int]:
     if form == "humanoid":
         # tails_unit (2026-07-10 addon-ai-tag 追加): 尾の構造化資料画像。
         # 尾の形状・分岐は DesignAlt 同様に確定情報のため design 系のすぐ後に置く。
-        ordered = ["arts", "design", "designalt", "tails_unit", "concept", "conceptalt"]
+        # catalog (2026-08-29): 作者直筆のキャラデザ表。作風・識別要素の最強アンカーとして design 系の後に置く。
+        ordered = ["arts", "design", "designalt", "tails_unit", "catalog", "concept", "conceptalt"]
     else:
-        ordered = ["corefolder", "design", "designalt", "arts", "concept", "conceptalt"]
+        # arts (完成イラスト) を 2 位へ (2026-08-29): 作風は完成イラストにしか宿らないため、
+        # ref_limit の枠から設定画に押し出されないようにする。
+        ordered = ["corefolder", "arts", "design", "designalt", "catalog", "concept", "conceptalt"]
 
     return {name: idx for idx, name in enumerate(ordered)}
 
@@ -94,13 +97,16 @@ def _apply_form_reference_focus(paths: list[str], form: str) -> list[str]:
     for path in paths:
         category = _infer_image_category(path)
         lower = path.replace("\\", "/").lower()
-        if category == "corefolder" or "/arts/corefolders/" in lower:
+        if category in ("corefolder", "catalog") or "/arts/corefolders/" in lower:
             _append_unique(focused_primary, path)
         elif category == "concept":
             _append_unique(focused_fallback, path)
 
+    # 2026-08-29: primary があっても concept を全捨てしない。
+    # emstk 系スタンプだけが primary になるキャラで作風情報が枯れるのを防ぐため、
+    # concept を 1 枚だけ残す。
     if focused_primary:
-        return focused_primary
+        return focused_primary + focused_fallback[:1]
     if focused_fallback:
         return focused_fallback
 
@@ -564,9 +570,13 @@ def _looks_like_target_character(
 def _is_path_compatible_with_form(path_text: str, form: str) -> bool:
     lower = path_text.replace("\\", "/").lower()
 
-    # 参照資料・カタログ画像は作風誘導が強すぎるため除外する。
-    if "/catalog/" in lower:
+    # 翻訳版 (`_lang_EN/` 等) は原語版と同一イラストのため参照枠を重複消費させない。
+    if "/_lang_" in lower:
         return False
+
+    # catalog (キャラデザ表) は 2026-08-29 より許可。作者直筆の設定画そのものであり、
+    # 作風・識別要素の最も信頼できるアンカー (旧: 「作風誘導が強すぎる」として除外していたが、
+    # 原典の作風へ誘導することこそが目的のため方針転換)。
 
     if form == "corefolder":
         # humanoid 単独作品や humanoid アートは corefolder への作風誘導が強いため除外。
@@ -708,7 +718,7 @@ def _collect_work_common_reference_images(
 def collect_reference_images(
     record: dict[str, Any],
     form: str = "corefolder",
-    creations_db_base: str = "_creations-ai/creations-db",
+    creations_db_base: str | None = None,
     max_images: int = 6,
 ) -> dict[str, list[str]]:
     """レコードから参照画像 URL とローカルパスを集約して返す。
@@ -718,6 +728,10 @@ def collect_reference_images(
       - 形態互換性 (``_is_path_compatible_with_form``)
       - カテゴリ优先順 (``_sort_paths_for_form``)
     """
+    # 2026-08-29: 既定を cwd 非依存に。相対パス既定のままリポジトリルート外から起動すると
+    # 参照画像が無言で全消しになるバグの修正 (_project_root ベースで解決)。
+    if not creations_db_base:
+        creations_db_base = str(_creations_db_repo_root())
     num_value = (record.get("data") or {}).get("Num")
     badge = _extract_record_badge(record)
     work_key = str(record.get("work_key") or "#Works_NumberTales")
@@ -841,16 +855,55 @@ def collect_reference_images(
     for wc_local in wc_locals:
         _append_unique(local_values, wc_local)
 
+    # 絵文字スタンプ (emstk_*) は最大 2 枚まで。450px 前後の縮小素材で作風情報が乏しく、
+    # 3 枚以上並ぶと ref_limit の枠から catalog (キャラデザ表) 等の高情報参照を押し出すため。
+    # ponytail: ファイル名接頭辞による NT 固有ヒューリスティック。他作品で emstk 相当が
+    # 増えたら画像メタデータ (カテゴリ) ベースの判定に置き換える。
+    _emstk_seen = 0
+    _capped: list[str] = []
+    for p in local_values:
+        if Path(p).name.startswith("emstk_"):
+            _emstk_seen += 1
+            if _emstk_seen > 2:
+                continue
+        _capped.append(p)
+    local_values = _capped
+
+    # 原典 VRM レンダー (2026-08-29 新設): 3D 原典モデルのサムネイルを最優先参照に注入する。
+    # 環境変数 NT_VRM_STYLE_REFS_DIR (例: CharacterVRMs リポジトリの StyleRefs/) が
+    # 設定されている環境でのみ有効。3D の「原典の正解」を 2D 生成へ還流する。
+    vrm_refs = _collect_vrm_style_refs(num_value, form)
+    if vrm_refs:
+        local_values = vrm_refs + [p for p in local_values if p not in vrm_refs]
+
     return {
         "urls": url_values[:max_images],
         "local_paths": local_values[:max_images],
     }
 
 
+def _collect_vrm_style_refs(num_value: Any, form: str) -> list[str]:
+    """原典 VRM のサムネイル画像 (vrm_<form><num>.png) を探して返す (最大 1 枚)。"""
+    root = os.environ.get("NT_VRM_STYLE_REFS_DIR")
+    if not root or num_value is None or form != "corefolder":
+        return []
+    base = Path(root)
+    if not base.is_dir():
+        return []
+    try:
+        token = str(int(num_value))
+    except (TypeError, ValueError):
+        token = str(num_value).strip()
+    if not token:
+        return []
+    matches = sorted(base.rglob(f"vrm_{form}{token}.png"))
+    return [str(matches[0])] if matches else []
+
+
 def collect_record_capabilities(
     record: dict[str, Any],
     form: str = "corefolder",
-    creations_db_base: str = "_creations-ai/creations-db",
+    creations_db_base: str | None = None,
 ) -> dict[str, Any]:
     """レコードが備える AI ヒント・DB 画像の充実度を辞書化する。
 
@@ -1357,13 +1410,16 @@ def _form_common_dataset_candidate_paths(work_key: str) -> list[Path]:
     if env_path:
         candidates.append(Path(env_path))
 
+    # 2026-08-29: _project_root() 基準に変更 (cwd 非依存)。相対パスのままだと
+    # リポジトリルート外から起動したとき [作風指示] ブロックが無言で空になるバグの修正。
+    root = _project_root()
     work_dir = _extract_work_dir_from_work_key(work_key or "#Works_NumberTales")
     if work_dir:
-        candidates.append(Path("_ideas/form_common_datasets") / f"{work_dir}.json")
+        candidates.append(root / "_ideas" / "form_common_datasets" / f"{work_dir}.json")
 
     # 旧パス: 既存ユーザー環境との後方互換 (NumberTales のみ)
     if work_dir == "Works_NumberTales":
-        candidates.append(Path("_ideas/form_common_dataset_numbertales.json"))
+        candidates.append(root / "_ideas" / "form_common_dataset_numbertales.json")
 
     return candidates
 
@@ -2002,20 +2058,37 @@ def _build_preferred_art_style_block(record: dict[str, Any] | None = None) -> st
     work_key = "#Works_NumberTales"
     if record and isinstance(record.get("work_key"), str) and record["work_key"]:
         work_key = record["work_key"]
+    items = get_art_style_keywords(work_key)
+    if not items:
+        return ""
+    body = "\n".join(f"- {item}" for item in items)
+    return f"\n[作風指示 (preferred art style)]\n{body}\n"
+
+
+def get_art_style_keywords(work_key: str = "#Works_NumberTales") -> list[str]:
+    """作品の作風キーワードを返す (preferred_art_style + style_analysis_summary.keywords_en)。
+
+    2026-08-29: `style_analysis_summary.keywords_en` (Pastel colors / Minimal shading /
+    White background 等、塗り・配色・背景の作風の核) はビルド済みなのに未参照だったため、
+    ここで統合する。重複は preferred_art_style 側を優先して除去。
+    """
     dataset = _load_form_common_dataset(work_key)
     if not isinstance(dataset, dict):
-        return ""
+        return []
     raw = dataset.get("preferred_art_style")
     if isinstance(raw, list):
         items = [str(x).strip() for x in raw if str(x).strip()]
     elif isinstance(raw, str) and raw.strip():
         items = [raw.strip()]
     else:
-        return ""
-    if not items:
-        return ""
-    body = "\n".join(f"- {item}" for item in items)
-    return f"\n[作風指示 (preferred art style)]\n{body}\n"
+        items = []
+    summary = dataset.get("style_analysis_summary")
+    if isinstance(summary, dict):
+        for kw in summary.get("keywords_en") or []:
+            text = str(kw).strip()
+            if text and text not in items:
+                items.append(text)
+    return items
 
 
 # ColorPalette (creations-db 2026-07 新設) の列挙値ラベル。
@@ -2937,12 +3010,15 @@ def build_gemini_prompt(
 def get_local_image_paths(
     work_key: str = "#Works_NumberTales",
     image_index_path: str | None = None,
-    creations_db_base: str = "_creations-ai/creations-db",
+    creations_db_base: str | None = None,
 ) -> list[str]:
     """image-index.json からローカル画像パスの一覧を返す。"""
+    # 2026-08-29: cwd 非依存化 (collect_reference_images と同じ理由)。
+    if not creations_db_base:
+        creations_db_base = str(_creations_db_repo_root())
     path = image_index_path or os.environ.get(
         "IMAGE_INDEX_PATH",
-        "_creations-ai/ai-dataset/image-index.json",
+        str(_project_root() / "_creations-ai" / "ai-dataset" / "image-index.json"),
     )
     with open(path, encoding="utf-8") as f:
         idx = json.load(f)

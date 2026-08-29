@@ -42,6 +42,10 @@ import urllib.error
 from pathlib import Path
 from typing import Any
 
+# 2026-08-29: Num が文字列 ID ("2-alt" 等) のキャラで f"{num:03d}" が TypeError になり
+# except で握り潰されて構図ガイドが常に 0 枚になっていたバグの修正。
+from src.utils.paths import format_num
+
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
@@ -245,7 +249,7 @@ def _create_composition_guide_pil(
             img = _pil_auto_tone(img)
             img = _pil_apply_bg(img, bg_color)
             img = _pil_apply_style(img, style)
-            out_path = stage_dir / f"num{num:03d}_{form}_composition_guide_{i + 1:02d}.png"
+            out_path = stage_dir / f"num{format_num(num)}_{form}_composition_guide_{i + 1:02d}.png"
             img.save(out_path, format="PNG")
             print(f"[Stage2-Adobe] 構図ガイド (PIL): {out_path.name}")
             saved.append(out_path)
@@ -352,7 +356,7 @@ def _create_composition_guide_adobe(
             continue
         try:
             result_url = _lr_auto_tone(input_url, output_url, token, client_id, storage_type)
-            out_path = stage_dir / f"num{num:03d}_{form}_composition_guide_adobe_{i + 1:02d}.jpg"
+            out_path = stage_dir / f"num{format_num(num)}_{form}_composition_guide_adobe_{i + 1:02d}.jpg"
             _download_url_to_path(result_url, out_path)
             print(f"[Stage2-Adobe] 構図ガイド (Lightroom API): {out_path.name}")
             saved.append(out_path)
@@ -398,10 +402,10 @@ def create_composition_guide(
     refs = collect_reference_images(record, form=form)
     ref_paths = refs["local_paths"]
     if not ref_paths:
-        print(f"[WARN] Stage2-Adobe: #{num:03d} の参照画像が見つかりません。構図ガイドをスキップします。")
+        print(f"[WARN] Stage2-Adobe: #{format_num(num)} の参照画像が見つかりません。構図ガイドをスキップします。")
         return []
 
-    print(f"[Stage2-Adobe] 構図ガイド生成開始: #{num:03d} {form} / 参照 {len(ref_paths)} 件")
+    print(f"[Stage2-Adobe] 構図ガイド生成開始: #{format_num(num)} {form} / 参照 {len(ref_paths)} 件")
 
     client_id = os.environ.get("FIREFLY_CLIENT_ID")
     client_secret = os.environ.get("FIREFLY_CLIENT_SECRET")

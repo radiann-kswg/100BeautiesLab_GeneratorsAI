@@ -60,10 +60,10 @@ def _local_image_to_data_url(path: str) -> str | None:
     p = Path(path)
     if not p.exists() or not p.is_file():
         return None
-    mime, _ = mimetypes.guess_type(str(p))
-    if not mime:
-        mime = "image/png"
-    raw = p.read_bytes()
+    # 2026-08-29: 巨大画像 (catalog 等) は共有ガードで縮小してから data URL 化する。
+    from src.utils.image_io import load_reference_bytes
+
+    raw, mime = load_reference_bytes(p)
     encoded = base64.b64encode(raw).decode("ascii")
     return f"data:{mime};base64,{encoded}"
 
@@ -250,7 +250,17 @@ def generate_image_dalle(
                     print("[INFO] 参照ローカル画像が無いため images.generate にフォールバック")
 
             if use_image_edit:
-                open_files = [p.open("rb") for p in image_paths]
+                # 2026-08-29: 巨大画像 (catalog 等) は共有ガードで縮小してから投入する。
+                from io import BytesIO
+
+                from src.utils.image_io import MIME_TO_EXTENSION, load_reference_bytes
+
+                open_files = []
+                for p in image_paths:
+                    data, mime = load_reference_bytes(p)
+                    buf = BytesIO(data)
+                    buf.name = p.stem + MIME_TO_EXTENSION.get(mime, ".png")
+                    open_files.append(buf)
                 image_arg = open_files[0] if len(open_files) == 1 else open_files
                 print(
                     f"[INFO] images.edit に参照画像 {len(open_files)} 件を投入: "

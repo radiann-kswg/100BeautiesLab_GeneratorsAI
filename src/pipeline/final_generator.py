@@ -37,7 +37,8 @@ def _build_synthesis_prompt(base_prompt: str, rough_count: int) -> str:
         "- 添付した全ラフ案を参照し、各案の優れた点を組み合わせた完成画像を 1 枚生成する\n"
         "- 形態・番号・固有アクセサリなど全案に共通する識別要素を最優先で維持する\n"
         "- 構図・ポーズ・表情は全案の中で最もキャラクターらしいバリエーションを採用する\n"
-        "- 作風・線画・塗りのスタイルは先頭の参照画像群（違反なし素案）を最も重視すること\n"
+        "- 先頭のラフ案は構図・採用要素の参照に限定し、その作風には引きずられないこと\n"
+        "- 作風・線画・塗りのスタイルは後続の DB 公式参照画像（作者の設定画・公式イラスト）に合わせること\n"
         "- ラフ段階の粗さ・線引き・テキストは最終出力に含めず、完成イラストとして仕上げる\n\n"
     )
     return header + base_prompt
@@ -60,8 +61,11 @@ def _synthesize_with_gemini(
     from src.gemini.generate import generate_image
 
     synth_dir.mkdir(parents=True, exist_ok=True)
-    synth_prompt = _build_synthesis_prompt(base_prompt, len(rough_paths))
-    extra_locals = [str(p) for p in rough_paths if p.exists()]
+    # 2026-08-29: ラフは先頭 2 枚に制限する。全ラフ (最大 5 枚) を渡すと ref_limit=5 の
+    # 参照枠を生成物が食い尽くし、DB 原典参照が 1 枚も添付されず最終画が原典を一度も
+    # 見ないまま完成する (作風が原典から乖離する直接原因だった)。
+    extra_locals = [str(p) for p in rough_paths if p.exists()][:2]
+    synth_prompt = _build_synthesis_prompt(base_prompt, len(extra_locals))
     inter_sleep = float(os.environ.get("GEMINI_IMAGE_SLEEP", "6"))
 
     results: list[Path] = []

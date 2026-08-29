@@ -262,11 +262,11 @@ def generate_rough_images(
     gemini_prompt = prompts.get("base_gemini", "") or prompts.get("gemini", "")
     if scene and "シーン" not in gemini_prompt:
         gemini_prompt = gemini_prompt + f"\n\n[シーン・追加要望]\n- シーン: {scene}"
-    # 追加参照は「アタリ(SDXL)を先頭・Adobe 構図ガイドを後続」で最大 2 枚に絞る。
-    # extra_ref_locals は ref_limit を 5 に増やすが、DB 公式参照(=個体の正解)の枠を残すため。
-    guide_refs = (
-        [str(p) for p in sdxl_guide_paths] + [str(p) for p in adobe_guide_paths]
-    )[:2]
+    # 追加参照はアタリ(SDXL) 1 枚のみ。
+    # 2026-08-29: Adobe 構図ガイドは参照添付をやめた。ガイドはぼかし+コントラスト/彩度
+    # 改変した原典の劣化コピーで、先頭参照枠 2 つを占有して色・線の誤情報を最優先で
+    # 与えていた (作風乖離の一因)。生成自体は続け、成果物 (人間レビュー用) として残す。
+    guide_refs = [str(p) for p in sdxl_guide_paths][:1]
     gemini_paths: list[Path] = []
     if use_gemini:
         mode_label = "i2i" if iterate_from else "T2I"
