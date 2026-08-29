@@ -63,7 +63,10 @@ def _local_image_to_data_url(path: str) -> str | None:
     # 2026-08-29: 巨大画像 (catalog 等) は共有ガードで縮小してから data URL 化する。
     from src.utils.image_io import load_reference_bytes
 
-    raw, mime = load_reference_bytes(p)
+    loaded = load_reference_bytes(p)
+    if loaded is None:  # 壊れ画像はスキップ
+        return None
+    raw, mime = loaded
     encoded = base64.b64encode(raw).decode("ascii")
     return f"data:{mime};base64,{encoded}"
 
@@ -257,10 +260,15 @@ def generate_image_dalle(
 
                 open_files = []
                 for p in image_paths:
-                    data, mime = load_reference_bytes(p)
+                    loaded = load_reference_bytes(p)
+                    if loaded is None:  # 壊れ画像はスキップ
+                        continue
+                    data, mime = loaded
                     buf = BytesIO(data)
                     buf.name = p.stem + MIME_TO_EXTENSION.get(mime, ".png")
                     open_files.append(buf)
+                if not open_files:
+                    raise ValueError("参照ローカル画像が全て読めませんでした (壊れ画像)")
                 image_arg = open_files[0] if len(open_files) == 1 else open_files
                 print(
                     f"[INFO] images.edit に参照画像 {len(open_files)} 件を投入: "
