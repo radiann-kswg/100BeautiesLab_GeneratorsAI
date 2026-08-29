@@ -155,7 +155,10 @@ def _build_reference_parts(
         p = Path(path)
         if not p.exists() or not p.is_file():
             continue
-        data, mime = load_reference_bytes(p)
+        loaded = load_reference_bytes(p)
+        if loaded is None:  # 壊れ画像はスキップ (image_io 側で警告表示済み)
+            continue
+        data, mime = loaded
         parts.append(types_module.Part.from_bytes(data=data, mime_type=mime))
         if len(parts) >= limit:
             return parts
