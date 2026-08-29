@@ -855,10 +855,13 @@ def collect_reference_images(
     for wc_local in wc_locals:
         _append_unique(local_values, wc_local)
 
-    # 絵文字スタンプ (emstk_*) は最大 2 枚まで。450px 前後の縮小素材で作風情報が乏しく、
-    # 3 枚以上並ぶと ref_limit の枠から catalog (キャラデザ表) 等の高情報参照を押し出すため。
-    # ponytail: ファイル名接頭辞による NT 固有ヒューリスティック。他作品で emstk 相当が
-    # 増えたら画像メタデータ (カテゴリ) ベースの判定に置き換える。
+    # emstk_* (images.corefolder カテゴリ = corefolder_PNGPath[] 由来の正規コアフォルダ絵) は
+    # 最大 2 枚まで。※「絵文字スタンプ」ではない (2026-08-29 CreationsDB#28 で分類訂正)。
+    # ただし実測で長辺中央値 477px と低解像度のため、3 枚以上並ぶと ref_limit の枠から
+    # catalog (9000px キャラデザ表) や arts (中央値 1200px) の高解像度参照を押し出す。
+    # 同カテゴリ 2 枚 + 高解像度参照の枠を確保するためのキャップ。
+    # ponytail: ファイル名接頭辞による NT 固有ヒューリスティック。image-index に category
+    # メタが入り次第 (CreationsAI#1 依頼3・上流賛成済み)、カテゴリ判定へ置き換える。
     _emstk_seen = 0
     _capped: list[str] = []
     for p in local_values:
@@ -1142,14 +1145,27 @@ def load_manifest(manifest_path: str | None = None) -> list[dict[str, Any]]:
 
 
 def get_characters(manifest_path: str | None = None) -> list[dict[str, Any]]:
-    """ai_hints を持つキャラクターレコードを返す（画像生成の列挙用）。
+    """キャラクターレコードを返す（画像生成の列挙用）。
 
-    列挙自体は has_ai_hints のみで絞る（reason を保持するため純粋に保つ）。
-    権利軸オプトアウトの拒否は各生成入口の :func:`apply_generation_gate` が担う。
+    2026-08-29 (CreationsAI#1 検証を受けた変更): ``has_ai_hints`` での絞り込みをやめ、
+    References 参照レコード (種族・地域・派閥等。``db_source`` が ``data/References/``)
+    を「キャラクターではない」として型で除外する方式へ変更。
+    旧実装は has_ai_hints が References を偶然除外する一方、AIHints 未収録の
+    SemiPrimary / SelfSecondary キャラ (3x11 等 17 件) までローカル列挙から漏らし、
+    実 API フォールバック頼み (オフラインで解決不可) にしていた。
+    ai_hints の有無は各消費側が ``record.get("ai_hints") or {}`` で吸収する。
+
+    加えて ``ai_training.allowed === true`` のレコードのみ列挙する (§3.2 の「参照起点は
+    許可済みデータ」原則)。旧 has_ai_hints フィルタはこれを偶然満たしていたが、単純に
+    外すとフル manifest のオプトアウト対象キャラ (名前等) が列挙・名前辞書へ漏れるため、
+    明示的な許可フィルタに置き換える。生成時の拒否は従来どおり各生成入口の
+    :func:`apply_generation_gate` も担う (二重防御)。
     """
     return [
         r for r in load_manifest(manifest_path)
-        if r.get("_type") == "character" and r.get("has_ai_hints")
+        if r.get("_type") == "character"
+        and ai_training_allowed(r)
+        and not str(r.get("db_source") or "").replace("\\", "/").startswith("data/References/")
     ]
 
 
