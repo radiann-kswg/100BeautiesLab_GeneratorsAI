@@ -872,12 +872,13 @@ def collect_reference_images(
         _capped.append(p)
     local_values = _capped
 
-    # 原典 VRM レンダー (2026-08-29 新設): 3D 原典モデルのサムネイルを最優先参照に注入する。
-    # 環境変数 NT_VRM_STYLE_REFS_DIR (例: CharacterVRMs リポジトリの StyleRefs/) が
-    # 設定されている環境でのみ有効。3D の「原典の正解」を 2D 生成へ還流する。
-    vrm_refs = _collect_vrm_style_refs(num_value, form)
-    if vrm_refs:
-        local_values = vrm_refs + [p for p in local_values if p not in vrm_refs]
+    # 作者指名アンカー (原点画像 / 原典 VRM レンダー) を最優先参照に注入する。
+    # 環境変数の指名が無ければ、キャラシートのサムネ画像から自動で原点を選ぶ。
+    pinned = _collect_pinned_refs(num_value, form) or _pick_origin_ref(
+        local_values, work_key, creations_db_base
+    )
+    if pinned:
+        local_values = pinned + [p for p in local_values if p not in pinned]
 
     return {
         "urls": url_values[:max_images],
@@ -885,13 +886,90 @@ def collect_reference_images(
     }
 
 
-def _collect_vrm_style_refs(num_value: Any, form: str) -> list[str]:
-    """原典 VRM のサムネイル画像 (vrm_<form><num>.png) を探して返す (最大 1 枚)。"""
-    root = os.environ.get("NT_VRM_STYLE_REFS_DIR")
-    if not root or num_value is None or form != "corefolder":
+# 「この 1 枚が原点」という作者指名のアンカー参照。カテゴリ順ソートの外側で
+# 参照リスト先頭へ差し込むため、ref_limit の枠から押し出されない。
+#   - NT_ORIGIN_REFS_DIR  : 原点画像 origin_<form><num>.<ext> (2026-08-30 新設)
+#   - NT_VRM_STYLE_REFS_DIR: 原典 VRM サムネ vrm_<form><num>.<ext> (2026-08-29)
+# 環境変数が未設定・ディレクトリ不在・該当ファイル無しならいずれも黙って無効 = 従来挙動。
+_PINNED_REF_SOURCES: tuple[tuple[str, str], ...] = (
+    ("NT_ORIGIN_REFS_DIR", "origin_{form}{num}.*"),
+    ("NT_VRM_STYLE_REFS_DIR", "vrm_{form}{num}.*"),
+)
+_PINNED_REF_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
+
+
+@lru_cache(maxsize=8)
+def _sheet_thumbnail_order(work_key: str, creations_db_base: str) -> tuple[str, ...]:
+    """キャラシートのサムネ選択順 = ``db_type.json`` の Images 宣言順 (カテゴリ名)。
+
+    サイト側 (``pages/characters.js`` の ``resolveImageFromFields``) は
+    typedef の宣言順で最初に値を持つ画像フィールドを代表サムネに使う。同じ順序を
+    こちらでも読み、「シートで顔として出ている 1 枚」を原点画像の第一候補にする。
+    ``concept_PNGName`` → ``concept`` のように接尾辞を落とすと
+    ``_infer_image_category`` の返り値と一致する。
+    """
+    path = (
+        Path(creations_db_base)
+        / "data"
+        / _extract_work_dir_from_key(work_key)
+        / "DataBases"
+        / "db_type.json"
+    )
+    try:
+        def_types = json.loads(path.read_text(encoding="utf-8")).get("$DefType") or []
+    except (OSError, ValueError) as err:  # 欠損・壊れ JSON は「順序不明」に倒す
+        print(f"[WARN] db_type.json を読めないためサムネ順を使いません: {path} ({err})")
+        return ()
+    for entry in def_types:
+        if not isinstance(entry, dict) or entry.get("hashTag") != "Images":
+            continue
+        subs = entry.get("$type")
+        if not isinstance(subs, list):
+            continue
+        return tuple(
+            str(sub.get("hashTag", "")).rsplit("_", 1)[0].lower()
+            for sub in subs
+            if isinstance(sub, dict) and sub.get("hashTag")
+        )
+    return ()
+
+
+@lru_cache(maxsize=256)
+def _has_alpha(path: str) -> bool:
+    """透過情報を持つ画像かどうか (ヘッダのみ参照。復号はしない)。"""
+    try:
+        from PIL import Image
+
+        with Image.open(path) as im:
+            return bool(im.has_transparency_data)
+    except Exception:  # noqa: BLE001 — 壊れ画像・PIL 未導入は「透過なし」扱い
+        return False
+
+
+def _pick_origin_ref(
+    paths: list[str], work_key: str, creations_db_base: str
+) -> list[str]:
+    """原点画像を 1 枚選んで返す (見つからなければ空リスト)。
+
+    優先順は ① キャラシートのサムネ順 ② 透過画像 ③ 元の並び。
+    ``paths`` は形態適合・本人判定を通過済みの候補なので、ここでは順位付けだけ行う。
+    """
+    if not paths:
         return []
-    base = Path(root)
-    if not base.is_dir():
+    order = _sheet_thumbnail_order(work_key, creations_db_base)
+
+    def rank(item: tuple[int, str]) -> tuple[int, bool, int]:
+        index, path = item
+        category = _infer_image_category(path)
+        thumb_rank = order.index(category) if category in order else len(order)
+        return (thumb_rank, not _has_alpha(path), index)
+
+    return [min(enumerate(paths), key=rank)[1]]
+
+
+def _collect_pinned_refs(num_value: Any, form: str) -> list[str]:
+    """作者指名の最優先参照を、ソースごとに最大 1 枚ずつ集めて返す。"""
+    if num_value is None:
         return []
     try:
         token = str(int(num_value))
@@ -899,8 +977,20 @@ def _collect_vrm_style_refs(num_value: Any, form: str) -> list[str]:
         token = str(num_value).strip()
     if not token:
         return []
-    matches = sorted(base.rglob(f"vrm_{form}{token}.png"))
-    return [str(matches[0])] if matches else []
+
+    found: list[str] = []
+    for env_name, pattern in _PINNED_REF_SOURCES:
+        root = os.environ.get(env_name)
+        if not root or not Path(root).is_dir():
+            continue
+        matches = sorted(
+            path
+            for path in Path(root).rglob(pattern.format(form=form, num=token))
+            if path.is_file() and path.suffix.lower() in _PINNED_REF_SUFFIXES
+        )
+        if matches:
+            _append_unique(found, str(matches[0]))
+    return found
 
 
 def collect_record_capabilities(
