@@ -141,15 +141,36 @@ def _guess_mime_type(path_or_url: str) -> str:
     return mime or "image/png"
 
 
+# 参照画像の役割ラベル。プロンプト本文は「先頭 1 枚は前回生成」「後続は公式 DB」と
+# 位置で役割を説明するが、API には画像バイト列が無名で並ぶだけで、モデル側からは
+# どれが原典でどれがラフか区別できなかった (ラフの崩れ・蛇足を原典として引き継ぐ原因)。
+# 各画像の直前にテキストパートで役割を差し込み、原典を明示する。
+REF_LABEL_ITERATE = "起点画像（前回生成）: 構図・ポーズの起点。色・特徴・作風の正典ではない。"
+REF_LABEL_EXTRA = "下絵・ラフ: 構図の参考のみ。作風・線の乱れ・配色・余計な要素は引き継がない。"
+REF_LABEL_DB = "公式原典: 作風・配色・識別要素はこの画像を正とする。ここに無い要素を足さない。"
+
+
 def _build_reference_parts(
     types_module,
     ref_urls: list[str],
     ref_local_paths: list[str],
     limit: int = 4,
+    labels: dict[str, str] | None = None,
 ) -> list[Any]:
+    """参照画像を Part 列にする。labels があれば各画像の直前に役割ラベルのテキストを挟む。
+    limit は画像枚数の上限 (ラベルは数えない)。"""
     parts: list[Any] = []
+    n_images = 0
 
     from src.utils.image_io import load_reference_bytes
+
+    def _push(data: bytes, mime: str, key: str) -> None:
+        nonlocal n_images
+        n_images += 1
+        label = "" if labels is None else labels.get(key, REF_LABEL_DB)
+        if label:
+            parts.append(types_module.Part.from_text(text=f"[参照{n_images}｜{label}]"))
+        parts.append(types_module.Part.from_bytes(data=data, mime_type=mime))
 
     for path in ref_local_paths:
         p = Path(path)
@@ -159,8 +180,8 @@ def _build_reference_parts(
         if loaded is None:  # 壊れ画像はスキップ (image_io 側で警告表示済み)
             continue
         data, mime = loaded
-        parts.append(types_module.Part.from_bytes(data=data, mime_type=mime))
-        if len(parts) >= limit:
+        _push(data, mime, str(path))
+        if n_images >= limit:
             return parts
 
     for url in ref_urls:
@@ -176,11 +197,11 @@ def _build_reference_parts(
             mime = resp.headers.get("Content-Type") or _guess_mime_type(url)
             if not str(mime).startswith("image/"):
                 mime = _guess_mime_type(url)
-            parts.append(types_module.Part.from_bytes(data=data, mime_type=mime))
+            _push(data, mime, url)
         except Exception as err:  # noqa: BLE001
             print(f"[WARN] 参照URL取得失敗のためスキップ: {url} ({err})")
             continue
-        if len(parts) >= limit:
+        if n_images >= limit:
             break
 
     return parts
@@ -232,6 +253,7 @@ def generate_image(
     extra_ref_locals: list[str] | None = None,
     skip_db_refs: bool = False,
     skip_ref_urls: bool = False,
+    extra_ref_label: str = REF_LABEL_EXTRA,
 ) -> list[Path]:
     """Imagen 3 でキャラクター画像を生成して保存する。
 
@@ -342,12 +364,16 @@ def generate_image(
         # ローカルキャッシュ済みの参照画像は引き続き使用する。
         ref_urls = []
 
+    # 参照画像の役割ラベル (未登録のパス/URL は公式原典扱い)。
+    ref_labels: dict[str, str] = {}
+
     # iterate-from の起点画像を参照ローカルの先頭へ差し込む (最高優先で添付)。
     if iterate_source_path is not None:
         iterate_path_str = str(iterate_source_path)
         if iterate_path_str in ref_locals:
             ref_locals.remove(iterate_path_str)
         ref_locals.insert(0, iterate_path_str)
+        ref_labels[iterate_path_str] = REF_LABEL_ITERATE
 
     # extra_ref_locals (Stage 5 合成ラフ等) を iterate_from の直後に差し込む。
     # limit を 1 増やして合成参照が確実に含まれるようにする。
@@ -357,6 +383,7 @@ def generate_image(
             ep_str = str(ep)
             if ep_str not in ref_locals:
                 ref_locals.insert(0 if iterate_source_path is None else 1, ep_str)
+            ref_labels[ep_str] = extra_ref_label
         ref_limit = 5
 
     print(f"[INFO] キャラクター: {record['data'].get('Name_JP') or record['data'].get('Name') or num} / 形態: {form}")
@@ -400,7 +427,9 @@ def generate_image(
     print(f"[INFO] ログ: {log_paths['meta']}")
 
     client = genai.Client(api_key=api_key, http_options={"timeout": _api_timeout})
-    ref_parts = _build_reference_parts(types, ref_urls, ref_locals, limit=ref_limit)
+    ref_parts = _build_reference_parts(
+        types, ref_urls, ref_locals, limit=ref_limit, labels=ref_labels
+    )
     use_reference_input = bool(ref_parts)
     multimodal_model = model
     if use_reference_input and model.startswith("imagen"):

@@ -541,6 +541,7 @@ def _compose_multi_char(
                 count=1,
                 prompt_override=composition_prompt,
                 extra_ref_locals=render_strs,
+                extra_ref_label="キャラクター単体レンダー: このキャラの姿・作風・配色の正典。",
                 skip_db_refs=True,  # キャラレンダーが参照なので DB 画像は不要
             )
             results.extend(paths)
