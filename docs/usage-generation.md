@@ -73,7 +73,7 @@ python -m src.pipeline.image_pipeline --num 57 --form corefolder --skip-canva
   stage2_db/         — DB サマリー + キャラクタースペック (violation_features 等)
   stage3_rough/      — Gemini Imagen ラフ 5 案
                        └── regen/  — Stage 3 差し戻し再生成分 (--correction-mode stage3 時のみ)
-  stage4_correct/    — 違反分析ログ (analysis_log.json) + 修正済み画像
+  stage4_correct/    — 違反分析ログ (analysis_log.json: violations=蛇足・左右反転 / missing=原典比の欠落 / composition_issues) + 修正済み画像
   stage5_final/      — Canva 仕上げ完成画像 3 枚
                        └── synth/  — Gemini マルチ参照合成の中間出力 (Canva 前)
   pipeline_summary.json
@@ -490,6 +490,7 @@ python -m src.batch_generate --nums 15,22,49,57 --forms both --provider both --s
 | 1    | 導入文                                                | 「このキャラクターを描いてください」「同じキャラクターを別ポーズで〜」                                        | (固定文)                                                                       |
 | 1.5  | `[修正指示]` (i2i 時のみ)                             | iterate-from の修正項目を最優先で適用させる。詳細は [`usage-iterate.md`](usage-iterate.md)                    | `--revisions`                                                                  |
 | 2    | `[参照画像]` / `[参照画像URL]` / `[参照画像ローカル]` | URL とローカル添付の存在告知 (humanoid 形態は尾構造参考画像 `images.tails_unit` も含む)                       | `ai_hints.*.reference_images`, レコード `images`（`concept`/`corefolder`/`humanoid`/`arts`/`design_alt`/`tails_unit`） |
+| 2.5  | `[参照N｜役割]` (API 送信時・各画像の直前)             | 添付画像ごとに「起点画像（前回生成）」「下絵・ラフ」「公式原典」の役割ラベルをテキストパートとして挟む。原典以外の配色・崩れ・蛇足を引き継がせないための明示。合同合成は「キャラクター単体レンダー」 | `gemini/generate.py` の `REF_LABEL_*` / `extra_ref_label` (プロンプト本文ではなく `contents` に差し込む) |
 | 3    | `[素体特徴]`                                          | 不変特徴 (耳・尻尾・髪色・瞳色)                                                                               | `ai_hints.common.immutable_traits` / `identity_tags`                           |
 | 4    | `[今回の姿]`                                          | 現在形態の自然文記述                                                                                          | `ai_hints.forms.{form}.natural_language_description`                           |
 | 5    | **`[番号印字仕様 (必須・最優先)]`**                   | キャラ番号の刻印位置・字形ルール (例: 「57 の文字そのものを刻印」「corefolder は表面 / humanoid は左胸寄り」) | identity_tags / immutable_traits / outfit_features / silhouette_notes から抽出 |

@@ -66,7 +66,9 @@ license: CC BY-NC 4.0 (Copyright RadianN_kswg). 商用利用の誘導は禁止�
    先輩がそれを変える依頼をしたら、改変ではなく別解（ポーズ・シーン・作風変更）を提案する。
 4. **CC BY-NC 4.0**。商用利用を促す表現・誘導はしない。
 5. プロンプト素材を選ぶ際は `_creations-ai/ai-dataset/manifest.jsonl` の
-   **`has_ai_hints=true` のレコードのみ**を対象にする。
+   **`ai_training.allowed=true` のキャラクターレコードのみ**を対象にする
+   （`get_characters()` が `data/References/` の参照資料を型で除外する。
+   `has_ai_hints` では絞らない — AIHints 未収録の SemiPrimary / SelfSecondary が漏れるため）。
 6. 反社会的・性的表現は扱わない。
 
 ---

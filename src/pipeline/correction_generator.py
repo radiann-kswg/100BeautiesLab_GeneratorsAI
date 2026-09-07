@@ -117,14 +117,17 @@ def _analyze_rough_with_openai(
         else ""
     )
 
-    # ── 左右整合チェック (公式 DB 参照画像がある場合のみ) ──
+    # ── 原典照合 (公式 DB 参照画像がある場合のみ): 左右整合 + 欠落/蛇足 ──
     has_ref = bool(ref_image_path and ref_image_path.exists())
     chirality_section = (
-        "\n[左右整合チェック]\n"
-        "2枚目の画像は公式 DB 参照 (原典) です。\n"
-        "1枚目 (検査対象) の左右の向き・非対称要素の配置 (尻尾の束構成・マーキング位置・"
-        "髪の分け目など) が原典と左右反転している場合は、"
-        "violations に「左右反転: <反転している要素>」の形式で追加してください。\n"
+        "\n[原典照合]\n"
+        "2枚目の画像は公式 DB 参照 (原典) です。1枚目 (検査対象) と比較してください。\n"
+        "- 左右の向き・非対称要素の配置 (尻尾の束構成・マーキング位置・髪の分け目など) が"
+        "原典と左右反転している場合は、violations に「左右反転: <要素>」の形式で追加。\n"
+        "- 原典に無い装飾・模様・アクセサリ・付属物が描き足されている場合は、"
+        "violations に「蛇足: <要素>」の形式で追加。\n"
+        "- 原典にある識別要素 (耳・尻尾の本数/形・髪型・アクセサリ・番号バッジ・模様) が"
+        "欠けている/形が違う/数が違う場合は、missing に「<要素>: <原典ではどうか>」の形式で追加。\n"
         "ポーズや構図の違いによる自然な差・左右対称な要素は違反ではありません。\n"
         if has_ref
         else ""
@@ -133,18 +136,20 @@ def _analyze_rough_with_openai(
     system = (
         f"あなたはナンバーテールズキャラクター「{char_name}」の{form}形態イラストの品質検査AIです。\n"
         "画像に対して以下を確認し、**JSONのみ**を返してください（説明文・マークダウン不要）:\n"
-        '{"violations": ["違反内容1", ...], "composition_issues": ["構図問題1", ...], "overall_ok": true}'
+        '{"violations": ["違反内容1", ...], "missing": ["欠落要素1", ...], '
+        '"composition_issues": ["構図問題1", ...], "overall_ok": true}'
     )
     user = (
         f"このイラストを検査してください。\n"
         f"形態: {form}\n"
         f"不変特徴 (必ず存在するべき・違反扱い禁止): {immutable}\n"
+        "上記の不変特徴が画像に無い・数や形が違う場合は missing に追加してください。\n"
         f"以下の要素が存在する場合は violations に追加してください"
         f"（ただし上記の不変特徴として期待されるものは violations に含めないこと）:\n{violation_list}\n"
         f"{palette_section}"
         f"{chirality_section}\n"
         "構図として明らかに破綻している点があれば composition_issues に追加してください。\n"
-        "問題がなければ overall_ok: true として violations と composition_issues は空リストにしてください。"
+        "問題がなければ overall_ok: true として violations / missing / composition_issues は空リストにしてください。"
     )
 
     def _encode_image(path: Path) -> tuple[str, str]:
@@ -177,6 +182,7 @@ def _analyze_rough_with_openai(
         raw = (response.choices[0].message.content or "{}").strip()
         result = json.loads(raw)
         result.setdefault("violations", [])
+        result.setdefault("missing", [])
         result.setdefault("composition_issues", [])
         result.setdefault("overall_ok", True)
         result["skipped"] = False
@@ -209,6 +215,7 @@ def _apply_correction_gemini(
     from src.gemini.generate import generate_image
 
     violations = analysis.get("violations") or []
+    missing = analysis.get("missing") or []
     comp_issues = analysis.get("composition_issues") or []
     # T2I はフル再生成なので全仕様を含む base_gemini を使う。
     # i2i はソース画像がスタイルアンカーになるため、修正ターゲットのみに絞った短いプロンプトを使う。
@@ -220,6 +227,8 @@ def _apply_correction_gemini(
         if violations:
             avoid_items = "; ".join(violations[:4])
             avoid_note = f"\n\n[特に避けること (前回生成で検出された違反)]\n- {avoid_items}"
+        if missing:
+            avoid_note += "\n\n[必ず描くこと (前回生成で欠落)]\n- " + "; ".join(missing[:4])
         correction_prompt = base_prompt + avoid_note
         iterate_path = None
         print(f"[Stage4] rough_{index:02d}: 違反 {len(violations)} 件 → T2I (フル再生成)")
@@ -233,12 +242,14 @@ def _apply_correction_gemini(
         palette_line = f"- 配色 (DB実測値): {palette_summary}\n" if palette_summary else ""
 
         fix_lines = "\n".join(f"- {v} を除去または修正" for v in violations)
+        fix_lines += "".join(f"\n- {m} — 公式原典どおりに描き足す/直す" for m in missing)
         comp_lines = (
             "\n[構図修正]\n" + "\n".join(f"- {c}" for c in comp_issues) if comp_issues else ""
         )
         correction_prompt = (
-            "[i2i 最小修正 — 入力画像の作風・構図・フォルムを最大限維持すること]\n"
-            "以下の違反のみを修正し、それ以外は入力画像に忠実に保つこと。\n\n"
+            "[i2i 最小修正 — 起点画像の作風・構図・フォルムを最大限維持すること]\n"
+            "以下の項目のみを修正し、それ以外は起点画像に忠実に保つこと。"
+            "識別要素の形・数・色は添付の公式原典を正とし、原典に無い要素は足さないこと。\n\n"
             f"[修正対象]\n{fix_lines}{comp_lines}\n\n"
             "[維持すること]\n"
             f"- 形態: {form}\n"
@@ -262,9 +273,9 @@ def _apply_correction_gemini(
             count=1,
             iterate_from=iterate_path,
             prompt_override=correction_prompt,
-            # i2i 修正時は DB 参照画像を渡さない。
-            # DB 画像があると Gemini が参照画像に引っ張られて余計な要素を追加する。
-            skip_db_refs=(iterate_path is not None),
+            # i2i 修正でも DB 原典を添付する。以前は「原典に引っ張られて要素を足す」ため外して
+            # いたが、原因は参照画像が無名で役割不明だったこと。generate_image が起点画像/原典の
+            # 役割ラベルを各画像に付けるようになったので、原典なしで欠落特徴を直す方が害が大きい。
         )
     except SystemExit as err:
         print(f"[WARN] Stage4 Gemini 修正 (rough_{index:02d}): {err}")
@@ -313,6 +324,9 @@ def _apply_correction_openai(
     palette_line = f"Color palette (from DB, keep): {palette_summary}\n" if palette_summary else ""
 
     fix_parts = ["; ".join(violations)] if violations else []
+    missing = analysis.get("missing") or []
+    if missing:
+        fix_parts.append("restore/add as in the official design: " + "; ".join(missing))
     if comp_issues:
         fix_parts.append("; ".join(comp_issues) + " (composition fix)")
     all_fixes = "; ".join(fix_parts)
@@ -427,6 +441,7 @@ def correct_rough_images(
         analysis = _analyze_rough_with_openai(rough_path, char_spec, ref_image_path=ref_image_path)
 
         violations = analysis.get("violations") or []
+        missing = analysis.get("missing") or []
         comp_issues = analysis.get("composition_issues") or []
         overall_ok = analysis.get("overall_ok", True)
         skipped = analysis.get("skipped", False)
@@ -436,11 +451,11 @@ def correct_rough_images(
         if skipped:
             print(f"[Stage4] rough_{i:02d}: 分析スキップ (API未設定) → pass-through")
             passed.append(rough_path)
-        elif overall_ok and not violations and not comp_issues:
+        elif overall_ok and not violations and not missing and not comp_issues:
             print(f"[Stage4] rough_{i:02d}: 違反なし → pass-through")
             passed.append(rough_path)
         else:
-            issues = violations + comp_issues
+            issues = violations + [f"欠落: {m}" for m in missing] + comp_issues
             is_severe = len(violations) >= _SEVERE_VIOLATION_THRESHOLD
             is_stage3_regen = is_severe and correction_mode == "stage3"
             use_t2i = is_severe and correction_mode == "t2i"
@@ -463,8 +478,8 @@ def correct_rough_images(
                 else:
                     mode_label = "i2i/Gemini (部分修正)"
                 print(
-                    f"[Stage4] rough_{i:02d}: 違反 {len(violations)}件・構図問題 {len(comp_issues)}件"
-                    f" → {mode_label}"
+                    f"[Stage4] rough_{i:02d}: 違反 {len(violations)}件・欠落 {len(missing)}件"
+                    f"・構図問題 {len(comp_issues)}件 → {mode_label}"
                 )
                 for issue in issues[:5]:
                     print(f"           - {issue}")
@@ -498,6 +513,7 @@ def correct_rough_images(
             "rough_index": i,
             "file": rough_path.name,
             "violations": violations,
+            "missing": missing,
             "composition_issues": comp_issues,
             "overall_ok": overall_ok,
             "skipped": skipped,
