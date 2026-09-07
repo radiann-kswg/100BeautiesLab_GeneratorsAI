@@ -33,16 +33,110 @@ def _sanitize_natural_language_description(text: Any) -> str:
     return cleaned
 
 
+def _image_index_path() -> str:
+    return os.environ.get(
+        "IMAGE_INDEX_PATH",
+        str(_project_root() / "_creations-ai" / "ai-dataset" / "image-index.json"),
+    )
+
+
+def _index_entry_path(entry: Any) -> str:
+    """image-index.json の配列要素からパス文字列を取り出す。
+
+    2026-09-07 (CreationsAI#1 / GeneratorsAI#20 依頼2・破壊的変更): 要素が
+    パス文字列から ``{"path": ..., "category": ..., "long_edge_px": ...}`` の
+    オブジェクトへ変わった。旧形式 (文字列) も読めるようにして移行の谷を作らない。
+    """
+    if isinstance(entry, str):
+        return entry
+    if isinstance(entry, dict):
+        value = entry.get("path")
+        if isinstance(value, str):
+            return value
+    return ""
+
+
+@lru_cache(maxsize=4)
+def _image_index_meta(index_path: str) -> dict[str, tuple[tuple[str, dict[str, Any]], ...]]:
+    """image-index.json の画像メタを ``{ファイル名: ((相対パス, メタ), ...)}`` で返す。
+
+    索引のパスは creations-db ルート相対 (``data/...``)、実際に扱うのは絶対パスなので、
+    ファイル名で引いてから相対パスが末尾一致するものを採る (同名衝突があっても誤答しない)。
+    """
+    try:
+        with open(index_path, encoding="utf-8") as f:
+            idx = json.load(f)
+    except (OSError, ValueError) as err:  # 索引が無くても推定へ落ちるだけ
+        print(f"[WARN] image-index.json を読めないためカテゴリを推定します: {index_path} ({err})")
+        return {}
+
+    buckets: dict[str, list[tuple[str, dict[str, Any]]]] = {}
+    sources: list[Any] = list((idx.get("general_images") or []))
+    for work in (idx.get("works") or {}).values():
+        if isinstance(work, dict):
+            for field in ("images", "references", "general_images"):
+                sources.extend(work.get(field) or [])
+    for entry in sources:
+        rel = _index_entry_path(entry).replace("\\", "/")
+        if not rel:
+            continue
+        meta = entry if isinstance(entry, dict) else {}
+        buckets.setdefault(rel.rsplit("/", 1)[-1], []).append((rel, meta))
+    return {name: tuple(items) for name, items in buckets.items()}
+
+
+def _image_meta(path_text: str) -> dict[str, Any]:
+    """image-index.json が持つ画像メタ (category / 解像度 / 言語変種) を返す。索引外は空辞書。"""
+    norm = path_text.replace("\\", "/")
+    for rel, meta in _image_index_meta(_image_index_path()).get(norm.rsplit("/", 1)[-1], ()):
+        if norm == rel or norm.endswith("/" + rel):
+            return meta
+    return {}
+
+
+def _image_category(path_text: str) -> str:
+    """画像の種別。上流実測の ``category`` を正典とし、索引外のパスだけ推定に落とす。
+
+    2026-09-07 (GeneratorsAI#20 依頼3): パス名ヒューリスティックは索引外
+    (``Ref_Glossary/`` の作品共通図・``NT_ORIGIN_REFS_DIR`` の作者指名画像) 専用へ後退。
+    上流が種別を増やしても (``card_design`` / ``new_year`` 等) 追従漏れが起きない。
+    """
+    meta = _image_meta(path_text)
+    if meta:
+        return meta.get("category") or "other"
+    return _infer_image_category(path_text)
+
+
+# 種別名の表記ゆれ → 上流 image-index の `category` 表記。DB のフィールド名
+# (`ConceptAlt_PNGName` 等) やパス名は区切り無しの camelCase 由来なので突き合わせに必要。
+# `cocneptalt` は原典 DB 側の綴り誤りに対する既存の受け皿 (上流修正まで維持)。
+_CATEGORY_ALIASES: dict[str, str] = {
+    "cocneptalt": "concept_alt",
+    "conceptalt": "concept_alt",
+    "designalt": "design_alt",
+    "tailsunit": "tails_unit",
+    "carddesign": "card_design",
+    "newyear": "new_year",
+}
+
+
+def _normalize_category_name(name: str) -> str:
+    return _CATEGORY_ALIASES.get(name, name)
+
+
 def _infer_image_category(path_text: str) -> str:
+    """索引に載っていない画像の種別をパス名から推定する (フォールバック専用)。"""
     lower = path_text.replace("\\", "/").lower()
     if "/attr/tailsunit/" in lower:
         return "tails_unit"
-    parts = [p for p in lower.split("/") if p]
-    for segment in parts:
-        if segment == "cocneptalt":
-            return "conceptalt"
-        if segment in {"corefolder", "arts", "design", "designalt", "concept", "conceptalt", "catalog"}:
-            return segment
+    for segment in (p for p in lower.split("/") if p):
+        normalized = _normalize_category_name(segment)
+        if normalized in {
+            "corefolder", "arts", "design", "design_alt", "concept", "concept_alt",
+            "catalog", "humanoid", "tails_unit", "card_design", "new_year",
+            "weakening", "keycapper",
+        }:
+            return normalized
     return "other"
 
 
@@ -51,11 +145,14 @@ def _get_category_priority(form: str) -> dict[str, int]:
         # tails_unit (2026-07-10 addon-ai-tag 追加): 尾の構造化資料画像。
         # 尾の形状・分岐は DesignAlt 同様に確定情報のため design 系のすぐ後に置く。
         # catalog (2026-08-29): 作者直筆のキャラデザ表。作風・識別要素の最強アンカーとして design 系の後に置く。
-        ordered = ["arts", "design", "designalt", "tails_unit", "catalog", "concept", "conceptalt"]
+        # 2026-09-07 (GeneratorsAI#20 依頼3): 種別名を上流 image-index の `category` 表記へ
+        # 統一 (designalt → design_alt / conceptalt → concept_alt)。humanoid は
+        # Humanoid_PNGPath 由来の形態確定画像なので arts の直後に置く。
+        ordered = ["arts", "humanoid", "design", "design_alt", "tails_unit", "catalog", "concept", "concept_alt"]
     else:
         # arts (完成イラスト) を 2 位へ (2026-08-29): 作風は完成イラストにしか宿らないため、
         # ref_limit の枠から設定画に押し出されないようにする。
-        ordered = ["corefolder", "arts", "design", "designalt", "catalog", "concept", "conceptalt"]
+        ordered = ["corefolder", "arts", "design", "design_alt", "catalog", "concept", "concept_alt"]
 
     return {name: idx for idx, name in enumerate(ordered)}
 
@@ -95,7 +192,7 @@ def _apply_form_reference_focus(paths: list[str], form: str) -> list[str]:
     focused_primary: list[str] = []
     focused_fallback: list[str] = []
     for path in paths:
-        category = _infer_image_category(path)
+        category = _image_category(path)
         lower = path.replace("\\", "/").lower()
         if category in ("corefolder", "catalog") or "/arts/corefolders/" in lower:
             _append_unique(focused_primary, path)
@@ -113,14 +210,28 @@ def _apply_form_reference_focus(paths: list[str], form: str) -> list[str]:
     return paths
 
 
-def _sort_paths_for_form(paths: list[str], form: str) -> list[str]:
+def _sort_paths_for_form(
+    paths: list[str],
+    form: str,
+    preferred: frozenset[str] = frozenset(),
+) -> list[str]:
+    """参照画像を「種別 → 上流の代表指定 → 形態適合 → DB 格 → 原寸 → 元順」で並べる。
+
+    2026-09-07 (GeneratorsAI#20 依頼3): 種別を上流 `category` に、原寸判定を
+    `is_large_original_candidate` (長辺 1024px 以上) に委譲。``preferred`` は
+    レコードの ``preferred_reference_images`` (上流が宣言する代表画像) の絶対パス集合で、
+    同種別内では代表指定を先に出す。原寸は DB 格 (Primary が正典) の後に置く
+    — 解像度より原典性を優先する。
+    """
     category_priority = _get_category_priority(form)
     ranked = sorted(
         enumerate(paths),
         key=lambda item: (
-            category_priority.get(_infer_image_category(item[1]), len(category_priority)),
+            category_priority.get(_image_category(item[1]), len(category_priority)),
+            0 if item[1] in preferred else 1,
             _get_within_category_priority(item[1], form),
             _get_db_priority(item[1]),
+            not _image_meta(item[1]).get("is_large_original_candidate", False),
             item[0],
         ),
     )
@@ -715,6 +826,30 @@ def _collect_work_common_reference_images(
     return (urls, locals_)
 
 
+def _collect_preferred_reference_paths(
+    record: dict[str, Any],
+    form: str,
+    creations_db_base: str,
+) -> frozenset[str]:
+    """``preferred_reference_images`` (上流が宣言する代表参照画像) を絶対パス集合で返す。
+
+    2026-09-07 (CreationsAI#1 / GeneratorsAI#20 依頼3): レコードに追加された
+    ローカル相対パスのまとめ。``common`` と当該形態の分だけを採り、``_sort_paths_for_form``
+    の同種別内タイブレークに使う (種別順そのものは動かさない)。
+    """
+    block = record.get("preferred_reference_images")
+    if not isinstance(block, dict):
+        return frozenset()
+    groups = [block.get("common"), (block.get("forms") or {}).get(form)]
+    return frozenset(
+        str(Path(creations_db_base) / rel)
+        for group in groups
+        if isinstance(group, dict)
+        for rel in group.values()
+        if isinstance(rel, str) and rel
+    )
+
+
 def collect_reference_images(
     record: dict[str, Any],
     form: str = "corefolder",
@@ -836,14 +971,16 @@ def collect_reference_images(
         if _allow_path(forced_path):
             _append_unique(local_candidates, forced_path)
 
-    ranked_candidates = _sort_paths_for_form(local_candidates, form)
+    preferred = _collect_preferred_reference_paths(record, form, creations_db_base)
+
+    ranked_candidates = _sort_paths_for_form(local_candidates, form, preferred)
     for path in ranked_candidates:
         _append_unique(local_values, path)
 
     url_values = _apply_form_reference_focus(url_values, form)
     local_values = _apply_form_reference_focus(local_values, form)
     url_values = _sort_paths_for_form(url_values, form)
-    local_values = _sort_paths_for_form(local_values, form)
+    local_values = _sort_paths_for_form(local_values, form, preferred)
 
     # work_common (作品共通の設計図画像) を末尾に追加。
     # キャラ固有性が低いため最優先にはせず、キャラ固有参照の後に並べる。
@@ -855,19 +992,18 @@ def collect_reference_images(
     for wc_local in wc_locals:
         _append_unique(local_values, wc_local)
 
-    # emstk_* (images.corefolder カテゴリ = corefolder_PNGPath[] 由来の正規コアフォルダ絵) は
-    # 最大 2 枚まで。※「絵文字スタンプ」ではない (2026-08-29 CreationsDB#28 で分類訂正)。
-    # ただし実測で長辺中央値 477px と低解像度のため、3 枚以上並ぶと ref_limit の枠から
-    # catalog (9000px キャラデザ表) や arts (中央値 1200px) の高解像度参照を押し出す。
-    # 同カテゴリ 2 枚 + 高解像度参照の枠を確保するためのキャップ。
-    # ponytail: ファイル名接頭辞による NT 固有ヒューリスティック。image-index に category
-    # メタが入り次第 (CreationsAI#1 依頼3・上流賛成済み)、カテゴリ判定へ置き換える。
-    _emstk_seen = 0
+    # corefolder カテゴリ (corefolder_PNGPath[] 由来の正規コアフォルダ絵) は最大 2 枚まで。
+    # ※「絵文字スタンプ」ではない (2026-08-29 CreationsDB#28 で分類訂正)。
+    # 2026-09-07 (GeneratorsAI#20): 判定を `emstk_` 接頭辞から上流 `category` へ移した。
+    # 低解像度は上流の原寸化 (長辺中央値 477px → 1554px・全 196 枚が 1024px 以上) で解消済みなので、
+    # キャップの根拠は「解像度の低い絵に枠を食われる」から「同一種別で ref_limit を埋め切らない
+    # (catalog のキャラデザ表や arts の完成イラストを必ず 1 枚は残す)」へ変わっている。
+    _core_seen = 0
     _capped: list[str] = []
     for p in local_values:
-        if Path(p).name.startswith("emstk_"):
-            _emstk_seen += 1
-            if _emstk_seen > 2:
+        if _image_category(p) == "corefolder":
+            _core_seen += 1
+            if _core_seen > 2:
                 continue
         _capped.append(p)
     local_values = _capped
@@ -905,8 +1041,8 @@ def _sheet_thumbnail_order(work_key: str, creations_db_base: str) -> tuple[str, 
     サイト側 (``pages/characters.js`` の ``resolveImageFromFields``) は
     typedef の宣言順で最初に値を持つ画像フィールドを代表サムネに使う。同じ順序を
     こちらでも読み、「シートで顔として出ている 1 枚」を原点画像の第一候補にする。
-    ``concept_PNGName`` → ``concept`` のように接尾辞を落とすと
-    ``_infer_image_category`` の返り値と一致する。
+    ``concept_PNGName`` → ``concept`` のように接尾辞を落とし、``_normalize_category_name``
+    で表記を揃えると ``_image_category`` の返り値 (上流 image-index の ``category``) と一致する。
     """
     path = (
         Path(creations_db_base)
@@ -927,7 +1063,7 @@ def _sheet_thumbnail_order(work_key: str, creations_db_base: str) -> tuple[str, 
         if not isinstance(subs, list):
             continue
         return tuple(
-            str(sub.get("hashTag", "")).rsplit("_", 1)[0].lower()
+            _normalize_category_name(str(sub.get("hashTag", "")).rsplit("_", 1)[0].lower())
             for sub in subs
             if isinstance(sub, dict) and sub.get("hashTag")
         )
@@ -960,7 +1096,7 @@ def _pick_origin_ref(
 
     def rank(item: tuple[int, str]) -> tuple[int, bool, int]:
         index, path = item
-        category = _infer_image_category(path)
+        category = _image_category(path)
         thumb_rank = order.index(category) if category in order else len(order)
         return (thumb_rank, not _has_alpha(path), index)
 
@@ -1052,6 +1188,10 @@ def collect_record_capabilities(
 
     return {
         "has_ai_hints": bool(hints),
+        # 2026-09-07 (GeneratorsAI#20): AIHints の出所。"source" = 上流整備 /
+        # "derived" = データセット側の最小 scaffold / None = 不明。作画品質のばらつきを
+        # run_meta.json から切り分けるための指標。
+        "ai_hints_source": record.get("ai_hints_source"),
         "has_common_hints": bool(common),
         # 2026-08-02: 参照画像の同定に使ったインデックスバッジ。新命名の追従漏れを
         # run_meta.json から追えるようにする (例: Num:"2-alt" → "2B")。
@@ -3117,17 +3257,30 @@ def get_local_image_paths(
     work_key: str = "#Works_NumberTales",
     image_index_path: str | None = None,
     creations_db_base: str | None = None,
+    large_only: bool = False,
 ) -> list[str]:
-    """image-index.json からローカル画像パスの一覧を返す。"""
+    """image-index.json からローカル画像パスの一覧を返す。
+
+    ``large_only=True`` で原寸相当 (``is_large_original_candidate`` = 長辺 1024px 以上) に絞る。
+    LoRA 再学習の素材選別用 (GeneratorsAI#20 依頼4): 拡大学習を招く小サイズ素材
+    (``arts/chattingArt/`` ・ ``attr/tailsUnit`` ・960px の ``design`` 等) をここで落とす。
+    """
     # 2026-08-29: cwd 非依存化 (collect_reference_images と同じ理由)。
     if not creations_db_base:
         creations_db_base = str(_creations_db_repo_root())
-    path = image_index_path or os.environ.get(
-        "IMAGE_INDEX_PATH",
-        str(_project_root() / "_creations-ai" / "ai-dataset" / "image-index.json"),
-    )
+    path = image_index_path or _image_index_path()
     with open(path, encoding="utf-8") as f:
         idx = json.load(f)
 
-    rel_paths = (idx.get("works") or {}).get(work_key, {}).get("images", [])
-    return [str(Path(creations_db_base) / rel) for rel in rel_paths]
+    entries = (idx.get("works") or {}).get(work_key, {}).get("images") or []
+    paths: list[str] = []
+    for entry in entries:
+        rel = _index_entry_path(entry)
+        if not rel:
+            continue
+        if large_only and not (
+            isinstance(entry, dict) and entry.get("is_large_original_candidate")
+        ):
+            continue
+        paths.append(str(Path(creations_db_base) / rel))
+    return paths
