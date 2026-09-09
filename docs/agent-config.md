@@ -137,6 +137,62 @@ Get-Content scripts\sync-agent-skills.ps1 -Encoding Byte -TotalCount 3
 
 ---
 
+## 6. Codex で生成パイプラインを確認する
+
+Claude で使っている共通設定は `AGENTS.md`、作画スキルは `.agents/skills/numbertales-imagegen/` が正本。
+Codex では `AGENTS.md` → `CODEX.md` → この節の順に確認する。
+Claude 固有のツール設定をコピーする必要はない。
+
+### 実装と実行入口
+
+| 確認対象 | 参照先 |
+|---|---|
+| 作画の依頼解釈・実行手順 | [SKILL.md](../.agents/skills/numbertales-imagegen/SKILL.md)、[REFERENCE.md](../.agents/skills/numbertales-imagegen/REFERENCE.md) |
+| Stage 1〜5 の呼び出しと CLI | [image_pipeline.py](../src/pipeline/image_pipeline.py) |
+| ステージ分割実行 | [stage_cli.py](../src/pipeline/stage_cli.py) |
+| キャラクター選定・生成可否 | [dataset.py](../src/utils/dataset.py) |
+| 実行結果の読み方 | [output-and-logs.md](output-and-logs.md) |
+
+### PowerShell での確認
+
+以下はリポジトリルートで実行する。最初に Python が起動することを確認する。
+`.venv` が無い場合は [setup.md](setup.md) の環境準備を行う。
+起動拒否の場合はサンドボックスの権限を確認し、利用可能な承認機構で再確認する。
+
+```powershell
+$env:PYTHONUTF8 = '1' # Windows の cp932 で CLI の記号出力が失敗するのを防ぐ
+& ./.venv/Scripts/python.exe --version
+
+# 正本と Claude 用ミラーの一致（変更なし）
+powershell -ExecutionPolicy Bypass -File scripts/sync-agent-skills.ps1 -Check
+
+# CLI のロードとフラグ確認（生成なし）
+& ./.venv/Scripts/python.exe -m src.pipeline.image_pipeline --help
+& ./.venv/Scripts/python.exe -m src.pipeline.stage_cli --help
+
+# 単体プロバイダの生成対象・形態の確認（生成 API 未実行）
+& ./.venv/Scripts/python.exe -m src.batch_generate --nums 57 --forms both --provider both --dry-run
+```
+
+バッチの dry-run は5ステージの通し実行ではない。`find_character()` はローカルデータが不足すると
+DB API へフォールバックするため、完全オフラインの確認では manifest に対象レコードと `ai_hints` があることを先に確認する。
+`--help` の成功は CLI のロード、dry-run の成功は対象の選定までを示し、生成サービスの認証や画像品質は未検証。
+
+ランチャーを利用する場合は仮想環境を有効化し、スキル配下の実体を指定する。
+スキル内の `./bin/ntimg.ps1` はスキルディレクトリ基準のパス。
+
+```powershell
+$env:PYTHONUTF8 = '1'
+. ./.venv/Scripts/Activate.ps1
+& ./.agents/skills/numbertales-imagegen/bin/ntimg.ps1 --help
+```
+
+既存の生成結果を確認するときは、対象 run の `pipeline_summary.json`、`run_meta.json`、`prompt.txt`、
+`notes.md` を [出力仕様](output-and-logs.md) に沿って読み、画像は実際に開いて確認する。
+最終報告には、確認した run と成功・失敗ステージ、未実施の確認を明記する。
+
+---
+
 ## 関連ドキュメント
 
 - 共通仕様の正典: [`AGENTS.md`](../AGENTS.md)

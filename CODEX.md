@@ -32,10 +32,11 @@
 
 ### サンドボックスとネットワーク
 
-- Codex は既定でワークスペース書き込み・**ネットワーク遮断**のサンドボックスで動く。
-  本リポジトリの生成系（`src.pipeline.*` / `src.gemini` / `src.openai` / `src.adobe` / `src.canva` / MCP）は
-  **外部 API に到達できないと失敗する**。ネットワークが無い状態では実行を試みず、
-  組み立てた正確なコマンドを先輩へ提示して実機実行を促すこと。
+- サンドボックス・ネットワーク・承認の可否は、現在のセッションで提示された権限を確認する。
+  ローカルのソース閲覧、CLI の `--help`、スキル同期チェックは生成 API への接続なしで確認できる。
+  パイプライン確認依頼では [docs/agent-config.md](docs/agent-config.md#6-codex-で生成パイプラインを確認する) を読み、
+  実施できた確認と未検証のステージを区別して報告する。
+  外部 API が必要な生成はネットワーク権限の範囲で行い、利用できない場合は正確なコマンドを提示する。
 - ネットワークを許可した状態でも、**課金を伴う生成は勝手に走らせない**。バッチは `--dry-run` を先に実行し、
   RUN/SKIP 予定と capability を先輩へ共有してから本番実行する（詳細は AGENTS.md「実行コマンド」）。
 - 承認モードが自動寄り（都度確認なし）に設定されていても、上の課金ガードは免除されない。
@@ -59,7 +60,12 @@
   ```
 
 - スキル本文は**ツール中立に書く**（「実機 Codex」等の断定を避ける）。同じファイルが Claude 側にも配られるため。
-- 実行は素の `python -m ...` ではなく、原則ランチャー `bin/ntimg.ps1` / `bin/ntimg.sh` を経由する（cwd 非依存）。
+- 実行は原則、スキル配下のランチャー
+  [`.agents/skills/numbertales-imagegen/bin/ntimg.ps1`](.agents/skills/numbertales-imagegen/bin/ntimg.ps1) /
+  [`.agents/skills/numbertales-imagegen/bin/ntimg.sh`](.agents/skills/numbertales-imagegen/bin/ntimg.sh) を経由する（cwd 非依存）。
+  `bin/` はスキルディレクトリ基準。リポジトリ直下には存在しない。
+  `python` が PATH に無い場合は、利用可能な仮想環境を有効化するか、リポジトリルートで
+  `.venv/Scripts/python.exe -m ...` を使う。起動が拒否された場合は現在の承認機構で実行権限を確認する。
 
 ### サブモジュール内の AGENTS.md
 
