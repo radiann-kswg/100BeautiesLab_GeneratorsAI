@@ -47,6 +47,8 @@ License: [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/)
 
 ### エージェントスキルの配置と同期
 
+生成パイプラインの確認・引き継ぎを依頼された場合は、[docs/agent-config.md の確認手順](docs/agent-config.md#6-codex-で生成パイプラインを確認する) を読み、実装・CLI・ローカルデータ・既存ログの確認結果を報告する。
+
 作画支援スキル `numbertales-imagegen` も、設定書と同じくベンダー中立側を正本とする。
 
 | パス | 位置づけ |
