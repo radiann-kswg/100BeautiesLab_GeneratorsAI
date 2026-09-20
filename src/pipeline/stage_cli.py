@@ -75,11 +75,15 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from src.utils import build_run_output_dir, find_character  # noqa: E402
+from src.utils.dataset import apply_generation_gate  # noqa: E402
 from src.pipeline.prompt_refiner import (  # noqa: E402
     refine_prompt_dual,
     generate_random_scene,
 )
 from src.pipeline.db_collector import collect_character_data  # noqa: E402
+from src.pipeline.design_reference import (  # noqa: E402
+    add_design_reference, ReferenceConfirmationRequired, ReferenceCancelled,
+)
 from src.pipeline.rough_generator import generate_rough_images  # noqa: E402
 from src.pipeline.correction_generator import correct_rough_images  # noqa: E402
 from src.pipeline.final_generator import generate_final_images  # noqa: E402
@@ -170,6 +174,9 @@ def _stage1_combined(args: argparse.Namespace) -> None:
         rec = find_character(n, args.work)
         if rec is None:
             sys.exit(f"[ERROR] キャラクター #{n} ({args.work}) が見つかりません。")
+        permitted, gate = apply_generation_gate(rec, usage="image", num=n, printer=print)
+        if not permitted or gate["axis"] == "rights":
+            sys.exit("[ERROR] AI 利用が許可されていないため中止しました。")
         records.append(rec)
 
     start = datetime.now()
@@ -246,6 +253,9 @@ def cmd_stage1(args: argparse.Namespace) -> None:
     record = find_character(args.num, args.work)
     if record is None:
         sys.exit(f"[ERROR] キャラクター #{args.num} ({args.work}) が見つかりません。")
+    permitted, gate = apply_generation_gate(record, usage="image", num=args.num, printer=print)
+    if not permitted or gate["axis"] == "rights":
+        sys.exit("[ERROR] AI 利用が許可されていないため中止しました。")
 
     start = datetime.now()
     run_dir = build_run_output_dir(
@@ -310,6 +320,21 @@ def cmd_stage1(args: argparse.Namespace) -> None:
 def cmd_stage2(args: argparse.Namespace) -> None:
     run_dir = Path(args.run_dir)
     state = _load_state(run_dir)
+    decision = getattr(args, "reference_decision", None)
+    confirm = None
+    if decision:
+        # 先に失敗を提示した対象にだけ回答を適用する。事前の一括承認は禁止。
+        def confirm(warning: dict) -> bool:
+            return decision == "continue"
+        dirs = [run_dir / "stage2_db" / "design_reference"]
+        if _is_combined(state):
+            if not args.num:
+                sys.exit("--reference-decision は --num で警告対象を指定してください。")
+            dirs = [run_dir / f"char_{args.num:03d}" / "stage2_db" / "design_reference"]
+        for directory in dirs:
+            meta = directory / "run_meta.json"
+            if not meta.exists() or json.loads(meta.read_text(encoding="utf-8")).get("status") != "awaiting_confirmation":
+                sys.exit("回答対象の確認待ちがありません。先に stage2 を実行してください。")
 
     if _is_combined(state):
         targets = [args.num] if getattr(args, "num", None) else list(state["nums"])
@@ -318,13 +343,14 @@ def cmd_stage2(args: argparse.Namespace) -> None:
             if key not in state["chars"]:
                 sys.exit(f"[ERROR] Stage2: #{n} は対象キャラ {state['nums']} に含まれません。")
             char_dir = run_dir / f"char_{n:03d}"
-            cd = collect_character_data(n, state["form"], char_dir, state["work_key"])
+            cd = collect_character_data(n, state["form"], char_dir, state["work_key"], confirm)
             if cd is None:
                 sys.exit(f"[ERROR] Stage2: キャラクター #{n} のデータ取得に失敗。")
             ch = state["chars"][key]
             ch["record"] = cd["record"]
             ch["references"] = cd["references"]
             ch["spec"] = cd["spec"]
+            ch["prompts"] = add_design_reference(ch["prompts"], cd["spec"])
             print(f"  [Stage2] #{n:03d} OK - 参照 "
                   f"{len(cd['references']['urls'])}URL / "
                   f"{len(cd['references']['local_paths'])}local / "
@@ -334,7 +360,7 @@ def cmd_stage2(args: argparse.Namespace) -> None:
         return
 
     char_data = collect_character_data(
-        state["num"], state["form"], run_dir, state["work_key"]
+        state["num"], state["form"], run_dir, state["work_key"], confirm
     )
     if char_data is None:
         sys.exit(f"[ERROR] Stage2: キャラクター #{state['num']} のデータ取得に失敗。")
@@ -342,6 +368,7 @@ def cmd_stage2(args: argparse.Namespace) -> None:
     state["record"] = char_data["record"]
     state["references"] = char_data["references"]
     state["spec"] = char_data["spec"]
+    state["prompts"] = add_design_reference(state["prompts"], char_data["spec"])
     _mark_done(state, "stage2")
     _save_state(run_dir, state)
 
@@ -366,7 +393,7 @@ def cmd_stage3(args: argparse.Namespace) -> None:
         ch = state["chars"].get(key)
         if not ch:
             sys.exit(f"[ERROR] Stage3(合同): #{n} は対象キャラ {state['nums']} に含まれません。")
-        if "spec" not in ch:
+        if not ch.get("spec", {}).get("design_reference"):
             sys.exit(f"[ERROR] Stage3(合同): #{n} は先に stage2 を実行してください (spec 未取得)。")
 
         from src.gemini.generate import generate_image
@@ -398,7 +425,7 @@ def cmd_stage3(args: argparse.Namespace) -> None:
         print(f"[Stage3] #{n:03d} +{len(paths)}枚 / 累計 gemini {len(bucket)}枚")
         return
 
-    if "spec" not in state:
+    if not state.get("spec", {}).get("design_reference"):
         sys.exit("[ERROR] Stage3: 先に stage2 を実行してください (spec 未取得)。")
 
     rough = generate_rough_images(
@@ -559,6 +586,10 @@ def cmd_stage5(args: argparse.Namespace) -> None:
         composition_prompt = _build_multi_char_composition_prompt(
             records, state["form"], state.get("scene", "")
         )
+        from src.pipeline.design_reference import design_reference_block
+        for ch in state["chars"].values():
+            if ch.get("spec", {}).get("design_reference"):
+                composition_prompt += "\n" + design_reference_block(ch["spec"]["design_reference"])
         synth_dir = run_dir / "stage5_final" / "synth"
         synth = _compose_multi_char(
             records[0], state["form"],
@@ -692,6 +723,8 @@ def build_parser() -> argparse.ArgumentParser:
     p2.add_argument("--num", type=int, default=None,
                     help="合同時: 対象キャラを 1 体に限定 (省略時は全キャラ)")
     p2.set_defaults(func=cmd_stage2)
+    p2.add_argument("--reference-decision", choices=["continue", "cancel"],
+                    help="提示済みの画像観察失敗への利用者の回答。合同時は --num 必須")
 
     p3 = sub.add_parser("stage3", help="ラフ生成 (既定 1 枚ずつ追記)")
     _add_run_dir(p3)
@@ -728,7 +761,11 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
-    args.func(args)
+    try:
+        args.func(args)
+    except (ReferenceConfirmationRequired, ReferenceCancelled) as exc:
+        print(f"[確認待ち/中止] {exc}")
+        sys.exit(2)
 
 
 if __name__ == "__main__":

@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from typing import Callable
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(_PROJECT_ROOT) not in sys.path:
@@ -27,7 +28,9 @@ from src.utils.dataset import (  # noqa: E402
     extract_color_palette,
     _extract_record_badge,
     _filter_immutable_traits_by_form,
+    apply_generation_gate,
 )
+from src.pipeline.design_reference import collect_design_reference
 
 
 def collect_character_data(
@@ -35,6 +38,7 @@ def collect_character_data(
     form: str,
     pipeline_dir: Path,
     work_key: str = "#Works_NumberTales",
+    reference_confirmation: Callable[[dict], bool | None] | None = None,
 ) -> dict | None:
     """Stage 2: キャラクターを選定し DB から原典画像・特徴を取得する。
 
@@ -66,8 +70,15 @@ def collect_character_data(
     char_name = extract_char_name(record, fallback=_num_label)
     print(f"[Stage2] キャラクター選定: {char_name} / 形態: {form}")
 
+    permitted, gate = apply_generation_gate(record, usage="image", num=num, printer=print)
+    if not permitted or gate["axis"] == "rights":
+        return None
     references = collect_reference_images(record, form=form)
     spec = _build_character_spec(record, form)
+
+    spec["design_reference"] = collect_design_reference(
+        record, form, references, stage_dir, confirm=reference_confirmation,
+    )
 
     _save_db_summary(stage_dir, record, form, references, spec)
 

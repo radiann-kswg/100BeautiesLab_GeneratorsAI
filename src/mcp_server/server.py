@@ -24,11 +24,13 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import uuid
+from contextlib import asynccontextmanager, redirect_stdout
 from enum import Enum
 from typing import Any, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
 
 from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions
 from mcp.server.fastmcp import FastMCP
@@ -56,12 +58,21 @@ _auth_settings = (
     if ISSUER_URL else None
 )
 
+@asynccontextmanager
+async def _server_lifespan(server):
+    # stdio の通信ストリーム確保後にパイプラインの print を stderr へ送る。
+    # ジョブごとの redirect は競合するため、サーバーの全生存期間に適用する。
+    with redirect_stdout(sys.stderr):
+        yield {}
+
+
 mcp = FastMCP(
     SERVER_NAME,
     host=HOST,
     port=PORT,
     auth_server_provider=_oauth_provider,
     auth=_auth_settings,
+    lifespan=_server_lifespan,
 )
 
 
@@ -390,6 +401,25 @@ def _make_stage_callback(job_id: str):
 
 
 # ── ツール: 単体生成 ────────────────────────────────────────────
+class ReferenceDecisionInput(_Base):
+    job_id: str
+    request_id: str
+    proceed: StrictBool = Field(description="警告を表示して利用者が続行を選んだ場合のみ true。中止は false。推測禁止。")
+
+
+@mcp.tool(name="numbertales_answer_reference_warning", annotations={
+    "title": "画像観察失敗への回答", "readOnlyHint": False,
+    "destructiveHint": False, "idempotentHint": False, "openWorldHint": True,
+})
+async def numbertales_answer_reference_warning(params: ReferenceDecisionInput) -> str:
+    """job_status の警告を利用者へ示し、明示回答を得た後だけ呼ぶ。true は課金を伴う生成を再開する。"""
+    try:
+        MANAGER.answer_reference(params.job_id, params.request_id, params.proceed)
+    except ValueError as exc:
+        return json.dumps({"error": str(exc)}, ensure_ascii=False)
+    return json.dumps({"job_id": params.job_id, "decision": "continue" if params.proceed else "cancel"})
+
+
 @mcp.tool(
     name="numbertales_generate_character",
     annotations={
@@ -447,6 +477,7 @@ async def numbertales_generate_character(params: GenerateCharacterInput) -> str:
             correction_mode=p.correction_mode.value,
             rough_provider=p.rough_provider.value,
             stage_callback=_make_stage_callback(_job_id),
+            reference_confirmation=lambda warning: MANAGER.confirm_reference(_job_id, warning),
         )
         return _run_and_publish(result)
 
@@ -503,6 +534,7 @@ async def numbertales_generate_joint(params: GenerateJointInput) -> str:
             skip_canva=p.skip_canva,
             correction_mode=p.correction_mode.value,
             stage_callback=_make_stage_callback(_job_id),
+            reference_confirmation=lambda warning: MANAGER.confirm_reference(_job_id, warning),
         )
         return _run_and_publish(result)
 
@@ -569,6 +601,7 @@ async def numbertales_generate_from_natural(params: GenerateFromNaturalInput) ->
                 skip_canva=p.skip_canva,
                 correction_mode=p.correction_mode.value,
                 stage_callback=cb,
+                reference_confirmation=lambda warning: MANAGER.confirm_reference(_job_id, warning),
             )
         else:
             nat_forms = [cp.get("form", "corefolder") for cp in char_params]
@@ -584,6 +617,7 @@ async def numbertales_generate_from_natural(params: GenerateFromNaturalInput) ->
                 skip_canva=p.skip_canva,
                 correction_mode=p.correction_mode.value,
                 stage_callback=cb,
+                reference_confirmation=lambda warning: MANAGER.confirm_reference(_job_id, warning),
             )
         summary = _run_and_publish(result)
         summary["parsed"] = char_params
@@ -636,6 +670,7 @@ async def numbertales_iterate(params: IterateInput) -> str:
             revisions=p.revisions,
             field_overrides=p.field_overrides,
             stage_callback=_make_stage_callback(_job_id),
+            reference_confirmation=lambda warning: MANAGER.confirm_reference(_job_id, warning),
         )
         return _run_and_publish(result)
 
@@ -656,6 +691,10 @@ async def numbertales_iterate(params: IterateInput) -> str:
 )
 async def numbertales_job_status(params: JobStatusInput) -> str:
     """生成ジョブの進捗・完成画像リンクを照会する（読み取り専用）。
+
+    status=awaiting_confirmation なら confirmation の理由を利用者に表示し、
+    続行/中止を質問する。回答後 numbertales_answer_reference_warning を呼ぶ。
+    無回答を続行と解釈しない。ネイティブダイアログ非対応のクライアントでは会話で確認する。
 
     Args:
         params (JobStatusInput): job_id (str)

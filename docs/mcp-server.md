@@ -18,6 +18,7 @@
 | `numbertales_job_status` | — | ジョブ進捗・完成画像リンク照会（読取専用） |
 | `numbertales_list_runs` | — | 直近ジョブ一覧（読取専用） |
 | `numbertales_get_run_logs` | — | 各ステージの中間ログ・プロンプト・画像 URL 照会（読取専用） |
+| `numbertales_answer_reference_warning` | `JobManager.answer_reference` | Stage 2 の画像観察失敗について、利用者の続行/中止の回答を返す |
 
 ### 非同期ジョブ方式
 
@@ -98,6 +99,55 @@ Claude Desktop の `claude_desktop_config.json` 例:
 ---
 
 ## 4. Docker（ローカル / リモート共通）
+
+### GPT / Codex から利用する
+
+生成本体と MCP は共通で、Claude 専用ではない。Codex のローカルスキルは
+`.agents/skills/numbertales-imagegen/` をそのまま利用できる。
+
+Codex の MCP 設定例（`~/.codex/config.toml` またはプロジェクトの `.codex/config.toml` に追加）:
+
+```toml
+[mcp_servers.numbertales]
+command = 'C:\Visual Studio Code UserFile\100BeautiesLab_GeneratorsAI\.venv\Scripts\python.exe'
+args = ['-m', 'src.mcp_server.server']
+cwd = 'C:\Visual Studio Code UserFile\100BeautiesLab_GeneratorsAI'
+env = { MCP_TRANSPORT = 'stdio', OUTPUT_SINK = 'local', PYTHONUTF8 = '1' }
+startup_timeout_sec = 30
+```
+
+パスは設置先に合わせる。依存関係は `requirements-mcp.txt` から準備する。
+API キーは既存の `.env` に置き、設定例に埋め込まない。登録後はクライアントを再起動し、
+まず `numbertales_list_runs` で読取接続を確かめる。
+
+ChatGPT Web はローカル TOML を読まない。Developer mode のカスタム MCP アプリに
+既存サーバーの HTTPS `/mcp` URL を登録する。利用アカウントの対応と管理者設定を確認し、
+OAuth 接続後にツール一覧・`numbertales_list_runs` を確認する。
+リモートの完成画像は GCS / Drive シンクのリンクで取得する。
+**現在の `SimpleOAuthProvider` は認可を自動承認する個人用実装であり、利用者を本人確認しない。**
+OAuth 接続成功だけをアクセス制限の証拠にしない。既存のアクセス制限下で検証し、
+不特定利用者に公開する場合は本人確認する認証基盤への置換が必要。
+
+公式仕様: [Codex MCP](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)、
+[ChatGPT Developer mode](https://developers.openai.com/api/docs/guides/developer-mode)。
+
+### 画像観察失敗時の確認
+
+1. 生成ツールでジョブを開始し、`numbertales_job_status` で進捗を取得する。
+2. `status=awaiting_confirmation` なら `confirmation.reason` と質問を利用者に表示する。
+   ネイティブの質問ダイアログが使えるクライアントではそれを使い、なければ会話で尋ねる。
+3. 明示回答後だけ `numbertales_answer_reference_warning` を呼ぶ。
+
+```json
+{"params": {"job_id": "取得したジョブID", "request_id": "confirmation内のID", "proceed": true}}
+```
+
+`true` は AIHints と既存参照画像だけで課金を伴う生成を再開、`false` は中止。
+続行後は同じジョブを照会する。古い確認ID、他ジョブのID、二重回答は拒否する。
+無回答は30分で中止となり、自動続行しない。確認待ちは既存 worker を1枠使う（同時2枠）。
+ジョブと待機中の実行はメモリ上にあるためサーバー再起動では失われる。警告・回答ログは
+実行フォルダに残るが、再起動後のジョブ再開は未対応。
+設定登録・実アカウントの OAuth・生成品質の確認は、ローカルのツール一覧確認とは別に行う。
 
 ```bash
 docker build -t numbertales-mcp .

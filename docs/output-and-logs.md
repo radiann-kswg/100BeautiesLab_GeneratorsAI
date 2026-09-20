@@ -249,6 +249,16 @@ output/{YYYYMMDD}/{ts}_pipeline_{form}_nums{AAA}_{BBB}/
 
 ## 7. 関連規約
 
+### Stage 2 画像観察ログ
+
+`stage2_db/design_reference/`（合同では `char_{NNN}/stage2_db/design_reference/`）に
+`prompt.txt` / `run_meta.json` / `notes.md` を保存する。
+`run_meta.json` は AIHints 原文、参照候補、観察で実際に使った `sources`、
+`observations` / `unknowns` / `conflicts`、失敗理由 `warning`、回答 `user_decision` を保持する。
+状態は `running` → `ok`、または `awaiting_confirmation` → `fallback_approved` / `cancelled`。
+中止済み run は再利用せず新規実行する。同一 run の再開では入力が一致する保存結果を使い、
+プロンプト・ノートを初期化し直さない。AIHints / 参照候補が変わった場合は新規実行が必要。
+
 - **絶対に上書きしない**: 既存 run の `prompt.txt` / `run_meta.json` / `notes.md` は失敗時でも残す。新しい試行は必ず新フォルダ。
 - **MIME 整合性**: Gemini が JPEG を返しているのに `.png` で保存されると後段の Anthropic API などに弾かれる。
   - 保存側は [`src/utils/image_io.py`](../src/utils/image_io.py) の `save_image_bytes()` がバイト列マジックで自動補正する。

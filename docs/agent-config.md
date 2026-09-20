@@ -139,6 +139,11 @@ Get-Content scripts\sync-agent-skills.ps1 -Encoding Byte -TotalCount 3
 
 ## 6. Codex で生成パイプラインを確認する
 
+Codex のローカルスキルと、Codex / ChatGPT Web から共通 MCP を使う接続例は
+[MCP 運用ガイド](mcp-server.md#GPT--Codex-から利用する) を参照する。
+Stage 2 の画像観察失敗は自動続行せず、利用者への確認を要する。
+非対話のローカル実行では分割 CLI を使い、同じ run に回答して再開する。
+
 Claude で使っている共通設定は `AGENTS.md`、作画スキルは `.agents/skills/numbertales-imagegen/` が正本。
 Codex では `AGENTS.md` → `CODEX.md` → この節の順に確認する。
 Claude 固有のツール設定をコピーする必要はない。

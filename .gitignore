@@ -35,6 +35,7 @@ Thumbs.db
 
 # Editor
 .vscode/settings.json
+.codex/config.toml
 *.swp
 
 # Skill (numbertales-imagegen) — machine-specific config / build artifacts

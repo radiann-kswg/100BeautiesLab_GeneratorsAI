@@ -168,6 +168,19 @@ NT_MODULE=src.batch_generate ./bin/ntimg.sh --nums 15,22,49,57 --forms both --pr
 
 ## 出力とログの扱い
 
+### Stage 2 の画像観察と確認待ち
+
+- 特徴の正典・確認規則は `AGENTS.md` の「Stage 2 のデザイン参照と確認待ち」に従う。
+- ローカルで利用者の入力端末を保持できない場合は `src.pipeline.stage_cli` を使う。
+  Stage 2 が確認待ちになったらログの理由を表示し、利用者の明示回答後にだけ
+  `stage2 --run-dir <同じrun> --reference-decision continue|cancel` で回答する。
+  合同では警告対象の `--num` も指定する。回答後は通常の stage3 以降を実行する。
+- MCP は `numbertales_job_status` の `awaiting_confirmation` を監視する。
+  `confirmation.reason` を表示し、利用者に続行/中止を確認する。質問UIが使えない場合は会話で尋ねる。
+  明示回答後だけ `numbertales_answer_reference_warning` に同じ `job_id` / `request_id` と
+  `proceed=true|false` を渡す。利用者の回答を推測したり、一般的な生成依頼を失敗後の続行承認と見なしたりしない。
+- Codex と ChatGPT Web の接続方法は `docs/mcp-server.md` の「GPT / Codex から利用する」を参照する。
+
 - 出力先: `output/{YYYYMMDD}/{ts}_pipeline_{form}_num{NNN}[_suffix]/`（1実行=1フォルダ）。
 - 各 run には `prompt.txt` / `run_meta.json` / `notes.md` が残る。**上書き禁止・追記マージのみ**。
 - 生成後は `pipeline_summary.json` の `status` と各ステージ結果を見て、成功/失敗を先輩に要約する。

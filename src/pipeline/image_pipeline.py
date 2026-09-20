@@ -74,6 +74,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 from src.utils import build_run_output_dir, extract_char_name  # noqa: E402
 from src.pipeline.prompt_refiner import refine_prompt_dual, generate_random_scene  # noqa: E402
 from src.pipeline.db_collector import collect_character_data  # noqa: E402
+from src.pipeline.design_reference import add_design_reference  # noqa: E402
 from src.pipeline.rough_generator import generate_rough_images, retry_rough_images  # noqa: E402
 from src.pipeline.correction_generator import correct_rough_images  # noqa: E402
 from src.pipeline.final_generator import generate_final_images  # noqa: E402
@@ -153,6 +154,7 @@ def run_image_pipeline(
     revisions: "str | list[str] | None" = None,
     rough_provider: str = "gemini",
     stage_callback: "Callable[[str, dict, str], None] | None" = None,
+    reference_confirmation: "Callable[[dict], bool | None] | None" = None,
 ) -> PipelineResult:
     """画像生成パイプライン全体 (Stage 1→2→3→4→5) を実行する。
 
@@ -278,7 +280,7 @@ def run_image_pipeline(
     # Stage 2: キャラクター選定 + DB データ取得
     # ──────────────────────────────────────
     print("\n[=] Stage 2: キャラクター選定 + 創作 DB データ取得")
-    char_data = collect_character_data(num, form, pipeline_dir, work_key)
+    char_data = collect_character_data(num, form, pipeline_dir, work_key, reference_confirmation)
     if char_data is None:
         result.status = "failed"
         result.errors.append(f"Stage 2: キャラクター #{num} のデータ取得に失敗しました。")
@@ -287,6 +289,7 @@ def run_image_pipeline(
 
     record = char_data["record"]
     char_spec = char_data["spec"]
+    prompts = add_design_reference(prompts, char_spec)
     result.stage2_summary = {
         "char_name": char_spec.get("char_name", ""),
         "ref_url_count": len(char_data["references"]["urls"]),
@@ -569,6 +572,7 @@ def run_combined_pipeline(
     iterate_from: str | None = None,
     revisions: "str | list[str] | None" = None,
     stage_callback: "Callable[[str, dict, str], None] | None" = None,
+    reference_confirmation: "Callable[[dict], bool | None] | None" = None,
 ) -> MultiCharPipelineResult:
     """複数キャラクターを 1 枚に合同生成するパイプライン (Stage 1→2→3→4→5)。
 
@@ -657,7 +661,7 @@ def run_combined_pipeline(
             return result
         records.append(rec)
         char_dir = pipeline_dir / f"char_{_fmt_num(n)}"
-        char_data = collect_character_data(n, forms_map[n], char_dir, work_key)
+        char_data = collect_character_data(n, forms_map[n], char_dir, work_key, reference_confirmation)
         if char_data is None:
             result.status = "failed"
             result.errors.append(f"Stage 2: #{n} DB データ取得に失敗しました。")
@@ -694,7 +698,7 @@ def run_combined_pipeline(
             composition=composition, background=background,
             costume=costume, field_overrides=field_overrides,
         )
-        per_char_prompts[n] = prompts
+        per_char_prompts[n] = add_design_reference(prompts, char_data_map[n]["spec"])
 
     result.scene_used = scene
     result.stage1_prompts = {
@@ -882,6 +886,10 @@ def run_combined_pipeline(
     print(f"\n[=] Stage 5: キャラクター完成レンダー {len(per_char_best)} 枚を合成 ({_STAGE5_SYNTH_COUNT} 枚, 仕上げ){_comp_note}")
     composition_prompt = _build_multi_char_composition_prompt(
         records, forms_map, scene, has_comp_rough=has_comp_rough
+    )
+    from src.pipeline.design_reference import design_reference_block
+    composition_prompt += "\n".join(
+        design_reference_block(char_data_map[n]["spec"]["design_reference"]) for n in nums
     )
     stage5_dir = pipeline_dir / "stage5_final"
     synth_images = _compose_multi_char(
@@ -1389,4 +1397,9 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    from src.pipeline.design_reference import ReferenceConfirmationRequired, ReferenceCancelled
+    try:
+        main()
+    except (ReferenceConfirmationRequired, ReferenceCancelled) as exc:
+        print(f"[確認待ち/中止] {exc}")
+        sys.exit(2)

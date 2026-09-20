@@ -152,6 +152,10 @@ def _analyze_rough_with_openai(
         "問題がなければ overall_ok: true として violations / missing / composition_issues は空リストにしてください。"
     )
 
+    if spec.get("design_reference"):
+        from src.pipeline.design_reference import design_reference_block
+        user = design_reference_block(spec["design_reference"]) + user
+
     def _encode_image(path: Path) -> tuple[str, str]:
         ext = path.suffix.lstrip(".").lower()
         mime = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "webp": "image/webp"}.get(ext, "image/png")
