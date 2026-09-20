@@ -215,6 +215,13 @@ PowerShell で `npm test` が解決できない環境では `npm.cmd test` を�
 
 ## 実行ログ規約
 
+### Stage 2 のデザイン参照と確認待ち
+
+- 特徴情報は CreationsAI の AIHints 文面を正典とし、利用許可された公式 DB 設定画像の観察を補助に使う。画像観察で AIHints を上書きしない。
+- Stage 2 の観察を Stage 3 のラフ生成と Stage 4 の検査に渡す。観察失敗時はラフ生成前に停止し、理由を表示して利用者に続行/中止を確認する。
+- 利用者が明示的に続行を選んだ場合だけ、AIHints と既存参照画像へフォールバックする。無回答・期限切れは承認ではない。権利軸の拒否はこの確認で解除できない。
+- 観察・根拠・警告・回答は `stage2_db/design_reference/` の `prompt.txt` / `run_meta.json` / `notes.md` に保存する。合同では各 `char_{NNN}/stage2_db/` 配下。詳細は [docs/output-and-logs.md](docs/output-and-logs.md)、確認手順は [docs/usage-generation.md](docs/usage-generation.md) を参照。
+
 - 各実行ディレクトリ配下に必ず次の 3 ファイルを残す（上書き禁止・追記マージのみ）。
   - `prompt.txt` — モデルに渡したプロンプト本文
   - `run_meta.json` — provider/model/参照画像/生成結果/エラー要旨などの構造化メタ

@@ -530,6 +530,32 @@ python -m src.batch_generate --nums 15,22,49,57 --forms both --provider both --s
 
 ## 6. 失敗時の挙動
 
+### Stage 2: デザイン参照の事前観察
+
+Stage 2 で OpenAI Vision が利用許可された公式 DB の設定画像を観察する（追加の API 利用が発生）。
+`GPT_MODEL` と既存の `OPENAI_API_KEY` を使う。CreationsAI の AIHints の共通部・対象形態の文面を
+原文のまま保持し、観察・不明点・矛盾を分離する。`[キャラクターデザイン遵守]` ブロックを
+Stage 3 の生成プロンプト（ラフ再生成を含む）と Stage 4 の検査へ追加し、最終生成にも引き継ぐ。
+画像観察の対象は DB 内の設定画カテゴリで、外部の原点アンカーや生成済み画像は含めない。
+現状は最大3画像を観察し、遮蔽された部位は不明として扱う。特徴の完全遵守を保証する検査ではない。
+
+取得・観察失敗時は Stage 3 前に停止し、理由と「AIHints と既存参照画像だけで続行するか」を尋ねる。
+対話 CLI では `y` のみ続行する。入力端末を保持できないエージェントは最初から分割 CLI を使う。
+EOF の場合は exit 2 で止まり、分割 CLI は同じ run の Stage 2 に回答できる。
+
+```powershell
+# 警告を利用者に提示し、明示回答を得た後にだけ実行する
+python -m src.pipeline.stage_cli stage2 --run-dir <run-dir> --reference-decision continue
+# 中止する場合
+python -m src.pipeline.stage_cli stage2 --run-dir <run-dir> --reference-decision cancel
+```
+
+合同では `--num` で警告対象も指定する。続行回答後に Stage 3 以降を実行する。
+未提示の警告への事前回答は拒否する。回答待ちの再開では観察 API を再実行しない。
+通し CLI は対話端末で回答できるが、EOF 終了後の同一 run 再開には対応せず、再起動は新規実行になる。
+古い分割 state に観察情報がない場合は、Stage 3 の前に Stage 2 を実行し直す。
+MCP の確認待ちと回答ツールは [mcp-server.md](mcp-server.md) を参照。
+
 - API エラーや認証失敗で生成が落ちても、 **`prompt.txt` と `run_meta.json` は必ず残る**。
 - `run_meta.json` の `status: "failed"` + `errors[]` で原因が辿れる。
 - 同じプロンプトで成功した過去 run と diff を取ると、何が悪化したか分かりやすい。

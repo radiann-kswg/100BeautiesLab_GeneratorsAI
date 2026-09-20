@@ -42,6 +42,7 @@ class Job:
     result: dict[str, Any] | None = None   # 完了時の要約 + 出力リンク
     error: str = ""
     partial_result: dict[str, Any] | None = None  # 実行中の中間ステージ結果（Stage3/4 完了時に更新）
+    confirmation: dict[str, Any] | None = None
 
     def snapshot(self) -> dict[str, Any]:
         """外部公開用の辞書スナップショットを返す。"""
@@ -56,6 +57,7 @@ class Job:
             "result": self.result,
             "error": self.error,
             "partial_result": self.partial_result,
+            "confirmation": self.confirmation,
         }
 
 
@@ -66,6 +68,40 @@ class JobManager:
         self._executor = ThreadPoolExecutor(max_workers=max_workers)
         self._jobs: dict[str, Job] = {}
         self._lock = threading.Lock()
+        self._answers: dict[str, tuple[threading.Event, bool | None]] = {}
+
+    def confirm_reference(self, job_id: str, warning: dict, timeout: float = 1800) -> bool | None:
+        """警告を公開して回答を待つ。無回答・期限切れは続行許可にならない。"""
+        event = threading.Event()
+        request_id = uuid.uuid4().hex
+        with self._lock:
+            job = self._jobs[job_id]
+            job.confirmation = {**warning, "request_id": request_id,
+                                "timeout_seconds": timeout,
+                                "instruction": "理由を利用者に表示し、続行/中止を質問してください。回答を推測しないでください。"}
+            job.status = "awaiting_confirmation"
+            self._answers[request_id] = (event, None)
+        # ponytail: 確認待ちも既存の worker 1 枠を占有する。多数の同時利用が必要なら永続 continuation へ移す。
+        event.wait(timeout)
+        with self._lock:
+            _, answer = self._answers.pop(request_id)
+            job.confirmation = None
+            job.status = _STATUS_RUNNING
+        return answer
+
+    def answer_reference(self, job_id: str, request_id: str, proceed: bool) -> None:
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if (job is None or job.status != "awaiting_confirmation" or not job.confirmation
+                    or job.confirmation.get("request_id") != request_id):
+                raise ValueError("該当する確認待ちがありません。最新の job_status を取得してください。")
+            event, answer = self._answers[request_id]
+            if answer is not None:
+                raise ValueError("この確認には回答済みです。")
+            if type(proceed) is not bool:
+                raise ValueError("回答は true または false で指定してください。")
+            self._answers[request_id] = (event, proceed)
+            event.set()
 
     def submit(
         self,
@@ -129,9 +165,10 @@ class JobManager:
                 job.status = _STATUS_SUCCEEDED
                 job.finished_at = _now()
         except Exception as e:  # noqa: BLE001 - 失敗内容をジョブに保存して継続
+            from src.pipeline.design_reference import ReferenceCancelled
             with self._lock:
                 job.error = f"{type(e).__name__}: {e}\n{traceback.format_exc(limit=4)}"
-                job.status = _STATUS_FAILED
+                job.status = "cancelled" if isinstance(e, ReferenceCancelled) else _STATUS_FAILED
                 job.finished_at = _now()
 
     def get(self, job_id: str) -> Job | None:
