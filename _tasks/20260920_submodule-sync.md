@@ -1,4 +1,4 @@
-# サブモジュール同期ログ — 2026-09-20 09:00
+# サブモジュール同期ログ — 2026-09-20 14:55
 
 > 実機 PowerShell スクリプト `scripts/daily-submodule-sync.ps1` による自動実行。
 
@@ -6,39 +6,12 @@
 
 | サブモジュール | 追跡先 | 旧 | 新 | 判定 | 備考 |
 |---|---|---|---|---|---|
-| `_creations-ai` | origin/master | 090a27a | 619fabf | UPDATED | FF 取り込み完了 |
+| `_creations-ai` | origin/master | 619fabf | 619fabf | NO-CHANGE | 最新 |
 | `_creations-ai/creations-db` | origin/addon-ai-tag | 25e0053 | 25e0053 | NO-CHANGE | 最新 |
 
 ## 取り込んだ更新の内容
 
-### `_creations-ai` 090a27a..619fabf
-
-```
-619fabf chore: sync ai-dataset (creations-db@25e00538) 窶・ai_training allowed: 160 [skip ci]
-```
-
-変更ファイル:
-
-```
-ai-dataset/build-info.json                        |  6 +++---
- ai-dataset/image-index.json                       |  2 +-
- ai-dataset/index.json                             |  4 ++--
- ai-dataset/manifest-training.jsonl                | 10 +++++-----
- ai-dataset/manifest.jsonl                         | 18 +++++++++---------
- ai-dataset/policy.json                            |  2 +-
- ai-dataset/works/Works_CommonReferences.json      |  2 +-
- ai-dataset/works/Works_DestinyFoxRecords.json     |  2 +-
- ai-dataset/works/Works_FLInvestigator78.json      |  2 +-
- ai-dataset/works/Works_NumberTales.json           |  8 ++++++--
- ai-dataset/works/Works_PastDivers.json            |  2 +-
- ai-dataset/works/Works_ShauErRiders.json          |  2 +-
- ai-dataset/works/Works_SinisterChangingGirls.json |  3 ++-
- ai-dataset/works/Works_UnauthedLogica.json        |  2 +-
- ai-dataset/works/Works_UnibyteLive.json           |  2 +-
- ai-dataset/works/Works_VirtuesUs.json             |  2 +-
- creations-db                                      |  2 +-
- 17 files changed, 38 insertions(+), 33 deletions(-)
-```
+今回取り込んだ更新はありません。
 
 ## 最適化メモ
 
