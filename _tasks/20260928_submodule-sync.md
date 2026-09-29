@@ -48,3 +48,22 @@ ai-dataset/build-info.json                        | 18 ++++-----
 > Cowork の `daily-submodule-sync-optimize` タスク (Claude) に差分レビューを依頼し、
 > `src/` ・ `docs/` 側の追従最適化を行うこと。本スクリプトは git 同期とログ・コミットのみ担当。
 
+
+## 最適化レビュー結果 — 2026-09-28 (Cowork / Claude「57(イズナ)」追記)
+
+- レビュー実施: Cowork スケジュールタスク（実機スクリプト取り込み後の追従レビュー）。
+- 取り込み内容: `_creations-ai` 1f07ee3 → 8a47bfe（FF）。`_creations-ai/creations-db` は 2274eb1 のまま NO-CHANGE。
+- リモート HEAD 照合（GitHub コネクタ・読み取りのみ / 認証OK）:
+  - CreationsAI `master` remote = 8a47bfe … ローカルと一致（次回同期待ちの未取り込み更新なし）。
+  - CreationsDB `addon-ai-tag` remote = 2274eb1 … ローカルと一致（未取り込み更新なし）。
+- 差分の性質: `ai-dataset/` 配下のデータ・件数・タイムスタンプ更新のみ。
+  - `manifest-training.jsonl`: 190 → 192 行。トップレベルキー集合は旧新で完全一致（スキーマ変更なし）。
+  - `manifest.jsonl`: 757 行のまま。キー集合一致。
+  - `build-info.json`: allowed_characters 162 → 164 / disallowed 551 → 549 / with_ai_hints 114 → 116 等の統計更新のみ。
+  - `index.json` / `policy.json`: `_generated_at`・`_submodule_commit`・image_count 635 → 637 のみ。
+  - `works/Works_NumberTales.json`: トップレベルキー集合一致（スキーマ変更なし。データ追記のみ）。
+- スキーマ / `manifest-training.jsonl` 前提 / フィールド名 / API / 参照パスへの影響: **なし**。
+  - AGENTS.md「docs と指示書の同期ルール」表のデータ関連トリガ（`Works_*.json` のスキーマ変更）は非該当。
+- 判定: **src/・docs/・README.md・AGENTS.md の追従最適化は不要**（過剰改変回避のため編集せず）。
+- コミット: 本追記は Cowork サンドボックスからはコミットしない（CRLF 差分による破壊回避）。実機で `git add _tasks/20260928_submodule-sync.md && git commit`（または `scripts/daily-submodule-sync.ps1`）を実施のこと。
+- 備考: この Linux VM 側 git は working-tree を CRLF↔LF 差分（numstat 50/50）として表示。実機の autocrlf 環境では正常。`.git/index.lock` は FUSE マウント上で削除不可（既知制約）。
