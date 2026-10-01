@@ -18,6 +18,20 @@ from src.utils.dataset import (
 )
 
 
+def _submodule_ready() -> bool:
+    """creations-db サブモジュール/manifest が揃っているか (未配置環境では skip)。"""
+    try:
+        return find_character(93) is not None
+    except Exception:  # noqa: BLE001
+        return False
+
+
+pytestmark = pytest.mark.skipif(
+    not _submodule_ready(),
+    reason="_creations-ai サブモジュール/manifest 未配置環境では実データ依存テストを skip",
+)
+
+
 def test_kumi_number_mark_is_selected_for_both_forms():
     record = find_character(93)
     for form in ("corefolder", "humanoid"):

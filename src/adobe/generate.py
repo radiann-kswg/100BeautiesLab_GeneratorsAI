@@ -52,6 +52,7 @@ from src.utils import (  # noqa: E402
     collect_reference_images,
     finalize_run_logs,
     find_character,
+    format_num,
     initialize_run_logs,
     next_iteration_label,
     parse_revisions,
@@ -288,7 +289,7 @@ def generate_image_firefly(
     saved: list[Path] = []
     results: list[dict[str, object]] = []
     for i, url in enumerate(urls):
-        out_path = output_dir / f"num{num:03d}_{form}_firefly_{i + 1:02d}.png"
+        out_path = output_dir / f"num{format_num(num)}_{form}_firefly_{i + 1:02d}.png"
         try:
             with urllib.request.urlopen(url) as resp:  # noqa: S310 (Firefly presigned URL)
                 raw = resp.read()

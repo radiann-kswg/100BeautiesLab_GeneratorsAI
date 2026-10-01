@@ -412,6 +412,12 @@ def generate_image(
                 ref_labels[ep_str] = extra_ref_label
         ref_limit = 5
 
+    # 非部位参照 (キャラクター単体レンダー等) は全員分を必ず収める。合同生成で
+    # extra_ref_locals に 6 キャラ分のレンダーが渡されるケースのように、既定の
+    # base 枠 (4/5) より多い場合は、その枚数を下限として ref_limit を引き上げる。
+    non_detail_count = sum(1 for p in ref_locals if not is_detail_reference(p))
+    ref_limit = max(ref_limit, non_detail_count)
+
     # 部位図を追加しても全体図・構図ガイドの参照枠を減らさない。
     ref_limit += sum(is_detail_reference(p) for p in ref_locals)
 

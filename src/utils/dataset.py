@@ -1511,11 +1511,14 @@ def _num_matches(stored_num: Any, target: int | str) -> bool:
     return str(stored_num) == str(target)
 
 
-def resolve_badge(value: Any, work_key: str = "#Works_NumberTales") -> int | str:
+def resolve_badge(
+    value: Any, work_key: str = "#Works_NumberTales", manifest_path: str | None = None
+) -> int | str:
     """CLI / MCP の --badge 値をレコードの Num へ解決する (argparse の type= にも使える)。
 
     57 / "57" → 57、"2B" (DB の Num_Badge) → "2-alt"、"67B" → "67-old"。
     バッジに一致しない値 ("2-alt" や名前) はそのまま返し、従来の Num 照合に委ねる。
+    `manifest_path` 指定時は find_character() と同じレコード集合から解決する。
     """
     if isinstance(value, int):
         return value
@@ -1523,7 +1526,7 @@ def resolve_badge(value: Any, work_key: str = "#Works_NumberTales") -> int | str
     if text.isdigit():
         return int(text)
     try:
-        records = get_characters()
+        records = get_characters(manifest_path)
     except (OSError, json.JSONDecodeError):
         return text
     hits = [r for r in records
@@ -1546,7 +1549,7 @@ def find_character(
          - ローカルで見つかっても ai_hints が欠けている場合は API から ai_hints を補完
          - ローカルで見つからない場合は API から全データを取得して manifest 相当に整形
     """
-    num = resolve_badge(num, work_key)
+    num = resolve_badge(num, work_key, manifest_path)
     target: dict[str, Any] | None = None
     for r in get_characters(manifest_path):
         data = r.get("data", {})
