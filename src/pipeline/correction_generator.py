@@ -24,6 +24,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -39,8 +40,18 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 from src.utils.dataset import (  # noqa: E402
     extract_color_palette,
+    IMAGE_TEXT_POLICY,
+    _build_number_print_block,
     _format_color_palette_lines,
 )
+
+_NUMBER_FIX_RE = re.compile(r"番号|数字|字形|number|digit|glyph|font", re.IGNORECASE)
+
+
+def _number_block_if_targeted(record: dict, form: str, fixes: str) -> str:
+    """i2i 最小修正は「それ以外は起点画像に忠実」が主眼。番号が修正対象のときだけ
+    字形ブロックを足し、無関係な修正で番号を描き直させない。"""
+    return _build_number_print_block(record, form) if _NUMBER_FIX_RE.search(fixes or "") else ""
 
 
 def _palette_lines(spec: dict, limit: int = 6) -> str:
@@ -128,6 +139,8 @@ def _analyze_rough_with_openai(
         "violations に「蛇足: <要素>」の形式で追加。\n"
         "- 原典にある識別要素 (耳・尻尾の本数/形・髪型・アクセサリ・番号バッジ・模様) が"
         "欠けている/形が違う/数が違う場合は、missing に「<要素>: <原典ではどうか>」の形式で追加。\n"
+        "追加の公式部位図と番号の字形・線幅・間隔・切れ目・装飾を比較し、汎用フォントへの置換も missing に追加。\n"
+        "部位図を全身と比較しないこと。指定位置は全体図とDB部位別仕様で確認。\n"
         "ポーズや構図の違いによる自然な差・左右対称な要素は違反ではありません。\n"
         if has_ref
         else ""
@@ -147,6 +160,8 @@ def _analyze_rough_with_openai(
         f"以下の要素が存在する場合は violations に追加してください"
         f"（ただし上記の不変特徴として期待されるものは violations に含めないこと）:\n{violation_list}\n"
         f"{palette_section}"
+        f"{spec.get('number_print_spec', '')}\n"
+        f"{spec.get('appearance_detail_spec', '')}\n"
         f"{chirality_section}\n"
         "構図として明らかに破綻している点があれば composition_issues に追加してください。\n"
         "問題がなければ overall_ok: true として violations / missing / composition_issues は空リストにしてください。"
@@ -171,6 +186,19 @@ def _analyze_rough_with_openai(
         content.append(
             {"type": "image_url", "image_url": {"url": f"data:{ref_mime};base64,{ref_b64}"}}
         )
+
+    for detail_path in spec.get("detail_reference_paths") or []:
+        path = Path(detail_path)
+        if not path.is_file() or path == ref_image_path:
+            continue
+        from src.utils.image_io import load_reference_bytes
+        loaded = load_reference_bytes(path)
+        if loaded is None:
+            continue
+        raw, detail_mime = loaded
+        content.append({"type": "text", "text": "公式部位図 (この部位の形・字形のみ照合): " + path.name})
+        content.append({"type": "image_url", "image_url": {
+            "url": f"data:{detail_mime};base64,{base64.b64encode(raw).decode('ascii')}"}})
 
     try:
         client = OpenAI(api_key=api_key)
@@ -261,7 +289,8 @@ def _apply_correction_gemini(
             f"{palette_line}"
             f"- キャラクター番号: #{num_val}\n"
             "- 作風（線の太さ・塗りスタイル）は入力画像に合わせること\n"
-            "- 画像内にテキスト・文字・ラベルを一切描かないこと"
+            f"{IMAGE_TEXT_POLICY}"
+            f"{_number_block_if_targeted(record, form, fix_lines)}"
         )
         iterate_path = str(rough_path)
 
@@ -340,7 +369,9 @@ def _apply_correction_openai(
         f"Form: {form}, Character #{num_val}, Identity: {identity_tags}\n"
         f"{palette_line}"
         f"ONLY correct: {all_fixes}\n"
-        "Keep EVERYTHING else identical to the input image. No text or labels in the output."
+        "Keep EVERYTHING else identical to the input image.\n"
+        f"{IMAGE_TEXT_POLICY}"
+        f"{_number_block_if_targeted(record, form, all_fixes)}"
     )
 
     correct_subdir = stage_dir / f"rough_{index:02d}_corrected"

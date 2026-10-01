@@ -120,7 +120,7 @@ def generate_image(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="SDXL+LoRA ラフ生成 (GCE VM SSH バッチ)")
-    parser.add_argument("--num", required=True)
+    parser.add_argument("--badge", "--num", dest="num", type=resolve_badge, required=True, help="キャラクターのバッジ/番号 (DB の Num_Badge, 例: 57 / 2B / 67B)")
     parser.add_argument("--form", default="corefolder", choices=["corefolder", "humanoid"])
     parser.add_argument("--work-key", default="#Works_NumberTales", dest="work_key")
     parser.add_argument("--out", default=None, dest="out_dir")

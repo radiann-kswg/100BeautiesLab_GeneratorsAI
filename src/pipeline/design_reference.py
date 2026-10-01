@@ -10,7 +10,8 @@ from urllib.parse import urlparse
 
 from src.utils.image_io import load_reference_bytes
 from src.utils.run_log import initialize_run_logs, write_run_meta
-from src.utils.dataset import _creations_db_repo_root, _image_category, extract_char_name
+from src.utils.dataset import (_creations_db_repo_root, _image_category, extract_char_name,
+                               is_detail_reference, build_appearance_detail_block)
 
 
 class ReferenceConfirmationRequired(RuntimeError):
@@ -40,20 +41,29 @@ def _observe(prompt: str, references: dict) -> dict:
 
     content: list[dict] = [{"type": "text", "text": prompt}]
     sources: list[str] = []
-    for path in references.get("local_paths", []):
+    local_paths = references.get("local_paths", [])
+    limit = 3 + sum(is_detail_reference(p) for p in local_paths)
+    for path in local_paths:
         if not Path(path).is_file():
             continue
         loaded = load_reference_bytes(path)
         if loaded:
             raw, mime = loaded
+            content.append({"type": "text", "text": (
+                "公式部位図 (全身ではない): " if is_detail_reference(path) else "公式全体図: "
+            ) + Path(path).name})
             content.append({"type": "image_url", "image_url": {
                 "url": f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"}})
             sources.append(str(path))
-        if len(sources) == 3:
+        if len(sources) == limit:
             break
     # ローカルが無い環境でも DB が解決した公式 URL のみを利用する。
     if not sources:
-        for url in references.get("urls", [])[:3]:
+        urls = references.get("urls", [])
+        for url in urls[:3 + sum(is_detail_reference(u) for u in urls)]:
+            content.append({"type": "text", "text": (
+                "公式部位図 (全身ではない): " if is_detail_reference(url) else "公式全体図: "
+            ) + Path(url).name})
             content.append({"type": "image_url", "image_url": {"url": url}})
             sources.append(url)
     if not sources:
@@ -79,10 +89,10 @@ def _official_settings(references: dict) -> dict:
     categories = {"concept", "concept_alt", "design", "design_alt", "catalog", "corefolder", "humanoid", "tails_unit"}
     root = _creations_db_repo_root().resolve()
     local = [p for p in references.get("local_paths", [])
-             if Path(p).resolve().is_relative_to(root) and _image_category(p) in categories]
+             if Path(p).resolve().is_relative_to(root) and (_image_category(p) in categories or is_detail_reference(p))]
     urls = [u for u in references.get("urls", [])
             if urlparse(u).scheme == "https" and urlparse(u).hostname == "database.numbertales-radiann.net"
-            and urlparse(u).path.startswith("/data/") and _image_category(u) in categories]
+            and urlparse(u).path.startswith("/data/") and (_image_category(u) in categories or is_detail_reference(u))]
     return {"local_paths": local, "urls": urls}
 
 
@@ -109,10 +119,12 @@ def collect_design_reference(
         "他キャラクターの特徴は含めないでください。以下の AIHints 文面が正典です。\n"
         "画像観察で AIHints を上書きしないでください。他形態の特徴を混ぜないでください。\n"
         "耳・尻尾の本数と束構成・シルエット・配色・番号・非対称要素を観察してください。\n"
+        "部位図では番号の字形・線幅・間隔・切れ目を観察し、全体図で装着位置を確認してください。\n"
         "左右はキャラクター自身の左右と画像上の左右を区別。隠れた部位は推測せず不明にしてください。\n"
         "JSON の observations / unknowns / conflicts に文字列配列で返してください。"
         "AIHints と矛盾する観察は conflicts のみに入れてください。\n[AIHints 原文]\n"
-        + json.dumps(canonical, ensure_ascii=False)
+        + json.dumps(canonical, ensure_ascii=False) + "\n"
+        + build_appearance_detail_block(record, form)
     )
     design = {"ai_hints": canonical, "observations": [], "unknowns": [], "conflicts": [], "sources": []}
     design["num"] = record["data"]["Num"]

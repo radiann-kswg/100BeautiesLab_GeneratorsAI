@@ -74,7 +74,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-from src.utils import build_run_output_dir, find_character  # noqa: E402
+from src.utils import build_run_output_dir, find_character, resolve_badge  # noqa: E402
 from src.utils.dataset import apply_generation_gate  # noqa: E402
 from src.pipeline.prompt_refiner import (  # noqa: E402
     refine_prompt_dual,
@@ -91,10 +91,13 @@ from src.pipeline.image_pipeline import (  # noqa: E402
     _save_stage1,
     _build_multi_char_composition_prompt,
     _compose_multi_char,
+    _fmt_num,
+    _ROUGH_COUNT,
+    _MULTI_ROUGH_PER_CHAR,
+    _STAGE5_SYNTH_COUNT,
 )
 
 _STATE_NAME = "pipeline_state.json"
-_ROUGH_COUNT_DEFAULT = 1  # 呼び出し単位: 既定 1 枚 (時間制約環境向け)
 
 
 # ──────────────────────────────────────────
@@ -142,16 +145,16 @@ def _is_combined(state: dict) -> bool:
     return state.get("mode") == "combined"
 
 
-def _parse_nums(spec: "str | None") -> list[int]:
-    """'24,42' のようなカンマ区切り文字列を [24, 42] に変換する。"""
+def _parse_nums(spec: "str | None") -> list[int | str]:
+    """'24,2B' のようなカンマ区切りの番号/バッジを [24, "2-alt"] に解決する。"""
     if not spec:
         return []
-    return [int(x) for x in str(spec).replace(" ", "").split(",") if x != ""]
+    return [resolve_badge(x) for x in str(spec).replace(" ", "").split(",") if x != ""]
 
 
-def _char_key(n: int) -> str:
+def _char_key(n: int | str) -> str:
     """chars 辞書のキー (JSON キーは文字列)。"""
-    return str(int(n))
+    return str(n)
 
 
 # ──────────────────────────────────────────
@@ -205,7 +208,7 @@ def _stage1_combined(args: argparse.Namespace) -> None:
             rec, args.form, scene=scene, style=args.style,
             composition=args.composition, background=args.background,
         )
-        char_stage1_dir = stage1_dir / f"char_{n:03d}"
+        char_stage1_dir = stage1_dir / f"char_{_fmt_num(n)}"
         char_stage1_dir.mkdir(parents=True, exist_ok=True)
         _save_stage1(char_stage1_dir, prompts)
         chars[_char_key(n)] = {
@@ -330,7 +333,7 @@ def cmd_stage2(args: argparse.Namespace) -> None:
         if _is_combined(state):
             if not args.num:
                 sys.exit("--reference-decision は --num で警告対象を指定してください。")
-            dirs = [run_dir / f"char_{args.num:03d}" / "stage2_db" / "design_reference"]
+            dirs = [run_dir / f"char_{_fmt_num(args.num)}" / "stage2_db" / "design_reference"]
         for directory in dirs:
             meta = directory / "run_meta.json"
             if not meta.exists() or json.loads(meta.read_text(encoding="utf-8")).get("status") != "awaiting_confirmation":
@@ -342,7 +345,7 @@ def cmd_stage2(args: argparse.Namespace) -> None:
             key = _char_key(n)
             if key not in state["chars"]:
                 sys.exit(f"[ERROR] Stage2: #{n} は対象キャラ {state['nums']} に含まれません。")
-            char_dir = run_dir / f"char_{n:03d}"
+            char_dir = run_dir / f"char_{_fmt_num(n)}"
             cd = collect_character_data(n, state["form"], char_dir, state["work_key"], confirm)
             if cd is None:
                 sys.exit(f"[ERROR] Stage2: キャラクター #{n} のデータ取得に失敗。")
@@ -351,7 +354,7 @@ def cmd_stage2(args: argparse.Namespace) -> None:
             ch["references"] = cd["references"]
             ch["spec"] = cd["spec"]
             ch["prompts"] = add_design_reference(ch["prompts"], cd["spec"])
-            print(f"  [Stage2] #{n:03d} OK - 参照 "
+            print(f"  [Stage2] #{_fmt_num(n)} OK - 参照 "
                   f"{len(cd['references']['urls'])}URL / "
                   f"{len(cd['references']['local_paths'])}local / "
                   f"違反チェック {len(cd['spec']['violation_features'])}件")
@@ -384,6 +387,8 @@ def cmd_stage2(args: argparse.Namespace) -> None:
 def cmd_stage3(args: argparse.Namespace) -> None:
     run_dir = Path(args.run_dir)
     state = _load_state(run_dir)
+    # 既定枚数は通しパイプラインと同じ (単体 5 / 合同 3 枚×キャラ)。--count は明示指定時のみ上書き
+    count = args.count or (_MULTI_ROUGH_PER_CHAR if _is_combined(state) else _ROUGH_COUNT)
 
     if _is_combined(state):
         n = getattr(args, "num", None)
@@ -397,7 +402,7 @@ def cmd_stage3(args: argparse.Namespace) -> None:
             sys.exit(f"[ERROR] Stage3(合同): #{n} は先に stage2 を実行してください (spec 未取得)。")
 
         from src.gemini.generate import generate_image
-        rough_dir = run_dir / f"char_{n:03d}" / "stage3_rough"
+        rough_dir = run_dir / f"char_{_fmt_num(n)}" / "stage3_rough"
         rough_dir.mkdir(parents=True, exist_ok=True)
         base_prompt = (ch["prompts"].get("base_gemini", "")
                        or ch["prompts"].get("gemini", ""))
@@ -407,7 +412,7 @@ def cmd_stage3(args: argparse.Namespace) -> None:
         try:
             paths = generate_image(
                 num=n, form=state["form"], work_key=state["work_key"],
-                out_dir=str(rough_dir), count=args.count,
+                out_dir=str(rough_dir), count=count,
                 prompt_override=base_prompt,
                 skip_ref_urls=True,
                 iterate_from=state.get("iterate_from"),
@@ -422,7 +427,7 @@ def cmd_stage3(args: argparse.Namespace) -> None:
                 bucket.append(p)
         _mark_done(state, "stage3")
         _save_state(run_dir, state)
-        print(f"[Stage3] #{n:03d} +{len(paths)}枚 / 累計 gemini {len(bucket)}枚")
+        print(f"[Stage3] #{_fmt_num(n)} +{len(paths)}枚 / 累計 gemini {len(bucket)}枚")
         return
 
     if not state.get("spec", {}).get("design_reference"):
@@ -432,7 +437,7 @@ def cmd_stage3(args: argparse.Namespace) -> None:
         state["record"], state["form"],
         prompts=state["prompts"],
         pipeline_dir=run_dir,
-        count=args.count,
+        count=count,
         work_key=state["work_key"],
         scene=state.get("scene", ""),
         background=state.get("background", ""),
@@ -488,7 +493,7 @@ def cmd_stage4(args: argparse.Namespace) -> None:
                 rough_results={"gemini": _as_paths(sel)},
                 char_spec=ch["spec"],
                 prompts=ch["prompts"],
-                pipeline_dir=run_dir / f"char_{n:03d}",
+                pipeline_dir=run_dir / f"char_{_fmt_num(n)}",
                 work_key=state["work_key"],
                 correction_mode=state.get("correction_mode", "t2i"),
             )
@@ -500,7 +505,7 @@ def cmd_stage4(args: argparse.Namespace) -> None:
             s4["all"] = s4.get("corrected", []) + s4.get("passed", [])
             s4.setdefault("_processed_rough", []).extend(sel)
         else:
-            print(f"[Stage4](合同) #{n:03d}: 未処理のラフなし。ベスト選定のみ更新します。")
+            print(f"[Stage4](合同) #{_fmt_num(n)}: 未処理のラフなし。ベスト選定のみ更新します。")
 
         # 合成用ベスト 1 枚: 違反なし通過を優先 → 修正済み → 元ラフ先頭
         best = ((s4.get("passed") or [])[:1]
@@ -510,7 +515,7 @@ def cmd_stage4(args: argparse.Namespace) -> None:
         _mark_done(state, "stage4")
         _save_state(run_dir, state)
         best_name = Path(best[0]).name if best else "(none)"
-        print(f"[Stage4] #{n:03d} 処理 {len(sel)}枚 / corrected {len(s4['corrected'])} "
+        print(f"[Stage4] #{_fmt_num(n)} 処理 {len(sel)}枚 / corrected {len(s4['corrected'])} "
               f"passed {len(s4['passed'])} / ベスト → {best_name}")
         return
 
@@ -584,7 +589,7 @@ def cmd_stage5(args: argparse.Namespace) -> None:
             )
 
         composition_prompt = _build_multi_char_composition_prompt(
-            records, state["form"], state.get("scene", "")
+            records, {n: state["form"] for n in state["nums"]}, state.get("scene", "")
         )
         from src.pipeline.design_reference import design_reference_block
         for ch in state["chars"].values():
@@ -597,7 +602,9 @@ def cmd_stage5(args: argparse.Namespace) -> None:
             composition_prompt=composition_prompt,
             synth_dir=synth_dir,
             work_key=state["work_key"],
-            count=args.count,
+            count=args.count or _STAGE5_SYNTH_COUNT,
+            detail_refs=[p for ch in state["chars"].values()
+                         for p in ch.get("spec", {}).get("detail_reference_paths", [])],
         )
         s5 = state.setdefault("stage5", {"synth": [], "canva": [], "all": []})
         bucket = s5.setdefault("synth", [])
@@ -670,14 +677,14 @@ def cmd_status(args: argparse.Namespace) -> None:
         for n in state["nums"]:
             ch = state["chars"][_char_key(n)]
             s4 = ch.get("stage4", {})
-            print(f"  #{n:03d} : rough {len(ch.get('stage3',{}).get('gemini',[]))} / "
+            print(f"  #{_fmt_num(n)} : rough {len(ch.get('stage3',{}).get('gemini',[]))} / "
                   f"s4 corrected {len(s4.get('corrected',[]))} passed {len(s4.get('passed',[]))} "
                   f"/ best {len(ch.get('best',[]))}")
         print(f"stage5  : 合成 {len(state.get('stage5',{}).get('all',[]))}枚")
         return
 
     print(f"run_dir : {run_dir}")
-    print(f"char    : #{state['num']:03d} / {state['form']} / scene={state.get('scene','')[:40]}")
+    print(f"char    : #{_fmt_num(state['num'])} / {state['form']} / scene={state.get('scene','')[:40]}")
     print(f"done    : {', '.join(done) or '(none)'}")
     print(f"stage3  : gemini {len(state.get('stage3',{}).get('gemini',[]))}枚")
     s4 = state.get("stage4", {})
@@ -701,7 +708,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="stage", required=True)
 
     p1 = sub.add_parser("stage1", help="プロンプト生成 + run-dir/state 作成")
-    p1.add_argument("--num", type=int, default=None, help="キャラクター番号 (単体, 例: 57)")
+    p1.add_argument("--badge", "--num", dest="num", type=resolve_badge, default=None, help="キャラクターのバッジ/番号 (単体, DB の Num_Badge, 例: 57 / 2B)")
     p1.add_argument("--nums", default=None,
                     help="合同生成: 複数キャラ番号をカンマ区切り (例: 24,42)。2件以上で合同モード")
     p1.add_argument("--form", choices=["corefolder", "humanoid"], default="corefolder")
@@ -720,33 +727,33 @@ def build_parser() -> argparse.ArgumentParser:
 
     p2 = sub.add_parser("stage2", help="キャラクター DB データ取得")
     _add_run_dir(p2)
-    p2.add_argument("--num", type=int, default=None,
+    p2.add_argument("--badge", "--num", dest="num", type=resolve_badge, default=None,
                     help="合同時: 対象キャラを 1 体に限定 (省略時は全キャラ)")
     p2.set_defaults(func=cmd_stage2)
     p2.add_argument("--reference-decision", choices=["continue", "cancel"],
                     help="提示済みの画像観察失敗への利用者の回答。合同時は --num 必須")
 
-    p3 = sub.add_parser("stage3", help="ラフ生成 (既定 1 枚ずつ追記)")
+    p3 = sub.add_parser("stage3", help="ラフ生成 (既定: 単体 5 枚 / 合同 3 枚, 追記式)")
     _add_run_dir(p3)
-    p3.add_argument("--num", type=int, default=None,
+    p3.add_argument("--badge", "--num", dest="num", type=resolve_badge, default=None,
                     help="合同時: ラフ生成するキャラ番号 (合同では必須)")
-    p3.add_argument("--count", type=int, default=_ROUGH_COUNT_DEFAULT,
-                    choices=range(1, 6), help="今回生成する枚数 (1-5, 既定 1)")
+    p3.add_argument("--count", type=int, default=None,
+                    choices=range(1, 6), help="今回生成する枚数 (1-5, 既定: 単体 5 / 合同 3)")
     p3.set_defaults(func=cmd_stage3)
 
     p4 = sub.add_parser("stage4", help="違反修正 (部分処理可)")
     _add_run_dir(p4)
-    p4.add_argument("--num", type=int, default=None,
+    p4.add_argument("--badge", "--num", dest="num", type=resolve_badge, default=None,
                     help="合同時: 違反修正するキャラ番号 (合同では必須)")
     p4.add_argument("--limit", type=int, default=0,
                     help="今回処理する枚数上限 (0=未処理全部)")
     p4.add_argument("--offset", type=int, default=0, help="未処理リストの開始位置")
     p4.set_defaults(func=cmd_stage4)
 
-    p5 = sub.add_parser("stage5", help="合成完成画像 (既定 Canva スキップ・1 枚ずつ追記)")
+    p5 = sub.add_parser("stage5", help="合成完成画像 (既定 Canva スキップ・3 枚, 追記式)")
     _add_run_dir(p5)
-    p5.add_argument("--count", type=int, default=1,
-                    help="kaisuu: synth maisuu (default 1). repeat to append")
+    p5.add_argument("--count", type=int, default=None,
+                    help="合成枚数 (既定 3)。繰り返し呼ぶと追記")
     p5.add_argument("--with-canva", action="store_true",
                     help="also run Canva finishing (only where api.canva.com reachable)")
     p5.set_defaults(func=cmd_stage5)

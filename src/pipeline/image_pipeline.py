@@ -74,6 +74,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 from src.utils import build_run_output_dir, extract_char_name  # noqa: E402
 from src.pipeline.prompt_refiner import refine_prompt_dual, generate_random_scene  # noqa: E402
 from src.pipeline.db_collector import collect_character_data  # noqa: E402
+from src.utils.dataset import IMAGE_TEXT_POLICY, build_appearance_detail_block  # noqa: E402
 from src.pipeline.design_reference import add_design_reference  # noqa: E402
 from src.pipeline.rough_generator import generate_rough_images, retry_rough_images  # noqa: E402
 from src.pipeline.correction_generator import correct_rough_images  # noqa: E402
@@ -82,7 +83,7 @@ from src.pipeline.final_generator import generate_final_images  # noqa: E402
 _ROUGH_COUNT = 5               # Stage 3 (単体): ラフ生成枚数
 _MULTI_ROUGH_PER_CHAR = 3     # Stage 3 (合同): キャラクターごとのラフ枚数
 _STAGE3_COMP_ROUGH_COUNT = 2   # Stage 3 comp rough: 全体構図ラフ枚数（探索フェーズ）
-_STAGE5_SYNTH_COUNT = 2        # Stage 5: 最終合成バリアント枚数（仕上げフェーズ）
+_STAGE5_SYNTH_COUNT = 3        # Stage 5: 最終合成バリアント枚数（仕上げフェーズ・単体の完成 3 枚に揃える）
 
 
 def _fmt_num(num: int | str | None) -> str:
@@ -411,7 +412,7 @@ def _build_multi_char_composition_prompt(
     has_comp_rough: bool = False,
 ) -> str:
     """Stage 3 comp rough / Stage 5 合成用: キャラクター単体レンダーをもとに1枚に合成するプロンプトを生成する。
-    skip_db_refs=True と組み合わせて使用し、実際のキャラクターレンダーのみを参照させる。
+    skip_db_refs=True と組み合わせ、全体はレンダー、部位は明示した公式部位図を参照する。
     forms_map は {キャラ番号: "corefolder" | "humanoid"} のマッピング。
     has_comp_rough=True のとき、参照1 を構図ガイドとして扱い参照2以降をキャラデザインに割り当てる。
     """
@@ -502,10 +503,10 @@ def _build_multi_char_composition_prompt(
     ]
     if scene:
         lines += [f"[シーン]", f"- {scene}", ""]
-    lines.append(
-        "[絶対禁止] 画像内に文字・テキスト・ラベルを一切描かないこと。"
-        " Do NOT render any text, words, labels, or signs in the image."
-    )
+    lines.extend(f"[{_char_label(r)} の部位仕様]\n"
+                 + build_appearance_detail_block(r, forms_map.get(_get_num_key(r), "corefolder"))
+                 for r in records)
+    lines.append(IMAGE_TEXT_POLICY)
     return "\n".join(lines)
 
 
@@ -517,16 +518,17 @@ def _compose_multi_char(
     synth_dir: Path,
     work_key: str,
     count: int = 3,
+    detail_refs: list[str] | None = None,
 ) -> list[Path]:
     """Stage 5: 各キャラクターの単体完成レンダーを Gemini マルチ参照で 1 枚に合成する。
 
-    skip_db_refs=True でDB参照を除外し、char_renders のみを参照させることで
-    スタイルのブレを防ぐ。
+    全体の姿・構図は char_renders、部位の字形・形状は各キャラの公式 detail_refs を参照する。
     """
     from src.gemini.generate import generate_image
 
     synth_dir.mkdir(parents=True, exist_ok=True)
     render_strs = [str(p) for p in char_renders if p.exists()]
+    reference_paths = render_strs + list(dict.fromkeys(detail_refs or []))
     inter_sleep = float(os.environ.get("GEMINI_IMAGE_SLEEP", "6"))
 
     results: list[Path] = []
@@ -543,9 +545,9 @@ def _compose_multi_char(
                 out_dir=str(synth_dir),
                 count=1,
                 prompt_override=composition_prompt,
-                extra_ref_locals=render_strs,
+                extra_ref_locals=reference_paths,
                 extra_ref_label="キャラクター単体レンダー: このキャラの姿・作風・配色の正典。",
-                skip_db_refs=True,  # キャラレンダーが参照なので DB 画像は不要
+                skip_db_refs=True,  # 先頭キャラだけの DB 全体図は混ぜず、各キャラの部位図を明示添付
             )
             results.extend(paths)
         except SystemExit as err:
@@ -812,6 +814,7 @@ def run_combined_pipeline(
                 synth_dir=comp_rough_dir,
                 work_key=work_key,
                 count=_STAGE3_COMP_ROUGH_COUNT,
+                detail_refs=[p for n in nums for p in char_data_map[n]["spec"].get("detail_reference_paths", [])],
             )
             print(f"  [Stage3-CompRough] {len(comp_rough_paths)} 枚生成完了")
         except Exception as err:
@@ -899,6 +902,7 @@ def run_combined_pipeline(
         synth_dir=stage5_dir / "synth",
         work_key=work_key,
         count=_STAGE5_SYNTH_COUNT,
+        detail_refs=[p for n in nums for p in char_data_map[n]["spec"].get("detail_reference_paths", [])],
     )
     print(f"[Stage5] done - {len(synth_images)} 枚合成完了")
 
@@ -1008,13 +1012,17 @@ def _save_summary(
 # ──────────────────────────────────────────
 
 def _resolve_num_arg(raw: str) -> int | str:
-    """--num / --nums 引数をキャラクター ID に変換する。
-    "57" → 57  "2-alt" → "2-alt"  "バイナ" → "2-alt"  "フジ" → 22
+    """--badge / --nums 引数をキャラクター ID に変換する。
+    "57" → 57  "2B" → "2-alt"  "2-alt" → "2-alt"  "バイナ" → "2-alt"  "フジ" → 22
     名前解決に失敗した場合は文字列 ID として返す。
     """
     raw = raw.strip()
     if raw.isdigit():
         return int(raw)
+    from src.utils.dataset import resolve_badge
+    resolved = resolve_badge(raw)
+    if resolved != raw:  # DB の Num_Badge に一致 ("2B" → "2-alt")
+        return resolved
     try:
         from src.pipeline.natural_parser import _build_name_lookup
         lookup = _build_name_lookup()
@@ -1113,8 +1121,8 @@ def main() -> None:
     # キャラクター指定 (いずれか)
     char_group = parser.add_mutually_exclusive_group()
     char_group.add_argument(
-        "--num", type=str,
-        help="キャラクター番号・特殊ID・キャラ名 (例: 57 / '2-alt' / 'バイナ')。シーン未指定時はランダム生成。",
+        "--badge", "--num", dest="num", type=str,
+        help="キャラクターのバッジ (DB の Num_Badge) / 番号 / 特殊ID / 名前 (例: 57 / '2B' / '2-alt' / 'バイナ')。シーン未指定時はランダム生成。",
     )
     char_group.add_argument(
         "--nums",

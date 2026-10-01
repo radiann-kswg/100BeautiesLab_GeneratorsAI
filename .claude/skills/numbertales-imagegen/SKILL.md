@@ -101,10 +101,10 @@ NT_MODULE=src.pipeline.natural_parser ./bin/ntimg.sh "コアフォルダ姿の25
 
 ```bash
 # シーン自動生成
-./bin/ntimg.sh --num 57 --form corefolder
+./bin/ntimg.sh --badge 57 --form corefolder
 
 # シーン・作風を明示
-./bin/ntimg.sh --num 57 --form corefolder --scene "図書館で本を読んでいるシーン" --style "watercolor"
+./bin/ntimg.sh --badge 57 --form corefolder --scene "図書館で本を読んでいるシーン" --style "watercolor"
 ```
 
 - `--form` は `corefolder`（既定）/ `humanoid`。
@@ -116,7 +116,7 @@ NT_MODULE=src.pipeline.natural_parser ./bin/ntimg.sh "コアフォルダ姿の25
 「前回のあれの表情だけ笑顔に」のような依頼。`--iterate-from` に前回 run のパスを渡す。
 
 ```bash
-./bin/ntimg.sh --num 57 --form corefolder --skip-canva \
+./bin/ntimg.sh --badge 57 --form corefolder --skip-canva \
     --iterate-from "output/20260609/20260609_150049_pipeline_corefolder_num057" \
     --revisions "尻尾は元のまま; 表情だけ笑顔にして"
 ```
@@ -174,7 +174,7 @@ NT_MODULE=src.batch_generate ./bin/ntimg.sh --nums 15,22,49,57 --forms both --pr
 - ローカルで利用者の入力端末を保持できない場合は `src.pipeline.stage_cli` を使う。
   Stage 2 が確認待ちになったらログの理由を表示し、利用者の明示回答後にだけ
   `stage2 --run-dir <同じrun> --reference-decision continue|cancel` で回答する。
-  合同では警告対象の `--num` も指定する。回答後は通常の stage3 以降を実行する。
+  合同では警告対象の `--badge` も指定する。回答後は通常の stage3 以降を実行する。
 - MCP は `numbertales_job_status` の `awaiting_confirmation` を監視する。
   `confirmation.reason` を表示し、利用者に続行/中止を確認する。質問UIが使えない場合は会話で尋ねる。
   明示回答後だけ `numbertales_answer_reference_warning` に同じ `job_id` / `request_id` と

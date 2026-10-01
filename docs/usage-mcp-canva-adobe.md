@@ -54,7 +54,7 @@ A は [`usage-generation.md`](usage-generation.md) を参照。本書は **B** �
 
 ```bash
 # 参照を効かせた自然文プロンプトを GPT で整える (任意)
-python -m src.openai.generate --num 57 --form corefolder --mode prompt-assist \
+python -m src.openai.generate --badge 57 --form corefolder --mode prompt-assist \
     --scene "夕暮れの研究所のテラスでお茶している場面"
 ```
 

@@ -29,37 +29,37 @@
 
 ```powershell
 # 単発生成 (Gemini)
-python -m src.gemini.generate --num 57 --form corefolder
+python -m src.gemini.generate --badge 57 --form corefolder
 
 # 単発生成 (OpenAI / gpt-image-1)
-python -m src.openai.generate --num 57 --form corefolder
+python -m src.openai.generate --badge 57 --form corefolder
 
 # 単発生成 (Adobe Firefly)
-python -m src.adobe.generate --num 57 --form corefolder
+python -m src.adobe.generate --badge 57 --form corefolder
 
 # 生成済み画像を Canva でデザイン化・書き出し (--from-image 必須)
-python -m src.canva.generate --num 57 --from-image <生成済み画像のパス>
+python -m src.canva.generate --badge 57 --from-image <生成済み画像のパス>
 
 # シーン・作風・構図・背景を指定
-python -m src.gemini.generate --num 57 --form humanoid `
+python -m src.gemini.generate --badge 57 --form humanoid `
   --scene "図書館で本を読んでいるシーン" `
   --style "watercolor" --composition "bust shot" --background "wooden veranda"
 
 # i2i 改稿 (前回 run dir を起点に、修正指示だけ当て直す)
-python -m src.gemini.generate --num 57 --form corefolder `
+python -m src.gemini.generate --badge 57 --form corefolder `
   --iterate-from "output/20260609/20260609_15/20260609_150049_gemini_corefolder_num057" `
   --revisions "尻尾は元のまま; 表情だけ笑顔にして"
 
 # マルチ LLM パイプライン (Stage 1〜5 を一括実行、単体キャラ)
-python -m src.pipeline.image_pipeline --num 57 --form corefolder
-python -m src.pipeline.image_pipeline --num 57 --form corefolder --skip-canva `
+python -m src.pipeline.image_pipeline --badge 57 --form corefolder
+python -m src.pipeline.image_pipeline --badge 57 --form corefolder --skip-canva `
   --scene "図書館で本を読んでいるシーン"
 
 # マルチ LLM パイプライン (合同キャラ: Stage 3-4 をキャラ別に実行し Stage 5 で合成)
 python -m src.pipeline.image_pipeline --nums 25,57 --form corefolder
 
 # パイプライン i2i (前回 run を起点に Stage 3〜5 を改稿モードで実行)
-python -m src.pipeline.image_pipeline --num 57 --form corefolder --skip-canva `
+python -m src.pipeline.image_pipeline --badge 57 --form corefolder --skip-canva `
   --iterate-from "output/20260609/20260609_15/20260609_150049_gemini_corefolder_num057" `
   --revisions "尻尾は元のまま; 表情だけ笑顔にして"
 
@@ -68,10 +68,10 @@ python -m src.batch_generate --nums 15,22,49,57 --forms both --provider both --d
 python -m src.batch_generate --nums 15,22,49,57 --forms both --provider both
 
 # プロンプト改善提案 (GPT-4o)
-python -m src.openai.generate --num 57 --mode prompt-assist --scene "縁側で日向ぼっこ"
+python -m src.openai.generate --badge 57 --mode prompt-assist --scene "縁側で日向ぼっこ"
 
 # 生成済みロールプレイプロンプトの消費 (ゲート付き)
-python -m src.roleplay.export --num 57
+python -m src.roleplay.export --badge 57
 python -m src.roleplay.export --list
 
 # 画像 MIME 不一致チェック

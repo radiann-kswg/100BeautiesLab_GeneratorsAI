@@ -23,20 +23,20 @@
 
 例:
 ```bash
-./bin/ntimg.sh --num 57 --form corefolder --skip-canva
+./bin/ntimg.sh --badge 57 --form corefolder --skip-canva
 NT_MODULE=src.batch_generate ./bin/ntimg.sh --nums 15,57 --forms both --dry-run
 NT_MODULE=src.pipeline.natural_parser ./bin/ntimg.sh "コアフォルダ姿の25(フィズ)の絵"
 ```
 ```powershell
-./bin/ntimg.ps1 --num 57 --form corefolder --skip-canva
+./bin/ntimg.ps1 --badge 57 --form corefolder --skip-canva
 ./bin/ntimg.ps1 -Module src.batch_generate --nums 15,57 --forms both --dry-run
 ```
 
 ランチャーを使わない手動実行（フォールバック）:
 ```bash
-cd <repo> && python -m src.pipeline.image_pipeline --num 57 --form corefolder
+cd <repo> && python -m src.pipeline.image_pipeline --badge 57 --form corefolder
 # もしくは任意 cwd から:
-PROJECT_ROOT=<repo> PYTHONPATH=<repo> python -m src.pipeline.image_pipeline --num 57
+PROJECT_ROOT=<repo> PYTHONPATH=<repo> python -m src.pipeline.image_pipeline --badge 57
 ```
 
 ---
@@ -45,7 +45,7 @@ PROJECT_ROOT=<repo> PYTHONPATH=<repo> python -m src.pipeline.image_pipeline --nu
 
 | フラグ | 既定値 | 説明 |
 |---|---|---|
-| `--num` | (いずれか必須) | キャラクター番号（単体生成） |
+| `--badge` | (いずれか必須) | キャラクター番号（単体生成） |
 | `--nums` | — | 複数番号 カンマ区切り（例 `25,57` / `20,2-alt`）。**2件以上で全員を1枚に合同生成**。alt キャラは `2-alt` のように文字列 ID で指定する（整数 `2` は別キャラにマッチする） |
 | `--natural TEXT` | — | 自然文からパラメータを LLM 抽出 |
 | `--story FILE` | — | テキストファイルから LLM 抽出 |
@@ -76,9 +76,9 @@ PROJECT_ROOT=<repo> PYTHONPATH=<repo> python -m src.pipeline.image_pipeline --nu
 
 単体プロバイダ直叩き:
 ```bash
-NT_MODULE=src.gemini.generate ./bin/ntimg.sh --num 57 --form corefolder
-NT_MODULE=src.openai.generate ./bin/ntimg.sh --num 57 --form corefolder
-NT_MODULE=src.openai.generate ./bin/ntimg.sh --num 57 --mode prompt-assist --scene "図書館で本を読んでいるシーン"
+NT_MODULE=src.gemini.generate ./bin/ntimg.sh --badge 57 --form corefolder
+NT_MODULE=src.openai.generate ./bin/ntimg.sh --badge 57 --form corefolder
+NT_MODULE=src.openai.generate ./bin/ntimg.sh --badge 57 --mode prompt-assist --scene "図書館で本を読んでいるシーン"
 ```
 
 ---
@@ -117,7 +117,7 @@ NT_MODULE=src.openai.generate ./bin/ntimg.sh --num 57 --mode prompt-assist --sce
 
 ## 4. 出力構成
 
-### 単体（`--num`）
+### 単体（`--badge`）
 ```
 {OUTPUT_BASE_DIR}/{YYYYMMDD}/{ts}_pipeline_{form}_num{NNN}/
   stage1_prompt/   openai/gemini/base テキスト + stage1_meta.json

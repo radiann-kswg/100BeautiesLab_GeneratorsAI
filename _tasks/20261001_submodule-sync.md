@@ -42,7 +42,18 @@ ai-dataset/build-info.json                        |  6 +--
 
 ## 最適化メモ
 
+### 15:06 再取得・生成参照監査
+
+- `daily-submodule-sync.ps1 -DryRun` で GitHub から再取得。CreationsAI `c78afcb`、CreationsDB `c265fdd` は追跡ブランチの最新と一致し、追加取り込みなし。
+- 上流の `AppearanceDetail.img_PNGName` は存在するが、画像索引では番号等の attr 123枚が `category: null`。従来の全体図フィルタと観察カテゴリ制限で脱落していた。
+- `src/` 側で宣言実名・適用形態から部位図を解決し、原点画像直後へ採用。原典の字形を禁止する指示も修正。
+- 利用許可済み115レコードの監査で、部位画像を持つ172形態ケース・延べ228枚を全件解決・採用。既存の権利ゲート・本人照合は維持。
+- 調査と検証の詳細: [`_ideas/20261001_official-reference-audit.md`](../_ideas/20261001_official-reference-audit.md)。
+
+
 > 取り込んだ差分がスキーマ / `manifest-training.jsonl` / API に影響する場合は、
 > Cowork の `daily-submodule-sync-optimize` タスク (Claude) に差分レビューを依頼し、
 > `src/` ・ `docs/` 側の追従最適化を行うこと。本スクリプトは git 同期とログ・コミットのみ担当。
 
+
+- 追加試行: 93・666を各ラフ1枚/完成1枚生成。666のNumberMark 1行=1か所という誤解釈を修正。公式部位図が届いても666のブローチ内部は未一致。詳細は ../_ideas/20261001_reference-generation-review.md。全87テスト成功。

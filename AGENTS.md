@@ -152,8 +152,8 @@ pip install -r requirements.txt
 # ── マルチ LLM パイプライン (推奨) ────────────────────────────────
 # 5 ステージ: Stage1 プロンプト生成(シーン自動生成) → Stage2 DB取得
 #             → Stage3 ラフ生成 → Stage4 違反修正(キャラ別) → Stage5 合成3枚固定
-python -m src.pipeline.image_pipeline --num 57 --form corefolder
-python -m src.pipeline.image_pipeline --num 57 --form corefolder \
+python -m src.pipeline.image_pipeline --badge 57 --form corefolder
+python -m src.pipeline.image_pipeline --badge 57 --form corefolder \
     --scene "図書館で本を読んでいるシーン" --skip-canva
 # 合同キャラ: Stage 3-4 をキャラ別に実行 → Stage 5 で全員を 1 枚に合成
 # (Stage 3 終了時点で全体構図ラフ 1 枚を同時生成 → stage3_comp_rough/ に保存)
@@ -162,20 +162,20 @@ python -m src.pipeline.image_pipeline --nums 25,57 --form corefolder \
 python -m src.pipeline.image_pipeline \
     --natural "コアフォルダ姿の25(フィズ)がチョコレートを咥えている絵"
 # 衣装差分: --costume で Stage 1 のデフォルト衣装を上書きしてプロンプト生成
-python -m src.pipeline.image_pipeline --num 57 --form corefolder \
+python -m src.pipeline.image_pipeline --badge 57 --form corefolder \
     --costume "黒いワンピース姿の差分" --skip-canva
 # i2i 改稿: --iterate-from で前回 run を起点に Stage 3〜5 を改稿モードで実行
 # GCS URL (MCP の numbertales_get_run_logs が返す intermediate URL) も直接渡せる
-python -m src.pipeline.image_pipeline --num 57 --form corefolder --skip-canva \
+python -m src.pipeline.image_pipeline --badge 57 --form corefolder --skip-canva \
     --iterate-from "output/20260609/20260609_15/20260609_150049_gemini_corefolder_num057" \
     --revisions "尻尾は元のまま; 表情だけ笑顔にして"
 
 # ── 単体プロバイダ生成 ─────────────────────────────────────────────
-python -m src.gemini.generate --num 57 --form corefolder
-python -m src.openai.generate --num 57 --form corefolder
-python -m src.openai.generate --num 57 --mode prompt-assist --scene "図書館で本を読んでいるシーン"
+python -m src.gemini.generate --badge 57 --form corefolder
+python -m src.openai.generate --badge 57 --form corefolder
+python -m src.openai.generate --badge 57 --mode prompt-assist --scene "図書館で本を読んでいるシーン"
 # SDXL + 作風LoRA (B案・GCE VM SSH バッチ。必ず --dry-run で確認してから本番実行)
-python -m src.sdxl.generate --num 57 --form corefolder --dry-run
+python -m src.sdxl.generate --badge 57 --form corefolder --dry-run
 # パイプラインで SDXL のコアフォルダアタリを Gemini ラフの構図参照に使う場合は --rough-provider sdxl-guide
 
 # 複数キャラクター・形態を一括で試すバッチランチャー
@@ -218,6 +218,7 @@ PowerShell で `npm test` が解決できない環境では `npm.cmd test` を�
 ### Stage 2 のデザイン参照と確認待ち
 
 - 特徴情報は CreationsAI の AIHints 文面を正典とし、利用許可された公式 DB 設定画像の観察を補助に使う。画像観察で AIHints を上書きしない。
+- 部位画像の追跡には `stage2_db/db_summary.json` の `character_spec`（番号仕様・部位仕様・部位図パス）と観察の `sources` を確認する。各フィールドは [docs/output-and-logs.md](docs/output-and-logs.md#stage-2-画像観察ログ) を参照。
 - Stage 2 の観察を Stage 3 のラフ生成と Stage 4 の検査に渡す。観察失敗時はラフ生成前に停止し、理由を表示して利用者に続行/中止を確認する。
 - 利用者が明示的に続行を選んだ場合だけ、AIHints と既存参照画像へフォールバックする。無回答・期限切れは承認ではない。権利軸の拒否はこの確認で解除できない。
 - 観察・根拠・警告・回答は `stage2_db/design_reference/` の `prompt.txt` / `run_meta.json` / `notes.md` に保存する。合同では各 `char_{NNN}/stage2_db/` 配下。詳細は [docs/output-and-logs.md](docs/output-and-logs.md)、確認手順は [docs/usage-generation.md](docs/usage-generation.md) を参照。
@@ -242,12 +243,12 @@ PowerShell で `npm test` が解決できない環境では `npm.cmd test` を�
 
 - 創作 DB の `AppearanceDetail` 各行を公式イラストと Vision で照合し、レビュー Markdown を生成する。
   照合画像は作品 typedef で `$palette.source`（配色抽出対象）が宣言されたフィールドから選ぶ。
-- 生成のみ: `python -m src.tools.verify_appearance_detail --num 57 --form both`（出力: `_ideas/db-reviews/`）
+- 生成のみ: `python -m src.tools.verify_appearance_detail --badge 57 --form both`（出力: `_ideas/db-reviews/`）
 - エントリ別の HEX 対応（色語 13 語では部位が重複して一意に決まらないため、実際に塗られている
   HEX を画像から特定する）: `python -m src.tools.verify_appearance_detail --all --check hexmap --submit`。
   候補は `ColorPalette` の登録色＋実測色で、モデルには生成させず**選ばせる**。
 - 配色検知ツール向けの充足検査（`BodyPart` / `DesignElement` の不足を洗い出す半自動検査）:
-  `python -m src.tools.verify_appearance_detail --num 57 --check coverage --form both`。
+  `python -m src.tools.verify_appearance_detail --badge 57 --check coverage --form both`。
   判定は上流 `tools/extract-palette.mjs` の `collectColorHints()` を node 経由で呼ぶ（色語表は再実装しない）。
   作品内の全レコードを 1 枚のレビューへまとめる一括検査は `--all --check coverage`。
 - `--comment <Issue番号>` で既存 Issue へ「`Attrs` 色情報の補完案」を追記する。

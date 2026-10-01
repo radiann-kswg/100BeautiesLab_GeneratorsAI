@@ -213,7 +213,7 @@ python -c "from src.utils import find_character; r = find_character(57, '#Works_
 python -m src.batch_generate --nums 57 --forms both --provider both --dry-run
 
 # 3. 単発で 1 枚生成
-python -m src.gemini.generate --num 57 --form corefolder --count 1
+python -m src.gemini.generate --badge 57 --form corefolder --count 1
 ```
 
 実行後、`output/{YYYYMMDD}/{ts}_gemini_corefolder_num057/` に

@@ -16,6 +16,88 @@ from pathlib import Path
 from typing import Any, Callable
 
 
+IMAGE_TEXT_POLICY = (
+    "[画像内テキスト規則]\n"
+    "設定資料の説明文・ラベル・サイン・透かしを転写しないこと。"
+    "ただし公式の番号・紋章・衣装上の文字は識別要素として、指定部位に原典の字形で再現すること。\n"
+    "Do not copy captions, labels, signatures or watermarks from reference sheets. "
+    "Preserve official number markings, emblems and costume lettering in their original "
+    "glyph shapes and specified locations; do not replace them with a generic font.\n"
+)
+
+
+def is_detail_reference(path: str) -> bool:
+    """部位拡大図。上流では numberMark 等の category が null のためパスで識別する。"""
+    return "/attr/" in str(path).replace("\\", "/").lower()
+
+
+def appearance_details_for_form(record: dict, form: str) -> list[dict]:
+    entries = ((record.get("db_record") or {}).get("AppearanceDetail")
+               or (record.get("data") or {}).get("AppearanceDetail") or [])
+    return [e for e in entries if isinstance(e, dict) and e.get("Formation") in (None, form)]
+
+
+def _vocab_tail(token: Any) -> str:
+    """'#BodyPart_Arm' → 'Arm'。語彙トークンの接頭辞を落として画像モデル向けの平文にする。"""
+    return str(token).split("_", 1)[-1].lstrip("#") if token else ""
+
+
+def _format_appearance_detail_entry(entry: dict) -> str:
+    head = " / ".join(filter(None, (
+        ", ".join(_vocab_tail(b) for b in entry.get("BodyPart") or []),
+        _vocab_tail(entry.get("Laterality")),
+        _vocab_tail(entry.get("DesignElement")),
+    )))
+    values: list[str] = []
+    for attr in entry.get("Attrs") or []:
+        if not isinstance(attr, dict):
+            continue
+        value = attr.get("value_EN") or attr.get("value_JP") or next(
+            (_vocab_tail(v) for k, v in attr.items() if k.startswith("vdict_")), "")
+        if value:
+            values.append(str(value))
+    note = entry.get("Note_EN") or entry.get("Note_JP")
+    img = entry.get("img_PNGName")
+    return (f"- {head}: " + "; ".join(values)
+            + (f" ({note})" if note else "")
+            + (f" [部位図: {img}]" if img else ""))
+
+
+def build_appearance_detail_block(record: dict, form: str) -> str:
+    """対象形態の AppearanceDetail を平文で渡す。生 JSON は語彙トークン・null が
+    プロンプトを数千字薄めるため、部位/左右/要素/属性値/注記/部位図名だけに圧縮する。"""
+    entries = appearance_details_for_form(record, form)
+    if not entries:
+        return ""
+    return (
+        "[DB部位別仕様]\n"
+        "AIHints を正典とし、以下は対象形態の部位・左右・形状・配色・番号の補助仕様。"
+        "部位図はその部位だけの拡大資料であり、全身や構図の見本ではない。\n"
+        + "\n".join(_format_appearance_detail_entry(e) for e in entries) + "\n\n"
+    )
+
+
+def _collect_appearance_detail_images(record: dict, form: str, base: str) -> list[str]:
+    """DB が宣言する実名を索引の実パスへ照合する。番号からファイル名は組み立てない。"""
+    names = {e["img_PNGName"] for e in appearance_details_for_form(record, form)
+             if isinstance(e.get("img_PNGName"), str) and e["img_PNGName"]}
+    work = _extract_work_dir_from_key(record.get("work_key") or "#Works_NumberTales")
+    db = Path(record.get("db_source") or "").stem.lower()
+    paths: list[str] = []
+    for filename, entries in _image_index_meta(_image_index_path()).items():
+        if filename not in names and Path(filename).stem not in names:
+            continue
+        for rel, _ in entries:
+            if not rel.startswith(f"data/{work}/Images/"):
+                continue
+            if db and f"/{db}/" not in rel.lower():
+                continue
+            path = Path(base) / rel
+            if path.resolve().is_relative_to(Path(base).resolve()) and path.is_file():
+                _append_unique(paths, str(path))
+    return paths
+
+
 def _append_unique(values: list[str], value: Any) -> None:
     if not isinstance(value, str):
         return
@@ -902,12 +984,12 @@ def collect_reference_images(
     local_candidates: list[str] = []
     images_struct = record.get("images") or {}
     if isinstance(images_struct, dict):
-        _new_fmt_keys = {"concept", "arts", "design_alt", "concept_alt", "corefolder", "humanoid", "tails_unit"}
+        _new_fmt_keys = {"concept", "arts", "design_alt", "concept_alt", "corefolder", "humanoid", "tails_unit", "catalog"}
         if _new_fmt_keys & images_struct.keys():
             # 新形式: concept / concept_alt / corefolder / humanoid / tails_unit は文字列パスの配列
             # tails_unit (2026-07-10 addon-ai-tag 追加): TailsUnit[*].TailsUnit_PNGName 由来の
             # 尾構造参考画像。_is_path_compatible_with_form が corefolder では除外する。
-            for key in ("concept", "concept_alt", "corefolder", "humanoid", "tails_unit"):
+            for key in ("concept", "concept_alt", "corefolder", "humanoid", "tails_unit", "catalog"):
                 for item in (images_struct.get(key) or []):
                     if isinstance(item, str) and item:
                         path = str(Path(creations_db_base) / item)
@@ -972,6 +1054,11 @@ def collect_reference_images(
             _append_unique(local_candidates, forced_path)
 
     preferred = _collect_preferred_reference_paths(record, form, creations_db_base)
+    detail_paths = [p for p in _collect_appearance_detail_images(record, form, creations_db_base)
+                    if _allow_path(p)]
+    # 部位図は AppearanceDetail の形態宣言で選ぶ。総当たり由来の他形態の部位図は除外。
+    local_candidates = [p for p in local_candidates
+                        if not is_detail_reference(p) or _image_category(p) == "tails_unit"]
 
     ranked_candidates = _sort_paths_for_form(local_candidates, form, preferred)
     for path in ranked_candidates:
@@ -1016,9 +1103,19 @@ def collect_reference_images(
     if pinned:
         local_values = pinned + [p for p in local_values if p not in pinned]
 
+    # 原点画像の直後へ部位図を確保。max_images は全体図だけに適用し、部位図で全体図を押し出さない
+    # (送信側 gemini/openai は部位図の枚数ぶん添付枠を広げる)。
+    anchor_count = len(pinned) or min(1, len(local_values))
+    body_locals = [p for p in local_values if p not in detail_paths][:max_images]
+    local_values = body_locals[:anchor_count] + detail_paths + body_locals[anchor_count:]
+    detail_urls = ["https://database.numbertales-radiann.net/"
+                   + Path(p).relative_to(Path(creations_db_base)).as_posix() for p in detail_paths]
+    body_urls = [u for u in url_values if u not in detail_urls][:max_images]
+    url_values = body_urls[:1] + detail_urls + body_urls[1:]
+
     return {
-        "urls": url_values[:max_images],
-        "local_paths": local_values[:max_images],
+        "urls": url_values,
+        "local_paths": local_values,
     }
 
 
@@ -1414,12 +1511,33 @@ def _num_matches(stored_num: Any, target: int | str) -> bool:
     return str(stored_num) == str(target)
 
 
+def resolve_badge(value: Any, work_key: str = "#Works_NumberTales") -> int | str:
+    """CLI / MCP の --badge 値をレコードの Num へ解決する (argparse の type= にも使える)。
+
+    57 / "57" → 57、"2B" (DB の Num_Badge) → "2-alt"、"67B" → "67-old"。
+    バッジに一致しない値 ("2-alt" や名前) はそのまま返し、従来の Num 照合に委ねる。
+    """
+    if isinstance(value, int):
+        return value
+    text = str(value).strip()
+    if text.isdigit():
+        return int(text)
+    try:
+        records = get_characters()
+    except (OSError, json.JSONDecodeError):
+        return text
+    hits = [r for r in records
+            if str((r.get("data") or {}).get("Num_Badge") or "").lower() == text.lower()]
+    hits.sort(key=lambda r: r.get("work_key") != work_key)  # 指定作品を優先
+    return (hits[0].get("data") or {}).get("Num", text) if hits else text
+
+
 def find_character(
     num: int | str,
     work_key: str = "#Works_NumberTales",
     manifest_path: str | None = None,
 ) -> dict[str, Any] | None:
-    """番号・特殊IDと作品キーでキャラクターを検索して返す。見つからない場合は None。
+    """番号・特殊ID・バッジ (Num_Badge) と作品キーでキャラクターを検索して返す。見つからない場合は None。
 
     優先順:
       1. ローカル manifest.jsonl から検索
@@ -1428,6 +1546,7 @@ def find_character(
          - ローカルで見つかっても ai_hints が欠けている場合は API から ai_hints を補完
          - ローカルで見つからない場合は API から全データを取得して manifest 相当に整形
     """
+    num = resolve_badge(num, work_key)
     target: dict[str, Any] | None = None
     for r in get_characters(manifest_path):
         data = r.get("data", {})
@@ -2179,13 +2298,13 @@ def _build_number_print_block(record: dict[str, Any], form: str) -> str:
     if num_token:
         lines.append(
             f"- このキャラクターの番号は厳密に \"{num_token}\" です。"
-            f" 描画する数字は必ず \"{num_token}\" の文字そのものを刻印・刺繍・印字として表現し、"
-            f"記号化・装飾化・別の数字への置換を行わないこと。"
+            " 番号の字形・線幅・間隔・切れ目・装飾は公式の部位図と原典指定を再現し、"
+            "別番号や汎用フォントへ置き換えないこと。"
         )
         lines.append(
             f"- The character number is exactly \"{num_token}\"."
-            f" Render the digits literally as printed / embroidered text matching \"{num_token}\","
-            f" not as stylized shapes, decorative glyphs, or any other number."
+            " Match the official glyph shape, stroke width, spacing and gaps, including any"
+            " stylized motif specified by the DB. Do not substitute another number or a generic font."
         )
         # NumberMarkLocation (db_record 由来、旧スキーマ) があればキャラ固有の印字位置を使う。
         # 廃止済み (2026-07-11 DB・API大幅整備 その18) のため、
@@ -2201,10 +2320,10 @@ def _build_number_print_block(record: dict[str, Any], form: str) -> str:
         if not form_marks:
             form_marks = _extract_number_mark_from_appearance_detail(record, form) or None
         if form_marks:
-            mark_count = len(form_marks)
-            count_word = "1 か所" if mark_count == 1 else f"{mark_count} か所"
+            # 1 エントリが複数部位を記述するため、行数を表示箇所数と解釈しない。
             lines.append(
-                f"- 番号印字は {count_word} のみ表示すること（重複・追加表示は禁止）。"
+                "- 番号・数字モチーフの表示箇所と数は以下の原典指定に従うこと。"
+                "指定された複数部位や回転配置を保持し、指定外へ追加しないこと。"
             )
             for mark in form_marks:
                 if not isinstance(mark, dict):
@@ -3028,11 +3147,7 @@ def build_dalle_prompt(
 
     return (
         "このキャラクターを描いてください。\n\n"
-        "[最優先ルール - 画像内テキスト禁止]\n"
-        "- 画像の中に文字・単語・文章・ラベル・サインを一切描かないこと\n"
-        "- 参照画像に含まれる注釈・テキストを再現しないこと\n"
-        "- キャラクター番号はバッジ・刻印の造形として描くこと（文字としてではなく）\n"
-        "- [STRICT] Do NOT render any text, words, labels, signs, or annotations in the image.\n\n"
+        f"{IMAGE_TEXT_POLICY}\n"
         f"{revision_section}"
         "[参照画像]\n"
         f"- 可能であれば以下の既存画像も参照してください。\n"
@@ -3041,6 +3156,7 @@ def build_dalle_prompt(
         f"[素体特徴]\n{_body_nld}\n\n"
         f"[今回の姿]\n{current_form_description}\n\n"
         f"{number_print_section}"
+        f"{build_appearance_detail_block(record, form)}"
         f"[形態固定ルール]\n{form_lock}\n\n"
         f"[識別記号 (必ず満たしてください)]\n"
         f"- {identity_tags}\n"
@@ -3053,8 +3169,7 @@ def build_dalle_prompt(
         f"[避けるべき要素]\n{negative_visuals}"
         f"{art_style_block}"
         f"{scene_block}\n\n"
-        "[再確認 - 絶対禁止] 画像内に文字・テキスト・ラベルを一切描かないこと。"
-        " Do NOT render any text, words, labels, or signs in the image."
+        f"{IMAGE_TEXT_POLICY}"
     )
 
 
@@ -3217,17 +3332,14 @@ def build_gemini_prompt(
 
     prompt = (
         "以下の参照画像と同じキャラクターを、別のポーズで描いてください。\n\n"
-        "[最優先ルール - 画像内テキスト禁止]\n"
-        "- 画像の中に文字・単語・文章・ラベル・サイン・注釈を一切描かないこと\n"
-        "- 参照画像に含まれる注釈・ラベル・テキスト要素を画像内に再現しないこと\n"
-        "- キャラクターの番号はバッジ・刻印の「造形」として描くこと（浮かぶ文字・テキストとしてではなく）\n"
-        "- [STRICT] Do NOT render any text, words, sentences, labels, signs, or annotations in the image.\n\n"
+        f"{IMAGE_TEXT_POLICY}\n"
         f"{revision_section}"
         f"[参照画像URL]\n{ref_urls or '- (なし)'}\n\n"
         "[参照画像ローカル]\n- ローカル画像はAPIリクエスト時に添付されます。\n\n"
         f"[素体特徴]\n{_body_nld}\n\n"
         f"[今回の姿]\n{current_form_description}\n\n"
         f"{number_print_section}"
+        f"{build_appearance_detail_block(record, form)}"
         f"[形態固定ルール]\n{form_lock}\n\n"
         f"[識別記号 (必ず満たしてください)]\n"
         f"- {identity_tags}\n"
@@ -3241,8 +3353,7 @@ def build_gemini_prompt(
         f"[避けるべき要素]\n{current_negative}\n\n"
         f"{art_style_block}"
         f"{scene_block}\n\n"
-        "[再確認 - 絶対禁止] 画像内に文字・テキスト・ラベル・サインを一切描かないこと。"
-        " Do NOT render any text, words, labels, or signs anywhere in the image."
+        f"{IMAGE_TEXT_POLICY}"
     )
 
     return {

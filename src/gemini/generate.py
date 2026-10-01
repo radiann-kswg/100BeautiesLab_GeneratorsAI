@@ -54,6 +54,12 @@ from src.utils import (  # noqa: E402
 )
 
 
+from src.utils.dataset import (  # noqa: E402
+    IMAGE_TEXT_POLICY, _build_number_print_block, build_appearance_detail_block, is_detail_reference,
+    _creations_db_repo_root, _try_resolve_url_to_local_path, resolve_badge,
+)
+
+
 # Imagen フォールバックモデルチェーン (先頭から順に試す)
 # 注: Gemini API では imagen-3.0-* は廃止済み。現行は imagen-4.0-* のみ利用可。
 _IMAGEN_FALLBACK_MODELS = [
@@ -161,13 +167,17 @@ def _build_reference_parts(
     limit は画像枚数の上限 (ラベルは数えない)。"""
     parts: list[Any] = []
     n_images = 0
+    attached_locals: set[Path] = set()
 
     from src.utils.image_io import load_reference_bytes
 
     def _push(data: bytes, mime: str, key: str) -> None:
         nonlocal n_images
         n_images += 1
-        label = "" if labels is None else labels.get(key, REF_LABEL_DB)
+        default_label = ("公式部位図: " + Path(key).name
+                         + " — 部位の字形・形状の拡大資料。全身・構図は全体図を参照。"
+                         if is_detail_reference(key) else REF_LABEL_DB)
+        label = "" if labels is None else labels.get(key, default_label)
         if label:
             parts.append(types_module.Part.from_text(text=f"[参照{n_images}｜{label}]"))
         parts.append(types_module.Part.from_bytes(data=data, mime_type=mime))
@@ -181,10 +191,23 @@ def _build_reference_parts(
             continue
         data, mime = loaded
         _push(data, mime, str(path))
+        attached_locals.add(p.resolve())
         if n_images >= limit:
             return parts
 
     for url in ref_urls:
+        # 同じ公式画像の URL で参照枠を二重消費しない。未添付でもローカルがあれば再利用。
+        local = _try_resolve_url_to_local_path(url, str(_creations_db_repo_root()))
+        if local:
+            if Path(local).resolve() in attached_locals:
+                continue
+            loaded = load_reference_bytes(local)
+            if loaded:
+                _push(*loaded, url)
+                attached_locals.add(Path(local).resolve())
+                if n_images >= limit:
+                    break
+                continue
         # Gemini API (非 Vertex) では Part.from_uri(file_uri=任意の公開URL) は
         # サーバー側フェッチに失敗し 400 INVALID_ARGUMENT になる。
         # ここで実バイトを取得して from_bytes で渡す。取得失敗した URL はスキップ。
@@ -343,10 +366,12 @@ def generate_image(
     )
     prompt_text = prompt_override if prompt_override else data["prompt"]
     # 参照画像内のテキストが生成画像に転写されるのを防ぐ安全装置 (prompt_override でも維持)
-    _no_text_suffix = (
-        "\n[絶対禁止] 画像内に文字・テキスト・ラベル・サインを一切描かないこと。"
-        " Do NOT render any text, words, labels, or signs in the image."
-    )
+    _no_text_suffix = "\n" + IMAGE_TEXT_POLICY
+    # Stage1 の要約や i2i の短い上書きでも、原典の字形・位置指定を失わない。
+    if not skip_db_refs:
+        for spec in (_build_number_print_block(record, form), build_appearance_detail_block(record, form)):
+            if spec and spec not in prompt_text:
+                prompt_text += "\n" + spec
     if _no_text_suffix not in prompt_text:
         prompt_text = prompt_text + _no_text_suffix
     ref_url = data["reference_image_url"]
@@ -383,8 +408,12 @@ def generate_image(
             ep_str = str(ep)
             if ep_str not in ref_locals:
                 ref_locals.insert(0 if iterate_source_path is None else 1, ep_str)
-            ref_labels[ep_str] = extra_ref_label
+            if not is_detail_reference(ep_str):
+                ref_labels[ep_str] = extra_ref_label
         ref_limit = 5
+
+    # 部位図を追加しても全体図・構図ガイドの参照枠を減らさない。
+    ref_limit += sum(is_detail_reference(p) for p in ref_locals)
 
     print(f"[INFO] キャラクター: {record['data'].get('Name_JP') or record['data'].get('Name') or num} / 形態: {form}")
     print(f"[INFO] 参照画像: {ref_url or '(なし)'}")
@@ -527,7 +556,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Imagen 3 でナンバーテールズキャラクターの画像を生成します。"
     )
-    parser.add_argument("--num", type=int, required=True, help="キャラクター番号 (例: 57)")
+    parser.add_argument("--badge", "--num", dest="num", type=resolve_badge, required=True, help="キャラクターのバッジ/番号 (DB の Num_Badge, 例: 57 / 2B / 67B)")
     parser.add_argument(
         "--form",
         choices=["corefolder", "humanoid"],
