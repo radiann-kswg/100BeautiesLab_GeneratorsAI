@@ -65,17 +65,17 @@ cp .env.example .env
 
 ```powershell
 # マルチ LLM パイプライン（推奨）
-python -m src.pipeline.image_pipeline --num 57 --form corefolder
+python -m src.pipeline.image_pipeline --badge 57 --form corefolder
 python -m src.pipeline.image_pipeline --nums 25,57 --form corefolder --scene "並んでいるシーン"
 
 # Gemini 単体
-python -m src.gemini.generate --num 57 --form corefolder
+python -m src.gemini.generate --badge 57 --form corefolder
 
 # OpenAI 単体
-python -m src.openai.generate --num 57 --form corefolder
+python -m src.openai.generate --badge 57 --form corefolder
 
 # GPT-4o でプロンプト改善提案を取得
-python -m src.openai.generate --num 57 --mode prompt-assist --scene "図書館で本を読んでいるシーン"
+python -m src.openai.generate --badge 57 --mode prompt-assist --scene "図書館で本を読んでいるシーン"
 
 # 画像 MIME チェック
 python -m src.tools.check_image_mime --strict

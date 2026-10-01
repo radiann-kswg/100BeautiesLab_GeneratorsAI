@@ -46,6 +46,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
+from src.utils.dataset import resolve_badge  # noqa: E402
 from src.utils import (  # noqa: E402
     build_run_output_dir,
     finalize_run_logs,
@@ -276,7 +277,7 @@ def main() -> None:
             " (Canva Connect にテキスト→画像生成は無いため後段ツールです)"
         )
     )
-    parser.add_argument("--num", type=int, required=True, help="キャラクター番号 (例: 57)")
+    parser.add_argument("--badge", "--num", dest="num", type=resolve_badge, required=True, help="キャラクターのバッジ/番号 (DB の Num_Badge, 例: 57 / 2B / 67B)")
     parser.add_argument(
         "--form", choices=["corefolder", "humanoid"], default="corefolder",
         help="形態 (出力フォルダ名/タイトル用)",

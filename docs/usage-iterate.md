@@ -65,7 +65,7 @@
 
 ```powershell
 # 直前 run dir を起点に、修正指示を 2 件
-python -m src.gemini.generate --num 57 --form corefolder `
+python -m src.gemini.generate --badge 57 --form corefolder `
   --iterate-from "output/20260609/20260609_15/20260609_150049_gemini_corefolder_num057" `
   --revisions "尻尾は元のまま; 表情だけ笑顔にして"
 ```
@@ -74,7 +74,7 @@ python -m src.gemini.generate --num 57 --form corefolder `
 
 ```powershell
 # 画像ファイル直指定でもOK
-python -m src.openai.generate --num 57 --form corefolder --mode dalle `
+python -m src.openai.generate --badge 57 --form corefolder --mode dalle `
   --iterate-from "output/20260609/20260609_15/20260609_150100_openai_corefolder_num057/num057_corefolder_dalle.png" `
   --revisions "番号位置を頭部寄りに; マーキングを少し大きく"
 ```
@@ -173,13 +173,13 @@ output/{YYYYMMDD}/{ts}_{provider}_{form}_num{NNN}_iter{N}/
 
 ```powershell
 # 単発 Gemini i2i の代わりに 5 ステージ全体を回す
-python -m src.pipeline.image_pipeline --num 57 --form corefolder `
+python -m src.pipeline.image_pipeline --badge 57 --form corefolder `
     --iterate-from "output/20260616/.../20260616_150049_gemini_corefolder_num057" `
     --revisions "尻尾は元のまま; 表情だけ笑顔にして" `
     --skip-canva
 
 # Canva 仕上げも含めてフル実行
-python -m src.pipeline.image_pipeline --num 57 --form corefolder `
+python -m src.pipeline.image_pipeline --badge 57 --form corefolder `
     --iterate-from "output/20260616/.../num057_corefolder_01.jpg" `
     --revisions "背景を白に; 番号マーキングを大きく"
 ```
@@ -224,13 +224,13 @@ revision block はパイプラインが Stage 1 で生成した高品質なキ�
 
 ```powershell
 # LoRA出力を起点に 5 ステージ全体を回す（i2i モード）
-python -m src.pipeline.image_pipeline --num 57 --form corefolder `
+python -m src.pipeline.image_pipeline --badge 57 --form corefolder `
     --iterate-from "_ideas/lora-refs/corefolder-v1/im_20260714132141_000_478163327.png" `
     --revisions "扇状に分離した尻尾のシルエットと太い主線・フラットカラーの作風を維持; 番号マーキングは57に" `
     --skip-canva
 
 # シーン指定と組み合わせる場合
-python -m src.pipeline.image_pipeline --num 57 --form corefolder `
+python -m src.pipeline.image_pipeline --badge 57 --form corefolder `
     --scene "図書館で本を読んでいるシーン" `
     --iterate-from "_ideas/lora-refs/corefolder-v1/im_20260714132149_000_107420369.png" `
     --revisions "作風（フラットカラー・太い主線）は参照画像に合わせる" `

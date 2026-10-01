@@ -35,6 +35,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 from dotenv import load_dotenv  # noqa: E402
 
 from src.utils.dataset import (  # noqa: E402
+    resolve_badge,
     apply_generation_gate,
     collect_reference_images,
     find_character,
@@ -1612,7 +1613,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(
         description="AppearanceDetail を公式画像と照合し、レビュー Markdown を生成する"
     )
-    ap.add_argument("--num", help="キャラクター番号 (例: 57, 2-alt)")
+    ap.add_argument("--badge", "--num", dest="num", type=resolve_badge, help="キャラクターのバッジ/番号 (DB の Num_Badge, 例: 57 / 2B / 2-alt)")
     ap.add_argument(
         "--all",
         action="store_true",
@@ -1709,7 +1710,7 @@ def main() -> None:
 
         print(f"[{form}] 使用する公式画像 ({source_label}): {', '.join(p.name for p in image_paths)}")
         command = (
-            f"python -m src.tools.verify_appearance_detail --num {args.num}"
+            f"python -m src.tools.verify_appearance_detail --badge {args.num}"
             f" --check {args.check} --form {form}"
         )
 

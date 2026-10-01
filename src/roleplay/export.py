@@ -31,7 +31,7 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from src.utils import build_run_output_dir, format_num  # noqa: E402
-from src.utils.dataset import _num_matches, load_manifest  # noqa: E402
+from src.utils.dataset import _num_matches, load_manifest, resolve_badge  # noqa: E402
 from src.utils.run_log import write_prompt_file, write_run_meta  # noqa: E402
 from src.roleplay.resolve import load_roleplay_prompt  # noqa: E402
 
@@ -71,7 +71,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="生成済みロールプレイプロンプトをゲート付きでエクスポートする（消費のみ）"
     )
-    parser.add_argument("--num", help="キャラクター番号 (例: 57)")
+    parser.add_argument("--badge", "--num", dest="num", type=resolve_badge, help="キャラクターのバッジ/番号 (DB の Num_Badge, 例: 57 / 2B)")
     parser.add_argument("--work", default=DEFAULT_WORK_KEY, help="作品キー (既定: #Works_NumberTales)")
     parser.add_argument("--to-ideas", action="store_true", help="_ideas/roleplay/ にも保存する")
     parser.add_argument("--out", default=None, help="出力ベースディレクトリの上書き")

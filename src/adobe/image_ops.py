@@ -53,7 +53,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 from dotenv import load_dotenv
 load_dotenv()
 
-from src.utils import collect_reference_images, find_character  # noqa: E402
+from src.utils import collect_reference_images, find_character, resolve_badge  # noqa: E402
 
 _IMS_TOKEN_URL = "https://ims-na1.adobelogin.com/ims/token/v3"
 _IMS_SCOPE = (
@@ -438,7 +438,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="DB 参照画像から構図ガイドを生成する (Adobe Lightroom API or PIL)"
     )
-    parser.add_argument("--num", type=int, required=True, help="キャラクター番号")
+    parser.add_argument("--badge", "--num", dest="num", type=resolve_badge, required=True, help="キャラクターのバッジ/番号 (DB の Num_Badge, 例: 57 / 2B / 67B)")
     parser.add_argument(
         "--form", choices=["corefolder", "humanoid"], default="corefolder"
     )

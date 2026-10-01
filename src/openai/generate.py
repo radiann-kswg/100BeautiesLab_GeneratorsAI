@@ -39,6 +39,11 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
+from src.utils.dataset import (  # noqa: E402
+    IMAGE_TEXT_POLICY, _build_number_print_block, build_appearance_detail_block, is_detail_reference,
+    resolve_badge,
+)
+
 from src.utils import (  # noqa: E402
     apply_generation_gate,
     build_dalle_prompt,
@@ -168,6 +173,11 @@ def generate_image_dalle(
         background=background,
         revisions=revision_items or None,
     )
+    for spec in (_build_number_print_block(record, form), build_appearance_detail_block(record, form)):
+        if spec and spec not in prompt_text:
+            prompt_text += "\n" + spec
+    if IMAGE_TEXT_POLICY not in prompt_text:
+        prompt_text += "\n" + IMAGE_TEXT_POLICY
     references = collect_reference_images(record, form=form)
 
     # iterate-from の起点画像を参照ローカルの先頭に差し込む。
@@ -246,7 +256,7 @@ def generate_image_dalle(
                     Path(p)
                     for p in references["local_paths"]
                     if Path(p).exists() and Path(p).is_file()
-                ][:4]  # gpt-image-1 の image パラメータ上限を超えないよう抑制
+                ][:4 + sum(is_detail_reference(p) for p in references["local_paths"])]  # 部位図に専用枠
                 if not image_paths:
                     use_image_edit = False
                     api_mode = "images.generate"
@@ -514,7 +524,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="OpenAI (DALL-E 3 / GPT-4o) でナンバーテールズキャラクター画像を生成・プロンプト補助します。"
     )
-    parser.add_argument("--num", type=int, required=True, help="キャラクター番号 (例: 57)")
+    parser.add_argument("--badge", "--num", dest="num", type=resolve_badge, required=True, help="キャラクターのバッジ/番号 (DB の Num_Badge, 例: 57 / 2B / 67B)")
     parser.add_argument(
         "--form",
         choices=["corefolder", "humanoid"],

@@ -29,6 +29,9 @@ from src.utils.dataset import (  # noqa: E402
     _extract_record_badge,
     _filter_immutable_traits_by_form,
     apply_generation_gate,
+    _build_number_print_block,
+    build_appearance_detail_block,
+    is_detail_reference,
 )
 from src.pipeline.design_reference import collect_design_reference
 
@@ -75,6 +78,7 @@ def collect_character_data(
         return None
     references = collect_reference_images(record, form=form)
     spec = _build_character_spec(record, form)
+    spec["detail_reference_paths"] = [p for p in references["local_paths"] if is_detail_reference(p)]
 
     spec["design_reference"] = collect_design_reference(
         record, form, references, stage_dir, confirm=reference_confirmation,
@@ -132,6 +136,8 @@ def _build_character_spec(record: dict, form: str) -> dict:
         )
 
     return {
+        "number_print_spec": _build_number_print_block(record, form),
+        "appearance_detail_spec": build_appearance_detail_block(record, form),
         "identity_tags": common.get("identity_tags") or [],
         "immutable_traits": _filter_immutable_traits_by_form(
             common.get("immutable_traits") or [], form

@@ -188,7 +188,7 @@ Get-ChildItem -Recurse -Filter prompt.txt output | Where-Object { $_.Directory.N
 パイプライン実行フォルダ (1 実行 = 1 フォルダ) の中に各ステージのサブディレクトリが作られる。
 各ステージ配下の子生成 (Gemini/Canva) は **日付フォルダを作らずフラットに** 置かれる。
 
-### 単体キャラクター (`--num`)
+### 単体キャラクター (`--badge`)
 
 ```text
 output/{YYYYMMDD}/{ts}_pipeline_{form}_num{NNN}/      # ← 1 実行 = 1 フォルダ
@@ -255,6 +255,10 @@ output/{YYYYMMDD}/{ts}_pipeline_{form}_nums{AAA}_{BBB}/
 `prompt.txt` / `run_meta.json` / `notes.md` を保存する。
 `run_meta.json` は AIHints 原文、参照候補、観察で実際に使った `sources`、
 `observations` / `unknowns` / `conflicts`、失敗理由 `warning`、回答 `user_decision` を保持する。
+`stage2_db/db_summary.json` の `character_spec` には `number_print_spec`（番号仕様原文）、
+`appearance_detail_spec`（対象形態の部位仕様原文）、`detail_reference_paths`（Stage 4・合同合成へ渡す部位図）も保存する。
+参照候補リストと実添付は異なるため、観察に使われた画像は `design_reference.sources` で確認する。
+
 状態は `running` → `ok`、または `awaiting_confirmation` → `fallback_approved` / `cancelled`。
 中止済み run は再利用せず新規実行する。同一 run の再開では入力が一致する保存結果を使い、
 プロンプト・ノートを初期化し直さない。AIHints / 参照候補が変わった場合は新規実行が必要。

@@ -25,10 +25,10 @@ MCP (Adobe / Canva) との連携は [`usage-mcp-canva-adobe.md`](usage-mcp-canva
 
 ```bash
 # 基本実行（キャラクター番号直接指定・シーンは自動生成）
-python -m src.pipeline.image_pipeline --num 57 --form corefolder
+python -m src.pipeline.image_pipeline --badge 57 --form corefolder
 
 # シーン・作風を明示指定
-python -m src.pipeline.image_pipeline --num 57 --form corefolder \
+python -m src.pipeline.image_pipeline --badge 57 --form corefolder \
     --scene "図書館で本を読んでいるシーン" --style "watercolor"
 
 # ★ 自然文でリクエスト（LLM がキャラクター・シーン等を抽出）
@@ -45,12 +45,12 @@ python -m src.pipeline.image_pipeline --nums 25,52 --form corefolder \
     --scene "研究所のラボで並んでいるシーン" --skip-canva
 
 # Stage 5 Canva フィニッシングをスキップ（CANVA_ACCESS_TOKEN 不要）
-python -m src.pipeline.image_pipeline --num 57 --form corefolder --skip-canva
+python -m src.pipeline.image_pipeline --badge 57 --form corefolder --skip-canva
 ```
 
 | フラグ | 既定値 | 説明 |
 |---|---|---|
-| `--num` | (いずれか必須) | キャラクター番号 (単体生成) |
+| `--badge` | (いずれか必須) | キャラクター番号 (単体生成) |
 | `--nums` | — | 複数キャラクター番号 カンマ区切り (例: `25,52`) — **2 件以上で全員を 1 枚に合同生成** |
 | `--natural TEXT` | — | 自然文からパラメータを LLM 抽出 |
 | `--story FILE` | — | テキストファイルから LLM 抽出 |
@@ -66,7 +66,7 @@ python -m src.pipeline.image_pipeline --num 57 --form corefolder --skip-canva
 | `--field-override FIELD=VALUE` | None | `RaceType` 等の曖昧フィールド（複数候補から1つ選ぶ必要があるもの）を明示指定。繰り返し指定可能（例: `--field-override RaceType=最終的な設計目標 --field-override Height_cm=190`）。未指定時はシーン文脈から LLM が自動判定する |
 | `--non-interactive` | false | 実ターミナル (TTY) 実行時でも曖昧フィールドの対話確認プロンプトを出さない |
 
-**出力構成 (単体キャラ `--num`):**
+**出力構成 (単体キャラ `--badge`):**
 ```
 {OUTPUT_BASE_DIR}/{YYYYMMDD}/{ts}_pipeline_{form}_num{NNN}/      # 1 実行 = 1 フォルダ
   stage1_prompt/     — 生成済みプロンプト (openai/gemini/base テキスト) + stage1_meta.json
@@ -139,14 +139,14 @@ GPT-4o でプライマリ生成 → Gemini でクロスレビュー・改善。
 
 ```bash
 # シーン文章 (創作向け)
-python -m src.pipeline.text_pipeline --num 57 --mode scene \
+python -m src.pipeline.text_pipeline --badge 57 --mode scene \
     --prompt "図書館で先輩と本を読んでいるシーン"
 
 # キャラクター紹介・外見描写 (Wiki/DB 向け)
-python -m src.pipeline.text_pipeline --num 57 --mode description
+python -m src.pipeline.text_pipeline --badge 57 --mode description
 
 # イラストキャプション (100文字以内)
-python -m src.pipeline.text_pipeline --num 57 --mode caption \
+python -m src.pipeline.text_pipeline --badge 57 --mode caption \
     --prompt "夕暮れの研究所テラスでたたずむシーン"
 ```
 
@@ -179,7 +179,7 @@ python -m src.pipeline.text_pipeline --num 57 --mode caption \
 
 | フラグ          | 必須       | 型 / 既定値                                     | 役割                                                                   |
 | --------------- | ---------- | ----------------------------------------------- | ---------------------------------------------------------------------- |
-| `--num`         | ○ (single) | int                                             | キャラクター番号 (例: `57`)。`batch_generate` では `--nums "15,22,57"` |
+| `--badge`         | ○ (single) | int                                             | キャラクター番号 (例: `57`)。`batch_generate` では `--nums "15,22,57"` |
 | `--form`        | ―          | `corefolder` / `humanoid` (default: corefolder) | 描画する形態                                                           |
 | `--work`        | ―          | `#Works_NumberTales`                            | 作品キー                                                               |
 | `--out`         | ―          | None                                            | 出力ベース。省略時は env `OUTPUT_BASE_DIR` → `output`                  |
@@ -215,7 +215,7 @@ i2i 用フラグ (`--iterate-from` / `--revisions`) は [`usage-iterate.md`](usa
 ### コマンド
 
 ```powershell
-python -m src.gemini.generate --num 57 --form corefolder [オプション]
+python -m src.gemini.generate --badge 57 --form corefolder [オプション]
 ```
 
 ### Gemini 専用フラグ
@@ -238,20 +238,20 @@ python -m src.gemini.generate --num 57 --form corefolder [オプション]
 
 ```powershell
 # シンプルな単発生成 (corefolder)
-python -m src.gemini.generate --num 57
+python -m src.gemini.generate --badge 57
 
 # humanoid を 2 枚生成
-python -m src.gemini.generate --num 57 --form humanoid --count 2
+python -m src.gemini.generate --badge 57 --form humanoid --count 2
 
 # シーン+作風+構図+背景を全部指定
-python -m src.gemini.generate --num 22 --form humanoid `
+python -m src.gemini.generate --badge 22 --form humanoid `
   --scene "天文台で星図を見ているシーン" `
   --style "soft watercolor with starry highlights" `
   --composition "three quarter view, waist up" `
   --background "domed observatory at night"
 
 # 出力先を一時的に変える
-python -m src.gemini.generate --num 49 --out "C:\tmp\gen-test"
+python -m src.gemini.generate --badge 49 --out "C:\tmp\gen-test"
 ```
 
 ---
@@ -263,7 +263,7 @@ OpenAI スクリプトは **2 モード** ある。`--mode` で切替 (デフォ
 ### 3-1. `--mode dalle` (画像生成)
 
 ```powershell
-python -m src.openai.generate --num 57 --form corefolder [オプション]
+python -m src.openai.generate --badge 57 --form corefolder [オプション]
 ```
 
 #### OpenAI dalle 専用フラグ
@@ -286,10 +286,10 @@ python -m src.openai.generate --num 57 --form corefolder [オプション]
 
 ```powershell
 # 基本
-python -m src.openai.generate --num 57 --form corefolder
+python -m src.openai.generate --badge 57 --form corefolder
 
 # サイズ変更 + シーン指定
-python -m src.openai.generate --num 73 --form humanoid `
+python -m src.openai.generate --badge 73 --form humanoid `
   --size 1024x1792 --scene "工房の作業机に向かう様子"
 ```
 
@@ -299,7 +299,7 @@ API キーで GPT-4o (env `GPT_MODEL`) を呼び、現状のプロンプトに�
 画像は生成しない。
 
 ```powershell
-python -m src.openai.generate --num 57 --mode prompt-assist `
+python -m src.openai.generate --badge 57 --mode prompt-assist `
   --scene "図書館で本を読んでいるシーン"
 ```
 
@@ -321,7 +321,7 @@ DB 参照画像を加工して構図ガイドを作成するモジュール。
 
 ```bash
 # 単体で構図ガイド確認
-python -m src.adobe.image_ops --num 57 --form corefolder \
+python -m src.adobe.image_ops --badge 57 --form corefolder \
     --scene "図書館で本を読んでいるシーン" --background "図書館" --out output/test_guide
 ```
 
@@ -338,7 +338,7 @@ python -m src.adobe.image_ops --num 57 --form corefolder \
 
 ```bash
 # Firefly 単体 (パイプライン外で使う場合)
-python -m src.adobe.generate --num 57 --form corefolder --count 1 --dry-run
+python -m src.adobe.generate --badge 57 --form corefolder --count 1 --dry-run
 ```
 
 ### 3-5-2. Canva — `src.canva.generate` (デザイン化・書き出し)
@@ -348,11 +348,11 @@ Canva へアップロード → デザイン作成 → PNG/JPG/PDF 書き出し�
 
 ```bash
 # Gemini 出力を Canva デザイン化して書き出す
-python -m src.canva.generate --num 57 --form corefolder \
+python -m src.canva.generate --badge 57 --form corefolder \
     --from-image output/20260615/20260615_06/20260615_060000_gemini_corefolder_num057/num057_corefolder_01.png
 
 # 予定確認だけ (課金ゼロ)
-python -m src.canva.generate --num 57 --from-image <path> --dry-run
+python -m src.canva.generate --badge 57 --from-image <path> --dry-run
 ```
 
 | env                  | 役割                                  |
@@ -377,10 +377,10 @@ Illustrious-XL v0.1 + コアフォルダ作風LoRA (`nt-corefolder-v1-000004.saf
 
 ```powershell
 # dry-run (gcloud コマンド列の確認のみ・VM 操作なし・課金ゼロ)
-python -m src.sdxl.generate --num 57 --form corefolder --count 2 --dry-run
+python -m src.sdxl.generate --badge 57 --form corefolder --count 2 --dry-run
 
 # 本番 (VM 起動を伴う = スポットL4課金。事前に RUN 予定を共有すること)
-python -m src.sdxl.generate --num 57 --form corefolder --count 3 `
+python -m src.sdxl.generate --badge 57 --form corefolder --count 3 `
     --scene-tags "reading a book, library"
 ```
 
@@ -426,7 +426,7 @@ Gemini + DB 公式参照が担い、SDXL アタリは構図/作風の下敷き�
 
 ```powershell
 # アタリ式: SDXL のコアフォルダアタリを Gemini ラフの構図参照に使う
-python -m src.pipeline.image_pipeline --num 57 --form corefolder `
+python -m src.pipeline.image_pipeline --badge 57 --form corefolder `
     --scene "図書館で本を読んでいるシーン" --rough-provider sdxl-guide --skip-canva
 ```
 
@@ -486,20 +486,34 @@ python -m src.batch_generate --nums 15,22,49,57 --forms both --provider both --s
 
 | 順序 | ブロック名                                            | 内容                                                                                                          | 出典フィールド                                                                 |
 | ---- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| 0    | **`[最優先ルール - 画像内テキスト禁止]`**             | 参照画像のテキスト・注釈・ラベルを画像内に再現しない。キャラ番号はバッジ造形としてのみ描く。英語/日本語で二重に明示 | (固定文、`build_gemini_prompt` 先頭 + `gemini/generate.py` 末尾サフィックスで二重適用) |
+| 0    | **`[画像内テキスト規則]`**             | 資料の説明文・注釈・署名は禁止。公式番号・紋章・衣装文字は例外として字形と指定位置を再現し、汎用フォントへ置換しない | (固定文、`build_gemini_prompt` 先頭 + `gemini/generate.py` 末尾サフィックスで二重適用) |
 | 1    | 導入文                                                | 「このキャラクターを描いてください」「同じキャラクターを別ポーズで〜」                                        | (固定文)                                                                       |
 | 1.5  | `[修正指示]` (i2i 時のみ)                             | iterate-from の修正項目を最優先で適用させる。詳細は [`usage-iterate.md`](usage-iterate.md)                    | `--revisions`                                                                  |
-| 2    | `[参照画像]` / `[参照画像URL]` / `[参照画像ローカル]` | URL とローカル添付の存在告知 (humanoid 形態は尾構造参考画像 `images.tails_unit` も含む)                       | `ai_hints.*.reference_images`, レコード `images`（`concept`/`corefolder`/`humanoid`/`arts`/`design_alt`/`tails_unit`） |
+| 2    | `[参照画像]` / `[参照画像URL]` / `[参照画像ローカル]` | URL とローカル添付の存在告知 (humanoid 形態は尾構造参考画像 `images.tails_unit` も含む)                       | `ai_hints.*.reference_images`, レコード `images`（`concept`/`corefolder`/`humanoid`/`arts`/`design_alt`/`catalog`/`tails_unit`）および `AppearanceDetail[].img_PNGName` |
 | 2.5  | `[参照N｜役割]` (API 送信時・各画像の直前)             | 添付画像ごとに「起点画像（前回生成）」「下絵・ラフ」「公式原典」の役割ラベルをテキストパートとして挟む。原典以外の配色・崩れ・蛇足を引き継がせないための明示。合同合成は「キャラクター単体レンダー」 | `gemini/generate.py` の `REF_LABEL_*` / `extra_ref_label` (プロンプト本文ではなく `contents` に差し込む) |
 | 3    | `[素体特徴]`                                          | 不変特徴 (耳・尻尾・髪色・瞳色)                                                                               | `ai_hints.common.immutable_traits` / `identity_tags`                           |
 | 4    | `[今回の姿]`                                          | 現在形態の自然文記述                                                                                          | `ai_hints.forms.{form}.natural_language_description`                           |
-| 5    | **`[番号印字仕様 (必須・最優先)]`**                   | キャラ番号の刻印位置・字形ルール (例: 「57 の文字そのものを刻印」「corefolder は表面 / humanoid は左胸寄り」) | identity_tags / immutable_traits / outfit_features / silhouette_notes から抽出 |
+| 5    | **`[番号印字仕様 (必須・最優先)]`**                   | 番号の位置・個数・色・原典の字形（線幅・間隔・切れ目・装飾）を保持 | AppearanceDetail の NumberMark / identity_tags / immutable_traits / outfit_features / silhouette_notes から抽出 |
 | 6    | `[形態固定ルール]`                                    | 形態固有の immutable_constraints / 形態共通データセット (`required_shape_keywords[]`)                         | `Works_NumberTales.json` + `ai_hints.forms.{form}.immutable_constraints`       |
 | 6.8  | **`[配色仕様 (DB実測値・遵守すること)]`**             | 作者が設定画に描いたカラーチップ由来の HEX を Role (主色/補助色/差し色/副色) 別に列挙し、`AppliesTo` の適用部位を併記 (例: `- 主色 #E8F152 : arm, foot`)。参照画像と矛盾して見える場合は参照画像を優先させる | `db_record.ColorPalette` / `data.ColorPalette`（不在時は `ai_hints.common.palette_priority` へフォールバック） |
 | 7    | `[現在形態の重点要素]`                                | `silhouette_notes` の body_description / attached_items を 2 行に分けて提示                                   | `ai_hints.forms.{form}.silhouette_notes`                                       |
 | 8    | `[禁止語]` / negative                                 | 形態共通データセットの `disallow_cross_form_keywords[]` + `negative_keywords`                                 | `Works_NumberTales.json` + `ai_hints.forms.{form}.negative_keywords`           |
 | 6.5  | `[形態共通データセット]`                              | 形態定義・シルエット要約・共通装備 + **DB原典/識別モチーフ(en)** (両形態) / **DB原典/尾の構造(en)・種別・身長** (humanoid 限定) | `_ideas/form_common_datasets/{Work}.json` + `db_record.AppearanceDetail`(`#Element_Motif`/`#Element_CostumeItem`、旧 `IdentityMotif.Motif_EN` 廃止済み) / `db_record.TailsUnit`（構造化） / `db_record.RaceType`・`Height_cm`（曖昧フィールド解決） |
 | 9    | `[シーン・追加要望]`                                  | `--scene` / `--style` / `--composition` / `--background` の指定値                                             | CLI フラグ                                                                     |
+
+**2026-10-01: 公式部位図と番号字形の保持**
+
+`[DB部位別仕様]` に、対象形態（`Formation` が対象形態または null）の
+`AppearanceDetail` を平文に圧縮して渡す（生 JSON・語彙トークン・null は送らない）。部位・左右・全 `Attrs`・注記・画像名を含み、
+AIHints を補助する。番号の装飾を一律禁止する指示は使用しない。
+番号仕様の1行が複数部位を表す場合（666の光輪・ブローチ・翼など）は、行数を表示箇所数に変換せず、原典の位置・個数・回転配置を保持する。
+Stage 1 の要約や i2i の `prompt_override` でも、Gemini/OpenAI の送信時に番号仕様と部位仕様を保持する。
+
+- Stage 2: 原点全体図と公式部位図を役割付きで観察する。部位図では字形、全体図では位置を確認。
+- Stage 3/5: 部位図は `attr/...` の拡大資料として添付。部位図の分だけ通常の添付枠を増やす。
+- Stage 4: 全体図に加えて部位図そのものを Vision へ添付し、字形・線幅・間隔・切れ目の違いも修正対象にする。
+- 合同合成: 各キャラの部位仕様・部位図を明示添付する。通しCLIと分割CLIで共通。
+- 参照を添付できても、生成モデルの完全な字形再現は保証されない。Stage 5 の出力を再検査する自動ループはない。
 
 > **重要**: 番号印字ブロック (5) と禁止語ブロック (8) は2026-06-09に再強化済み。詳細は [`AGENTS.md`](../AGENTS.md) の `output レイアウト規約` セクションを参照。
 
@@ -550,7 +564,7 @@ python -m src.pipeline.stage_cli stage2 --run-dir <run-dir> --reference-decision
 python -m src.pipeline.stage_cli stage2 --run-dir <run-dir> --reference-decision cancel
 ```
 
-合同では `--num` で警告対象も指定する。続行回答後に Stage 3 以降を実行する。
+合同では `--badge` で警告対象も指定する。続行回答後に Stage 3 以降を実行する。
 未提示の警告への事前回答は拒否する。回答待ちの再開では観察 API を再実行しない。
 通し CLI は対話端末で回答できるが、EOF 終了後の同一 run 再開には対応せず、再起動は新規実行になる。
 古い分割 state に観察情報がない場合は、Stage 3 の前に Stage 2 を実行し直す。

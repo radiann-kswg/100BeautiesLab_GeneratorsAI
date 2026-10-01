@@ -92,6 +92,8 @@ def _system_instruction(char_name: str, form: str) -> str:
         "CRITICAL: reproduce every HEX color code and its body-part assignment from the "
         "color palette section verbatim. These are the author's measured colors — never "
         "drop, reword, or substitute them with color names. "
+        "CRITICAL: preserve the official number glyph shape, placement and AppearanceDetail "
+        "requirements; the ban on reference-sheet captions does not ban character markings. "
         "Return ONLY the refined English prompt. No explanations, no markdown, prompt text only."
     )
 

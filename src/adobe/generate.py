@@ -43,6 +43,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
+from src.utils.dataset import resolve_badge  # noqa: E402
 from src.utils import (  # noqa: E402
     apply_generation_gate,
     build_dalle_prompt,
@@ -51,6 +52,7 @@ from src.utils import (  # noqa: E402
     collect_reference_images,
     finalize_run_logs,
     find_character,
+    format_num,
     initialize_run_logs,
     next_iteration_label,
     parse_revisions,
@@ -287,7 +289,7 @@ def generate_image_firefly(
     saved: list[Path] = []
     results: list[dict[str, object]] = []
     for i, url in enumerate(urls):
-        out_path = output_dir / f"num{num:03d}_{form}_firefly_{i + 1:02d}.png"
+        out_path = output_dir / f"num{format_num(num)}_{form}_firefly_{i + 1:02d}.png"
         try:
             with urllib.request.urlopen(url) as resp:  # noqa: S310 (Firefly presigned URL)
                 raw = resp.read()
@@ -313,7 +315,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Adobe Firefly Services でナンバーテールズキャラクター画像を生成します。"
     )
-    parser.add_argument("--num", type=int, required=True, help="キャラクター番号 (例: 57)")
+    parser.add_argument("--badge", "--num", dest="num", type=resolve_badge, required=True, help="キャラクターのバッジ/番号 (DB の Num_Badge, 例: 57 / 2B / 67B)")
     parser.add_argument(
         "--form", choices=["corefolder", "humanoid"], default="corefolder",
         help="生成する形態 (デフォルト: corefolder)",

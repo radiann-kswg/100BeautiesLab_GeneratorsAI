@@ -19,10 +19,10 @@ Markdown を機械生成するようになった（2026-07-19）。データセ�
 
 ```powershell
 # 生成済みロールプレイプロンプトを取得して output/ に保存 + 標準出力
-python -m src.roleplay.export --num 57
+python -m src.roleplay.export --badge 57
 
 # 人手先行ワークフロー用に _ideas/roleplay/ にも保存
-python -m src.roleplay.export --num 57 --to-ideas
+python -m src.roleplay.export --badge 57 --to-ideas
 
 # ロールプレイプロンプトを持つ (かつ権利上許可された) キャラ一覧
 python -m src.roleplay.export --list
@@ -33,7 +33,7 @@ python -m src.roleplay.export --list --all-works   # 全作品を対象
 
 | フラグ         | 既定値                | 役割                                                              |
 | -------------- | --------------------- | ----------------------------------------------------------------- |
-| `--num`        | ―                     | キャラクター番号 (例: `57`)。`--list` 指定時は不要                |
+| `--badge`        | ―                     | キャラクター番号 (例: `57`)。`--list` 指定時は不要                |
 | `--work`       | `#Works_NumberTales`  | 作品キー                                                          |
 | `--to-ideas`   | off                   | `_ideas/roleplay/num{N}.md` にも保存する                          |
 | `--out`        | None                  | 出力ベースディレクトリの上書き (既定は `output/`)                 |
@@ -53,7 +53,7 @@ _ideas/roleplay/num{N}.md   — --to-ideas 指定時のみ
 
 - `run_meta.json` には**本文を残さない**（`char_count` のみ）。`source_submodule_commit` で
   どの creations-db 版から取り出したかを追える。
-- `--num` の終了コード: 許可・保存成功=`0` / 未生成(`unavailable`)=`0` / オプトアウト(`refused`)=`2` / エラー=`1`。
+- `--badge` の終了コード: 許可・保存成功=`0` / 未生成(`unavailable`)=`0` / オプトアウト(`refused`)=`2` / エラー=`1`。
 
 ---
 

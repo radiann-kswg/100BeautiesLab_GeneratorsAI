@@ -190,11 +190,24 @@ _ideas/
 
 1. `ai_hints.*.reference_images[]` (AI 学習データ由来)
 2. レコードの `images` (DB 由来・新形式)
-   - `concept[]` / `concept_alt[]`: 文字列パスの配列
+   - `concept[]` / `concept_alt[]` / `corefolder[]` / `humanoid[]` / `catalog[]` / `tails_unit[]`: 文字列パスの配列
    - `arts[]` / `design_alt[]`: `{path, form, characters:[id...]}` オブジェクトの配列
      - `characters` フィールドで対象キャラを明示判定（合同構図にも対応）
      - `form` フィールドがパスに反映されており、`_is_path_compatible_with_form()` で形態互換を確認
 3. `work_common.reference_images.{corefolder_reference[], humanoid_reference[]}` (作品共通設計図 `cnsp-fg_NTsCoreFolder.png` 等)
+
+4. `AppearanceDetail[].img_PNGName`（2026-10-01）
+   - `Formation` が対象形態または null の部位図を、`image-index.json` の実ファイル名へ照合する。
+   - 作品・DB・本人の照合を行い、番号からパスを組み立てない。原典サブモジュール・生成済みデータセットは編集しない。
+   - `attr/numberMark` / `attr/emblem` / `attr/costumeItem` 等は索引の `category` が null でも採用する。
+   - コアフォルダの全体図用フィルタにかけず、原点画像の直後へ部位図を配置する。
+     総当たりで見つかった未宣言・別形態の部位図は採用しない（`tails_unit` は従来の専用規則）。
+   - 収集上限は従来の `max_images=6`。モデルへ添付するときは部位図の枚数分だけ通常の参照枠を拡張する。
+     部位図を全身と誤解させないよう、Gemini・Stage 2 観察・Stage 4 検査で役割を明示する。
+     Gemini は公式URLのローカル対応画像を再利用し、同じ画像を二重添付しない。
+
+`tests/test_detail_references.py` は93の番号字形、28の複数部位図、髪飾り・紋章、形態分離、
+Stage 2/4、Gemini/OpenAI の送信画像バイト、合同分割CLIを API 課金なしで確認する。
 
 ### キャラクターの同定 — インデックスバッジ命名 (2026-08-02 追従)
 
@@ -281,13 +294,13 @@ env `CREATIONS_DB_PACKAGE_ENABLE` で動作切替。
 
 ```bash
 # 生成のみ (既定・副作用なし)。_ideas/db-reviews/ に Markdown を書き出す
-python -m src.tools.verify_appearance_detail --num 57 --form corefolder
+python -m src.tools.verify_appearance_detail --badge 57 --form corefolder
 
 # 両形態を続けて照合 (Formation=null の共通エントリは両方で検査される)
-python -m src.tools.verify_appearance_detail --num 57 --form both
+python -m src.tools.verify_appearance_detail --badge 57 --form both
 
 # 配色検知ツール向けの充足性検査 (BodyPart / DesignElement の不足を洗い出す)
-python -m src.tools.verify_appearance_detail --num 57 --check coverage --form both
+python -m src.tools.verify_appearance_detail --badge 57 --check coverage --form both
 
 # 作品内の AppearanceDetail 保有レコードを一括検査し、1 枚のレビューへまとめる
 python -m src.tools.verify_appearance_detail --all --check coverage
@@ -299,14 +312,14 @@ python -m src.tools.verify_appearance_detail --all --check coverage --comment 20
 python -m src.tools.verify_appearance_detail --all --check hexmap --submit
 
 # レビューを Issue として送る (form ごとに 1 Issue)
-python -m src.tools.verify_appearance_detail --num 57 --form both --submit
+python -m src.tools.verify_appearance_detail --badge 57 --form both --submit
 ```
 
 ### フラグ
 
 | フラグ | 既定 | 説明 |
 | --- | --- | --- |
-| `--num` | — | キャラクター番号。`2-alt` のような特殊 ID も可（`--all` と排他・どちらか必須） |
+| `--badge` | — | キャラクター番号。`2-alt` のような特殊 ID も可（`--all` と排他・どちらか必須） |
 | `--all` | off | 作品内の `has_appearance_detail` 全レコードを一括検査（`--check coverage` 専用） |
 | `--check` | `match` | `match` = 記述と画像の照合 / `coverage` = 配色検知ツール向けの充足検査 |
 | `--form` | `corefolder` | `corefolder` / `humanoid` / `both` |
@@ -384,7 +397,7 @@ creations-db 側の `tools/extract-palette.mjs` の `listImageFields()` と同�
 - 色語ヒント取得の node 呼び出しは **1 プロセスにまとめる**（レコードごとに起動すると起動コストで数十秒かかる）。
 - 節 1 は**色語表に無い色語の頻度表**。色語ヒント 0 の記述からユニーク文字列だけを LLM へ渡して
   色を指す語を抽出する（画像は使わない）。`COLOR_WORD_RANGES` へ何を足すべきかの優先順になる。
-- 個別キャラの部位候補（画像からの提案）は一括では出さない。`--num <N> --check coverage` を使う。
+- 個別キャラの部位候補（画像からの提案）は一括では出さない。`--badge <N> --check coverage` を使う。
 - 色語の抽出は実行のたびに結果が揺れる（LLM 判定のため）。`bright`（表情の明るさ）のような
   色ではない語を拾うこともあるので、そのまま色語表へ入れず内容を確認すること。
 
@@ -452,7 +465,7 @@ creations-db 側の `tools/extract-palette.mjs` の `listImageFields()` と同�
 
 ```bash
 # Stage1: プロンプト生成 + run-dir/state 作成 (最終行に RUN_DIR= を出力)
-python -m src.pipeline.stage_cli stage1 --num 57 --form corefolder --scene "図書館で本を読むシーン"
+python -m src.pipeline.stage_cli stage1 --badge 57 --form corefolder --scene "図書館で本を読むシーン"
 # Stage2: キャラクター DB データ取得
 python -m src.pipeline.stage_cli stage2 --run-dir <RUN_DIR>
 # Stage3: ラフを 1 枚ずつ生成 (繰り返し呼ぶと state に追記)
@@ -469,7 +482,7 @@ python -m src.pipeline.stage_cli status --run-dir <RUN_DIR>
 - 状態ファイル: `<run-dir>/pipeline_state.json`(各ステージが冪等に追記)。
 - `generate_final_images()` に `count` 引数を追加済み(Stage5 を 1 枚ずつ呼ぶための拡張)。
 - 合同(複数キャラ 1 枚合成)も分割実行に対応(`state["mode"]=="combined"`)。
-  `stage1 --nums 24,42` で開始し、`stage3`/`stage4` は `--num` でキャラ指定、
+  `stage1 --nums 24,42` で開始し、`stage3`/`stage4` は `--badge` でキャラ指定、
   `stage5` で全員のベストを Gemini マルチ参照で 1 枚に合成する。
   ワンショットで回せる環境では従来どおり `image_pipeline --nums` でもよい。
 - Canva 仕上げ(Stage5b)は `api.canva.com` 到達環境でのみ `--with-canva` で有効。

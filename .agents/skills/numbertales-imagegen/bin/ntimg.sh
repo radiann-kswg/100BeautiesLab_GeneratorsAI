@@ -11,7 +11,7 @@
 #   検証: src/pipeline/image_pipeline.py を含むディレクトリのみ採用。
 #
 # 使い方（例）:
-#   ./ntimg.sh --num 57 --form corefolder --skip-canva
+#   ./ntimg.sh --badge 57 --form corefolder --skip-canva
 #   ./ntimg.sh --natural "コアフォルダ姿の57が図書館で本を読んでいる絵"
 #   NT_MODULE=src.batch_generate ./ntimg.sh --nums 15,57 --forms both --dry-run
 #

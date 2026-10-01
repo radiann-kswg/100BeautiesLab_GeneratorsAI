@@ -34,6 +34,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
+from src.utils.dataset import resolve_badge  # noqa: E402
 from src.utils import (  # noqa: E402
     apply_generation_gate,
     collect_record_capabilities,
@@ -51,17 +52,9 @@ class BatchResult:
     output_paths: list[str] = field(default_factory=list)
 
 
-def _parse_int_list(text: str) -> list[int]:
-    """`"22,49,57"` のようなカンマ区切り文字列を整数リストに変換。"""
-    out: list[int] = []
-    for token in text.split(","):
-        token = token.strip()
-        if not token:
-            continue
-        try:
-            out.append(int(token))
-        except ValueError:
-            raise SystemExit(f"[ERROR] --nums の値 '{token}' は整数として解釈できません。")
+def _parse_int_list(text: str) -> list[int | str]:
+    """`"22,49,2B"` のようなカンマ区切りの番号/バッジをレコードの Num に解決する。"""
+    out: list[int | str] = [resolve_badge(t) for t in text.split(",") if t.strip()]
     if not out:
         raise SystemExit("[ERROR] --nums に少なくとも1つの番号を指定してください。")
     return out
@@ -318,7 +311,7 @@ def main() -> None:
     parser.add_argument(
         "--nums",
         required=True,
-        help="カンマ区切りのキャラクター番号 (例: 15,22,49,57)",
+        help="カンマ区切りのキャラクターのバッジ/番号 (DB の Num_Badge, 例: 15,22,2B,57)",
     )
     parser.add_argument(
         "--forms",

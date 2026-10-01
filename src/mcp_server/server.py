@@ -38,6 +38,7 @@ from mcp.server.fastmcp import FastMCP
 from src.mcp_server import output_sink
 from src.mcp_server.auth import SimpleOAuthProvider
 from src.mcp_server.jobs import MANAGER
+from src.utils.dataset import resolve_badge
 
 # ── サーバ設定 ──────────────────────────────────────────────────
 SERVER_NAME = "numbertales_mcp"
@@ -110,12 +111,13 @@ class GenerateCharacterInput(_Base):
 
     num: Union[int, str] = Field(
         ...,
-        description="キャラクター番号 (1-100 の整数)、特殊ID ('2-alt' 等)、またはキャラ名 (例: 57 / '2-alt' / 'バイナ')",
+        description="キャラクターのバッジ (DB の Num_Badge, 例: '2B' / '67B')、番号 (1-100 の整数)、特殊ID ('2-alt' 等)、またはキャラ名 (例: 57 / '2B' / 'バイナ')",
     )
 
     @field_validator("num")
     @classmethod
     def _validate_num(cls, v: Union[int, str]) -> Union[int, str]:
+        v = resolve_badge(v)
         if isinstance(v, int) and not (1 <= v <= 100):
             raise ValueError(f"整数 num は 1-100 の範囲で指定してください: {v}")
         return v
@@ -149,7 +151,7 @@ class GenerateCharacterInput(_Base):
 class GenerateJointInput(_Base):
     """合同生成（複数キャラを 1 枚に）の入力。"""
 
-    nums: list[Union[int, str]] = Field(..., description="キャラクター番号のリスト (例: [25, 57] / ['25', '2-alt'])", min_length=2, max_length=6)
+    nums: list[Union[int, str]] = Field(..., description="キャラクターのバッジ/番号のリスト (DB の Num_Badge, 例: [25, 57] / ['25', '2B'])", min_length=2, max_length=6)
     forms: Optional[list[str]] = Field(
         default=None,
         description=(
@@ -178,6 +180,7 @@ class GenerateJointInput(_Base):
     @field_validator("nums")
     @classmethod
     def _validate_nums(cls, v: list[Union[int, str]]) -> list[Union[int, str]]:
+        v = [resolve_badge(n) for n in v]
         for n in v:
             if isinstance(n, int) and not (1 <= n <= 100):
                 raise ValueError(f"整数キャラクター番号は 1-100 の範囲です: {n}")

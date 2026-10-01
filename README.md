@@ -63,7 +63,7 @@ cp .env.example .env
 python -m src.batch_generate --nums 57 --forms both --provider both --dry-run
 
 # 5. 生成実行
-python -m src.pipeline.image_pipeline --num 57 --form corefolder
+python -m src.pipeline.image_pipeline --badge 57 --form corefolder
 ```
 
 macOS はワンショットセットアップスクリプトも用意しています。詳細は [`docs/setup.md`](docs/setup.md) を参照してください。
