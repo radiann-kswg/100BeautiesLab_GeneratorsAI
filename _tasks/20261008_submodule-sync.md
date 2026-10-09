@@ -46,3 +46,12 @@ ai-dataset/build-info.json                        |  18 ++--
 > Cowork の `daily-submodule-sync-optimize` タスク (Claude) に差分レビューを依頼し、
 > `src/` ・ `docs/` 側の追従最適化を行うこと。本スクリプトは git 同期とログ・コミットのみ担当。
 
+
+## 差分レビュー結果 — 2026-10-08 (Cowork / 57 イズナ)
+
+- **判定: src/ ・ docs/ への追従最適化は不要。**
+- 取り込み差分 `add4084..b4551e0` はデータ内容のリフレッシュのみ (ai_training allowed 164 -> 172 / total_characters 713 -> 718)。
+- スキーマ非変更を確認: `manifest-training.jsonl` のヘッダ/キャラクタエントリのキー集合、`Works_*.json` 上位キー、`index.json` キーはいずれも旧→新で完全一致。フィールド名・API・参照パス・`Works_*.json` の version いずれも変更なし。
+- よって AGENTS.md「docs と指示書の同期ルール」表のトリガー該当なし。過剰改変を避け編集は行わない。
+- リモート状況 (GitHub コネクタ読み取り): CreationsAI `master` HEAD=b4551e0 / CreationsDB `addon-ai-tag` HEAD=9efb0d0 で、ローカルのサブモジュール HEAD と一致。次回同期待ちの未取り込み更新なし。
+- 留意点: `build-info.json` の `image_ref_stats.unresolved` が 0 -> 2 に変化。これはデータセット側 (`_creations-ai/ai-dataset/`) のビルド品質シグナルであり、当リポの src/docs スキーマには無影響。直接編集対象外のため本タスクでは記録のみ。
