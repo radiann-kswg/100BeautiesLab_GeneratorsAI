@@ -46,3 +46,13 @@ ai-dataset/build-info.json                        | 18 +++++++++---------
 > Cowork の `daily-submodule-sync-optimize` タスク (Claude) に差分レビューを依頼し、
 > `src/` ・ `docs/` 側の追従最適化を行うこと。本スクリプトは git 同期とログ・コミットのみ担当。
 
+
+## Cowork レビュー追記 — 2026-10-15 (Claude / 57 イズナ)
+
+- 実機スクリプト実行: 確認済み (09:00、`_creations-ai` 1a0c7d4→cbf75e5 FF取り込み完了)
+- 差分の性質: データ内容のみ。allowed_characters 172→174 / total_characters 726→727 / manifest-training.jsonl +4レコード (201→205行) / build-info・policy のカウント・タイムスタンプ更新。
+- スキーマ確認: manifest-training.jsonl のトップレベルフィールドキーは旧新で完全一致。policy.json / build-info.json もキー変更なし (値のみ)。
+- スキーマ / manifest前提 / フィールド名 / API / 参照パスへの影響: なし
+- 追従最適化: 不要と判断。src/・docs/・README.md・AGENTS.md いずれも編集せず (過剰改変回避)。
+- リモート照合 (GitHubコネクタ read-only): CreationsAI master=cbf75e5 / CreationsDB addon-ai-tag=d8135a6、ともにローカルHEADと一致。次回同期待ちの未取り込み更新なし。
+- コミット: 本サンドボックスからは実施不可。本追記は実機の `git add`/`git commit` (または次回 `scripts/daily-submodule-sync.ps1`) で取り込むこと。
