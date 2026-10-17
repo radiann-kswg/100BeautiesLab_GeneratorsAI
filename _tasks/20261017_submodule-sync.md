@@ -47,3 +47,12 @@ ai-dataset/build-info.json                        | 10 +--
 > Cowork の `daily-submodule-sync-optimize` タスク (Claude) に差分レビューを依頼し、
 > `src/` ・ `docs/` 側の追従最適化を行うこと。本スクリプトは git 同期とログ・コミットのみ担当。
 
+
+### 追従確認 (2026-10-17 15:00 手動・Claude Code)
+
+**判定: `src/` / `docs/` の追従変更は不要。** 根拠:
+
+- NumberTales 側の差分は `db_SemiPrimary.json` のクロスリンク `_DB: SemiPrimary → PrimaryStabilities`（`%` / `∞` の NNE・SSW 参照）のみ。`src/` は `_DB` クロスリンクを解決しないため影響なし。
+- `data/db_type.json`（ルート）の `Height_cm` / `Weight_kg` の `hashTag_JP/EN` ラベル変更は、`src/` が `hashTag_JP/EN` を参照しない（作品別 `db_type.json` の Images 順・`$IndexDef` のみ使用）ため影響なし。`Works_NumberTales/DataBases/db_type.json` は無変更。
+- 豹変系女子の新 DB `#DB_PrimaryStabilities` 等の新規レコードは `Num` も `images` も無く、`natural_parser._get_chars_with_images()` の名前辞書・`get_characters()` の列挙には載らない（後者は `ai_training.allowed` でも除外）。新設の References レコード「憤怒を鎮めるイ列」は `data/References/` 由来なので `get_characters()` から外れる。
+- `python -m pytest -q`: 90 passed。単独実行時の `test_badge_reference_images` の失敗は**既存のフレーク**: `10-alt` は今回の更新前から `allowed:false`（stillTentative）で、テストは実 API フォールバックに依存している。今回の差分が原因ではない。
