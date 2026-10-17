@@ -46,3 +46,8 @@ ai-dataset/build-info.json                        | 4 ++--
 > Cowork の `daily-submodule-sync-optimize` タスク (Claude) に差分レビューを依頼し、
 > `src/` ・ `docs/` 側の追従最適化を行うこと。本スクリプトは git 同期とログ・コミットのみ担当。
 
+### 追従確認
+
+- **確認対象:** `73776a7` の変更一覧（生成済み `manifest*.jsonl`、`image-index.json`、各 `works/*.json`、`policy.json` と creations-db の参照先）および `src/utils/dataset.py` の manifest / 画像参照処理。
+- **判定:** `src/` / `docs/` の追従変更は不要。親リポ側の更新は生成済みデータの再同期で、スキーマ・API・生成ロジックの変更はない。許可件数172は manifest の値を読むため、件数変更に伴うコード更新も不要。
+- **根拠:** 同期ログの変更ファイル一覧は `ai-dataset` 配下の生成物と `creations-db` の更新に限られる。参照画像のカテゴリ・パスは manifest / image-index を通じて処理され、src に固定値はない。

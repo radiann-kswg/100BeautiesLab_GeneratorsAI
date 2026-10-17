@@ -46,3 +46,8 @@ ai-dataset/build-info.json                        |   8 +-
 > Cowork の `daily-submodule-sync-optimize` タスク (Claude) に差分レビューを依頼し、
 > `src/` ・ `docs/` 側の追従最適化を行うこと。本スクリプトは git 同期とログ・コミットのみ担当。
 
+### 追従確認
+
+- **確認対象:** `ea4768c` の変更一覧（特に `image-index.json`、`manifest*.jsonl`、`Works_NumberTales.json`）と creations-db の参照先、および `src/utils/dataset.py` の画像カテゴリ / 参照パス処理。
+- **判定:** `src/` / `docs/` の追従変更は不要。同期差分はデータ・画像の更新を生成済み manifest / image-index に反映したもので、スキーマ・API・生成ロジックの変更はない。画像パスとカテゴリはデータから解決するため、追加・更新分は同期データにより反映される。
+- **根拠:** 親リポの変更一覧は `ai-dataset` 配下の生成物と `creations-db` の参照先。src はキャラクター番号・バッジ・形態・画像カテゴリを実データから処理し、今回の追加画像に固有の分岐を持たない。
