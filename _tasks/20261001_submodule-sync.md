@@ -57,3 +57,11 @@ ai-dataset/build-info.json                        |  6 +--
 
 
 - 追加試行: 93・666を各ラフ1枚/完成1枚生成。666のNumberMark 1行=1か所という誤解釈を修正。公式部位図が届いても666のブローチ内部は未一致。詳細は ../_ideas/20261001_reference-generation-review.md。全87テスト成功。
+
+### 10:15 Cowork 朝レビュー (daily-submodule-sync-optimize / 57イズナ)
+
+- 実機スクリプト実行確認: `20261001_submodule-sync.md` 生成済み。`_creations-ai` が `8a47bfe..c78afcb` (chore: sync ai-dataset) で UPDATED、ネスト `creations-db` はログ上 NO-CHANGE。
+- 差分の性質: データセット再生成のみ。`manifest-training.jsonl`(192件) / `manifest.jsonl`(757件) の最上位キー集合は新旧で完全一致、`Works_NumberTales.json` の再帰キーパスも一致。`build-info.json`/`index.json`/`policy.json` の差分は `generated_at`・`submodule_commit`(2274eb1→c265fdd)・`with_roleplay_prompt`(60→62) のみ。スキーマ/フィールド名/API/参照パスの変更なし。
+- 追従判定: **src/ ・ docs/ の最適化は不要**。値・メタデータの更新のみで `src/` のプロンプト生成ロジックや `docs/*.md` の記述前提に影響しないため、過剰改変を避け編集なし。
+- リモート照合 (GitHubコネクタ, 読み取りのみ): CreationsAI `master`=c78afcb / CreationsDB `addon-ai-tag`=c265fdd。いずれもローカルHEADと一致、次回同期待ちの未取り込み更新なし。
+- 注記: 本サンドボックスからは全ファイルが CRLF↔LF 差分として見えるため `git add`/`commit`/`fetch` は未実行。コミットは実機 `scripts/daily-submodule-sync.ps1` が担当。
