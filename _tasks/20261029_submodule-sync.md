@@ -47,3 +47,29 @@ ai-dataset/build-info.json                         | 14 +++---
 > Cowork の `daily-submodule-sync-optimize` タスク (Claude) に差分レビューを依頼し、
 > `src/` ・ `docs/` 側の追従最適化を行うこと。本スクリプトは git 同期とログ・コミットのみ担当。
 
+## Cowork 最適化レビュー — 2026-10-29 (daily-submodule-sync-optimize)
+
+担当: Cowork (57/イズナ)。実機スクリプトが取り込んだ `_creations-ai` d3d874e..8a0797d をレビュー。
+
+### 差分の性質
+
+- 取り込み内容は **データ内容のみ**。スキーマ・フィールド名・API・参照パスの変更なし。
+  - `build-info.json` / `index.json`: total_works 10→11, total_characters 736→738, allowed_characters 177→179（値のみ）。
+  - `manifest-training.jsonl`: 211→213 行。トップレベルキー集合は旧=新で完全一致（構造変更なし）。
+  - `manifest.jsonl`: キー集合は旧=新で完全一致。
+  - `policy.json`: `_generated_at` タイムスタンプのみ更新。
+  - 新規 `Works_StardustVsKaleidoscope`（星屑の万華鏡）追加。`ai_training.allowed:false`（AI_Optout）のため学習対象は増えず、works 計数のみ増加。既存 Works_*.json と同一スキーマ。
+
+### 判定
+
+- **最適化不要**。親リポ `src/` ・ `docs/` ・ `README.md` ・ `AGENTS.md` の追従は不要と判断し、編集なし（過剰改変回避）。
+
+### リモート確認（GitHub コネクタ・読み取りのみ）
+
+- CreationsAI@master = `8a0797d` → ローカル `_creations-ai` HEAD と一致。次回同期待ちの更新なし。
+- CreationsDB@addon-ai-tag = `666e5564` → ローカル `creations-db` HEAD と一致。次回同期待ちの更新なし。
+
+### コミットについて
+
+- 本タスク（クラウドサンドボックス）からは `git add` / `git commit` を実行していない（環境制約により禁止）。親リポへの追従編集も発生していないため、コミット対象の変更はなし。
+
