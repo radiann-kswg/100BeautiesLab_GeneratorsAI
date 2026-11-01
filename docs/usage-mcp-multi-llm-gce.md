@@ -375,14 +375,17 @@ gcloud compute ssh generators-ai --zone=us-central1-f --command 'bash ~/setup_gc
 ```powershell
 # ローカル PowerShell（リポジトリルートで）
 $keys = 'GEMINI_API_KEY','OPENAI_API_KEY','IMAGEN_MODEL','GEMINI_REFERENCE_MODEL','DALLE_MODEL','GPT_MODEL','OPENAI_IMAGE_QUALITY','DRIVE_CLIENT_ID','DRIVE_CLIENT_SECRET','DRIVE_REFRESH_TOKEN','DRIVE_FOLDER_ID','CREATIONS_DB_PACKAGE_ENABLE'
-Get-Content .env | Where-Object { $_ -match '^[A-Z_]+=' -and ($keys -contains ($_ -split '=',2)[0]) } | Set-Content -Encoding utf8NoBOM .env.vm
-Add-Content -Encoding utf8NoBOM .env.vm "OUTPUT_SINK=drive`nMCP_TRANSPORT=stdio`nOUTPUT_BASE_DIR=output"
-gcloud compute scp .env.vm generators-ai:/opt/100beautieslab/.env --zone=us-central1-f
+$lines = @(Get-Content .env | Where-Object { $_ -match '^[A-Z_]+=' -and ($keys -contains ($_ -split '=',2)[0]) }) + 'OUTPUT_SINK=drive','MCP_TRANSPORT=stdio','OUTPUT_BASE_DIR=output'
+[IO.File]::WriteAllText("$PWD\.env.vm", ($lines -join "`n") + "`n", (New-Object Text.UTF8Encoding $false))
+# 先に VM 側で 600 の空ファイルを作る（scp の上書きは既存の権限を保つ）。失敗したら転送しない
+gcloud compute ssh generators-ai --zone=us-central1-f --command 'install -m 600 /dev/null /opt/100beautieslab/.env'
+if ($LASTEXITCODE -eq 0) { gcloud compute scp .env.vm generators-ai:/opt/100beautieslab/.env --zone=us-central1-f }
 Remove-Item .env.vm
-gcloud compute ssh generators-ai --zone=us-central1-f --command 'chmod 600 /opt/100beautieslab/.env; bash ~/setup_gce_vm.sh'
+gcloud compute ssh generators-ai --zone=us-central1-f --command 'bash ~/setup_gce_vm.sh'
 ```
 
-- `.env.vm` は **BOM なし UTF-8** で作る（BOM 付きだと dotenv が先頭キーを読めない）。
+- `.env.vm` は **BOM なし・LF** で作る。BOM 付きだと dotenv が先頭キーを読めず、CRLF だと §7.5 の `. ./.env` が値の末尾に `\r` を残す。
+  `Set-Content` は行末が CRLF になり、Windows PowerShell 5.1 には `utf8NoBOM` も無いため、上の `[IO.File]::WriteAllText` を使う。
 - 再実行で `.env あり（600）` とキー名一覧が出る（値は表示しない）。
 
 ### 7.4 dry-run（課金ゼロ）
@@ -392,7 +395,9 @@ gcloud compute ssh generators-ai --zone=us-central1-f --command \
   'cd /opt/100beautieslab && .venv/bin/python -m src.batch_generate --nums 57 --forms corefolder --provider gemini --dry-run'
 ```
 
-期待: `BATCH SUMMARY total=1 ok=0 skipped=1 failed=0`。`キャラクター #57 が見つかりません` ならサブモジュール未取得（`git submodule update --init --recursive`）。
+期待: `#57 corefolder gemini -> RUN ...` と `-> DRY-RUN (API 未実行)` が出て、`BATCH SUMMARY` の `[skipped]` の理由が `dry-run` であること。
+集計 `skipped=1` だけでは判定しない（未取得・オプトアウトでも同じ数になる）。
+`-> NOT_FOUND` ならサブモジュール未取得（`git submodule update --init --recursive`）、`-> SKIP (ai-optout)` なら権利ゲートで除外されている。
 
 ### 7.5 Claude Code から stdio MCP で接続
 
