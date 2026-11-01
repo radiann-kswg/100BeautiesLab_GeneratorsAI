@@ -339,6 +339,74 @@ sudo systemctl restart numbertales-mcp
 
 ---
 
+## 7. SSH/CLI 実行基盤（stdio over SSH・常駐なし）
+
+§1〜6 の常駐構成（systemd＋Caddy＋DNS）は Cloud Run 版 MCP と機能が重なるため、
+GCE VM を **使うときだけ起動する SSH/CLI 実行基盤** として使う構成も用意する。
+公開ポート・Caddy・DNS は不要で、Claude Code からは SSH 越しの stdio MCP として接続する（コード変更なし）。
+
+> Drive への出力は MCP サーバー（`numbertales_*` ツール）経由でのみ行われる（`src/mcp_server/output_sink.py`）。
+> CLI 直叩きの出力は VM 内 `output/` に残り、Drive には上がらない。
+
+以下の例は VM `generators-ai`（`us-central1-f`）。自分の環境に合わせて読み替えること。
+
+### 7.1 事前スナップショット
+
+```bash
+gcloud compute disks snapshot generators-ai --zone=us-central1-f \
+  --snapshot-names=generators-ai-pre-vmsetup-$(date +%Y%m%d) --storage-location=us
+```
+
+### 7.2 セットアップ（`scripts/setup_gce_vm.sh`）
+
+clone（サブモジュール含む・公開リポジトリ）→ venv → `requirements-mcp.txt` → 自己チェック（API 未呼び出し）。何度実行しても壊れない。
+
+```bash
+gcloud compute scp scripts/setup_gce_vm.sh generators-ai:~/setup_gce_vm.sh --zone=us-central1-f
+gcloud compute ssh generators-ai --zone=us-central1-f --command 'bash ~/setup_gce_vm.sh'
+```
+
+期待: `imports OK` / `image_pipeline --help OK` / `stage_cli --help OK`（この時点では `.env なし`）。
+
+### 7.3 `.env` の配置
+
+ローカル `.env` から **必要行だけ** 抜いた `.env.vm`（`.gitignore` の `.env.*` 対象）を作って scp する。Canva / Firefly / SDXL 行は入れない。
+
+```powershell
+# ローカル PowerShell（リポジトリルートで）
+$keys = 'GEMINI_API_KEY','OPENAI_API_KEY','IMAGEN_MODEL','GEMINI_REFERENCE_MODEL','DALLE_MODEL','GPT_MODEL','OPENAI_IMAGE_QUALITY','DRIVE_CLIENT_ID','DRIVE_CLIENT_SECRET','DRIVE_REFRESH_TOKEN','DRIVE_FOLDER_ID','CREATIONS_DB_PACKAGE_ENABLE'
+Get-Content .env | Where-Object { $_ -match '^[A-Z_]+=' -and ($keys -contains ($_ -split '=',2)[0]) } | Set-Content -Encoding utf8NoBOM .env.vm
+Add-Content -Encoding utf8NoBOM .env.vm "OUTPUT_SINK=drive`nMCP_TRANSPORT=stdio`nOUTPUT_BASE_DIR=output"
+gcloud compute scp .env.vm generators-ai:/opt/100beautieslab/.env --zone=us-central1-f
+Remove-Item .env.vm
+gcloud compute ssh generators-ai --zone=us-central1-f --command 'chmod 600 /opt/100beautieslab/.env; bash ~/setup_gce_vm.sh'
+```
+
+- `.env.vm` は **BOM なし UTF-8** で作る（BOM 付きだと dotenv が先頭キーを読めない）。
+- 再実行で `.env あり（600）` とキー名一覧が出る（値は表示しない）。
+
+### 7.4 dry-run（課金ゼロ）
+
+```bash
+gcloud compute ssh generators-ai --zone=us-central1-f --command \
+  'cd /opt/100beautieslab && .venv/bin/python -m src.batch_generate --nums 57 --forms corefolder --provider gemini --dry-run'
+```
+
+期待: `BATCH SUMMARY total=1 ok=0 skipped=1 failed=0`。`キャラクター #57 が見つかりません` ならサブモジュール未取得（`git submodule update --init --recursive`）。
+
+### 7.5 Claude Code から stdio MCP で接続
+
+```bash
+claude mcp add --transport stdio numbertales-vm -- gcloud compute ssh generators-ai --zone=us-central1-f --project=claude-radiannkswg --quiet --ssh-flag=-T --command "cd /opt/100beautieslab && set -a && . ./.env && set +a && exec .venv/bin/python -m src.mcp_server.server"
+claude mcp list
+```
+
+- `numbertales-vm` に `numbertales_*` ツールが **11 件** 見えれば OK。
+- gcloud の進行メッセージは stderr に出るので stdio は汚れない。切れる場合は `--ssh-flag=-T` を外すか、素の `ssh <外部IP>` に置き換える。
+- VM 停止中はつながらない。使う前に起動し、使い終わったら停止する。長期間使わないなら `.env` を削除してから停止する。
+
+---
+
 ## 参考リンク
 
 | リソース | URL |
