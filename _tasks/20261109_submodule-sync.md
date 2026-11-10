@@ -49,3 +49,12 @@ ai-dataset/build-info.json                         |   6 +-
 > Cowork の `daily-submodule-sync-optimize` タスク (Claude) に差分レビューを依頼し、
 > `src/` ・ `docs/` 側の追従最適化を行うこと。本スクリプトは git 同期とログ・コミットのみ担当。
 
+## Cowork 追従最適化レビュー — 2026-11-09 (Claude / 57 イズナ)
+
+- 取り込み差分 (`_creations-ai` e41934b..c0462ce) を確認。全3コミットは `chore: sync ai-dataset` の内容同期のみ。
+- スキーマ影響判定: `manifest-training.jsonl` のヘッダ行キー集合・レコード数(215行)は旧新で完全一致。`build-info.json` / `policy.json` / `index.json` も値更新(タイムスタンプ、`image_count` 644→648、`image_ref_stats.resolved` 682→684、`submodule_commit` ref)のみでフィールド名・構造の変更なし。
+- 判定: **src/ ・ docs/ 側の追従最適化は不要**。親リポのスキーマ・API・参照パス前提に影響なし。過剰改変を避け、編集は行わない。
+- リモート確認(GitHubコネクタ・読み取りのみ):
+    - `CreationsAI@master` 現HEAD=8dfc43c (11-09 09:57Z)。ローカル取り込み済みは c0462ce。間の 8df13d4(03:13Z)・8dfc43c(09:57Z) の2件が **次回同期待ち**(いずれも `chore: sync ai-dataset`, allowed:181)。
+    - `CreationsDB@addon-ai-tag` 現HEAD=7591396 (PR#55「AIHints 構造的再同期(自動生成)」)。ローカルサブモジュールは 649c670。**次回同期で構造由来部分の再生成が流入予定** → 取り込み時に manifest/スキーマの再チェックを推奨。
+
