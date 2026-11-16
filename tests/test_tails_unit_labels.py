@@ -25,19 +25,42 @@ from src.utils.dataset import _describe_tails_unit_entry  # noqa: E402
 
 
 def test_bird_tail_only_has_canonical_labels() -> None:
-    """888 の実データ形状。db_meta の $EnumDef_TailShapeType と同じ文言が出ること。"""
+    """888 の実データ形状。db_meta の $EnumDef_TailShapeType と同じ文言が出ること。
+
+    2026-11-15 に `Count` が `#Number|#Null` になり、888 / 999 は `Count: null`
+    (Segment なし) へ変わった。本数を捏造せず、形状と補足だけが出ること。
+    """
     jp, en = _describe_tails_unit_entry(
         {
             "TailShapeType": "#TailShapeType_BirdTailOnly",
-            "Count": 1,
-            "Segment": 1,
+            "Count": None,
             "Note_JP": "左右の翼部と尾羽が3つの「8」のような模様をしている",
             "Note_EN": "The left and right wings and tail feathers have a pattern resembling three '8's.",
         }
     )
-    assert jp.startswith("尾羽のみ(翼部形状と併せて設計)1本1節"), jp
-    assert "Tail feathers only" in en, en
-    assert "1 tail, 1 segment" in en, en
+    assert jp == "尾羽のみ(翼部形状と併せて設計) 左右の翼部と尾羽が3つの「8」のような模様をしている", jp
+    assert en.startswith("Tail feathers only (designed in conjunction with wing shape) (The left"), en
+    assert "本" not in jp and " tail," not in en and "segment" not in en, (jp, en)
+
+
+def test_count_and_segment_are_independent() -> None:
+    """111-mp の実データ形状 (1本3節) と、Count が null でも節数・分岐が EN から消えないこと。"""
+    jp, en = _describe_tails_unit_entry(
+        {"TailShapeType": "#TailShapeType_NekomataSpecial", "Count": 1, "Segment": 3}
+    )
+    assert jp == "猫又(特殊)型1本3節", jp
+    assert en == "Nekomata (Special) type: 1 tail, 3 segments", en
+
+    jp, en = _describe_tails_unit_entry(
+        {
+            "TailShapeType": "#TailShapeType_Scorpion",
+            "Count": None,
+            "Segment": 11,
+            "Branches": [{"Laterality": "#Lat_Upper", "ClusterCount": 1, "TailCount": 2}],
+        }
+    )
+    assert jp == "サソリ型11節(上1束2本)", jp
+    assert en == "Scorpion-type: 11 segments (upper: 1 cluster x2)", en
 
 
 def test_unknown_shape_code_falls_back_readable() -> None:

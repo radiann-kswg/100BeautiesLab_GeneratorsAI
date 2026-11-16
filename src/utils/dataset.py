@@ -2170,12 +2170,17 @@ def _describe_tails_unit_entry(entry: dict[str, Any]) -> tuple[str, str]:
         jp = f"{jp} {note_jp}".strip()
 
     en_parts = [shape_en] if shape_en else []
+    # Count は 2026-11-15 から #Number|#Null (888 / 999 の尾羽は null)。
+    # 本数が無くても節数・分岐配置は JP 側と同じく落とさない。
+    detail_parts: list[str] = []
     if count is not None:
-        tail_str = f"{int(count)} tail{'s' if int(count) != 1 else ''}"
-        if segment is not None:
-            tail_str += f", {int(segment)} segment{'s' if int(segment) != 1 else ''}"
-        if branch_en_parts:
-            tail_str += f" ({', '.join(branch_en_parts)})"
+        detail_parts.append(f"{int(count)} tail{'s' if int(count) != 1 else ''}")
+    if segment is not None:
+        detail_parts.append(f"{int(segment)} segment{'s' if int(segment) != 1 else ''}")
+    tail_str = ", ".join(detail_parts)
+    if branch_en_parts:
+        tail_str = f"{tail_str} ({', '.join(branch_en_parts)})".strip()
+    if tail_str:
         en_parts.append(tail_str)
     en = ": ".join(en_parts)
     if layout_en:
