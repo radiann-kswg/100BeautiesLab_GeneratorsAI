@@ -63,3 +63,35 @@ a2f7ee2c AIHints: 讒矩逧・・蜷梧悄・郁・蜍慕函謌撰ｼ・
 > Cowork の `daily-submodule-sync-optimize` タスク (Claude) に差分レビューを依頼し、
 > `src/` ・ `docs/` 側の追従最適化を行うこと。本スクリプトは git 同期とログ・コミットのみ担当。
 
+## 追従最適化レビュー — 2026-11-16 (Claude Code / 57 イズナ)
+
+### 追加の手動同期
+
+- 朝の自動同期後に `CreationsAI@master` が `ebc5cde`（`sync ai-dataset (creations-db@9b9bbabb)`）へ進んでいたため、`_creations-ai` を `318c8f4 → ebc5cde` へ FF で取り込み。
+- これで `_creations-ai` の記録 gitlink（旧 `117e6cb`）と `creations-db` 作業ツリー（`9b9bbab`）のずれ（親リポの ` m _creations-ai`）が解消。
+
+### レビュー範囲
+
+前回レビュー（2026-11-10）以降の未レビュー分をまとめて確認: `_creations-ai` `2a518ce..ebc5cde` / `creations-db` `65084c6..9b9bbab`（11-11 / 11-13 / 11-14 / 11-15 / 11-16 のログ分）。
+
+### 上流の仕様変更と判定
+
+| 上流の変更 | `src/` への影響 | 対応 |
+|---|---|---|
+| `$Def_TailsUnit.Count` が `#Number` → `#Number\|#Null`（888 / 999 は `Count: null`、111-mp は `Count: 1` + `Segment: 3`） | あり。`_describe_tails_unit_entry()` は null で落ちないが、EN 文だけ「本数があるときしか節数・分岐を出さない」構造で、null 許容化により情報が黙って消える経路になっていた | **修正**: `src/utils/dataset.py` で EN の本数・節数・分岐を独立に組み立てる。`tests/test_tails_unit_labels.py` を実データ形状（`Count: null`）へ更新し、節数独立のケースを追加 |
+| グローバル `Class` 辞書 12 本を `data/Dictionaries/Class/` へ移動（`dictFile` 宣言） | なし。`src/` は `Dictionaries/` を直接読まない。`pkg/python` クライアントは上流側で `dictFile` 対応済み（サブモジュール内） | 不要 |
+| `scopeField` の構造化形式（`{ "Belonging": { "Faction": … } }`）許容 | なし。`src/` は `scopeField` を解釈しない | 不要 |
+| `管理主` → `『管理主』` 改名（`dict_Faction` / `ref_Vocabulary` / 関連レコードの `Belonging`） | なし。`src/` に該当文字列の参照なし。参照資料レコードの `id` が変わるのみ | 不要 |
+| 729-sxp / 1000 の `FormalName_*` が複数行に、`ModelName_*` 文言変更 | なし。複数行 `FormalName` は既存（2-alt / 100 / 369）と同形 | 不要 |
+| 558-numberize に連名画像 `art_NTS-558ZE-corefolder,DFR-G3-weakening.png` 追加 | なし。バッジ判定は `558ZE` のみに厳密一致（`558` / `558MP` / `3` へ混入しないことを実測）。レコード自体は権利軸 `AI_Optout` で生成拒否 | 不要 |
+| `SOUL.md` 追加（両リポ）、他作品の辞書・DB 推敲 | なし（ドキュメント / 生成対象外の作品） | 不要 |
+
+- manifest スキーマ: キー集合は旧新で完全一致（深さ 3 まで比較）。`character` レコードは 740 件で増減なし（`管理主` の `id` 改名 1 件のみ）。
+- 検証: `python -m pytest tests/` 91 件通過。実 manifest で 888 / 999 / 111-mp / 22 / 57 の尾の構造文を確認。
+
+### 上流への申し送り（未対応・要判断）
+
+- **manifest の `dictionary` レコードが 22 → 10 本に減少。** `_creations-ai/scripts/build-dataset.js`（「3. GeneralImages / Dictionaries / References」節）が `data/Dictionaries/` 直下の `*.json` しか読まず、`Class/` サブフォルダへ移った 12 本を拾えていない。`manifest-training.jsonl` からも同じ 12 本が落ちている。
+- `src/` は `_type == "character"` しか使わないため GeneratorsAI の生成には影響なし。ただし manifest を直接読む他の消費者からは Class 辞書（`Class` ↔ `Class_EN` 対訳）が見えなくなる。
+- 修正は CreationsAI 側（`db_meta.json` の `dictFile` を辿る、またはサブフォルダを再帰）で行う必要があり、本リポジトリからは `ai-dataset/` を手編集しない。
+
