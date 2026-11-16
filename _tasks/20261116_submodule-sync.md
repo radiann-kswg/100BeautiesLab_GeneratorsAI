@@ -95,3 +95,10 @@ a2f7ee2c AIHints: 讒矩逧・・蜷梧悄・郁・蜍慕函謌撰ｼ・
 - `src/` は `_type == "character"` しか使わないため GeneratorsAI の生成には影響なし。ただし manifest を直接読む他の消費者からは Class 辞書（`Class` ↔ `Class_EN` 対訳）が見えなくなる。
 - 修正は CreationsAI 側（`db_meta.json` の `dictFile` を辿る、またはサブフォルダを再帰）で行う必要があり、本リポジトリからは `ai-dataset/` を手編集しない。
 
+
+### 追記: `dictionary` レコード欠落の解消（`_creations-ai` `ebc5cde → 7cd5819`）
+
+- 上記の申し送りは CreationsAI 側で修正・push 済み（`7cd5819` `fix: Dictionaries/ のサブフォルダ配下の辞書を manifest へ出力する`）。`build-dataset.js` が `data/Dictionaries/` を再帰で拾うようになり、`validate-dataset.js` に「`dictionary` レコードが `Dictionaries/` 配下の全 JSON と一致するか」の回帰チェックが入った。
+- manifest の差分は `manifest.jsonl` / `manifest-training.jsonl` への `dictionary` 12 行追加のみ（10 → 22 本）。`character` 740 件（許可 181）とその他の出力は不変。内部の `creations-db` は `9b9bbab` のまま。
+- `src/` への影響: なし（追従不要）。`src/utils/dataset.py` は `_type == "character"` のレコードだけを使い、`dictionary` レコードを読まない。
+- 検証: CreationsAI 側 `npm test` 36 件通過・`node scripts/validate-dataset.js` OK。本リポジトリ `python -m pytest tests/` 91 件通過。
