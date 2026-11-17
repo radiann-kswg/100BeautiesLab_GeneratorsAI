@@ -102,3 +102,8 @@ a2f7ee2c AIHints: 讒矩逧・・蜷梧悄・郁・蜍慕函謌撰ｼ・
 - manifest の差分は `manifest.jsonl` / `manifest-training.jsonl` への `dictionary` 12 行追加のみ（10 → 22 本）。`character` 740 件（許可 181）とその他の出力は不変。内部の `creations-db` は `9b9bbab` のまま。
 - `src/` への影響: なし（追従不要）。`src/utils/dataset.py` は `_type == "character"` のレコードだけを使い、`dictionary` レコードを読まない。
 - 検証: CreationsAI 側 `npm test` 36 件通過・`node scripts/validate-dataset.js` OK。本リポジトリ `python -m pytest tests/` 91 件通過。
+
+### 定時レビュー（Cowork 朝タスク・19:04 JST 頃）
+
+- GitHub コネクタでリモート HEAD を確認: `CreationsAI@master` = `7cd5819`、`CreationsDB@addon-ai-tag` = `9b9bbab`。ローカルのサブモジュール HEAD と一致し、未取り込みの更新なし。
+- 親リポ `develop` は `2247033` までコミット済みで作業ツリーはクリーン（本追記を除く）。追加の `src/`・`docs/` 最適化は不要と判断。
