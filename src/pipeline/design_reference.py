@@ -108,12 +108,14 @@ def collect_design_reference(
     current = generation_ai_hints(record)
     model_hints = {"common": current.get("common") or {},
                    "form": (current.get("forms") or {}).get(form) or {}}
+    appearance_detail = build_appearance_detail_block(record, form)
     log_dir = stage_dir / "design_reference"
     meta_path = log_dir / "run_meta.json"
     saved = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
     if saved:
-        if saved.get("ai_hints") != canonical or saved.get("references") != references:
-            raise ValueError("同一実行の AIHints/参照画像が変わっています。新規実行してください。")
+        if (saved.get("ai_hints") != canonical or saved.get("references") != references
+                or saved.get("form") != form or saved.get("appearance_detail") != appearance_detail):
+            raise ValueError("同一実行の形態/AIHints/部位仕様/参照画像が変わっています。新規実行してください。")
         if saved.get("status") in ("ok", "fallback_approved"):
             return saved["design_reference"]
         if saved.get("status") == "cancelled":
@@ -123,7 +125,7 @@ def collect_design_reference(
         "他キャラクターの特徴は含めないでください。以下の AIHints 文面が正典です。\n"
         "画像観察で AIHints を上書きしないでください。他形態の特徴を混ぜないでください。\n"
     )
-    if not _is_numbertales(record):
+    if not _is_numbertales(record) and not hints:
         head = (
             f"公式設定画像の {extract_char_name(record)} だけを観察してください。"
             "他キャラクターの特徴は含めないでください。以下の [DB部位別仕様] が正典です。\n"
@@ -138,7 +140,7 @@ def collect_design_reference(
         "JSON の observations / unknowns / conflicts に文字列配列で返してください。"
         "AIHints と矛盾する観察は conflicts のみに入れてください。\n[AIHints 生成用文面]\n"
         + json.dumps(model_hints, ensure_ascii=False) + "\n"
-        + build_appearance_detail_block(record, form)
+        + appearance_detail
     )
     design = {"ai_hints": canonical, "observations": [], "unknowns": [], "conflicts": [], "sources": []}
     design["num"] = record_num(record)
@@ -148,7 +150,7 @@ def collect_design_reference(
                             form=form, work_key=record.get("work_key", "#Works_NumberTales"),
                             model=os.environ.get("GPT_MODEL", "gpt-4o"), prompt_text=prompt,
                             meta={"ai_hints": canonical, "generation_ai_hints": model_hints,
-                                  "references": references})
+                                  "references": references, "appearance_detail": appearance_detail})
         try:
             # AIHints は NumberTales の正典。持たない作品は AppearanceDetail の文面を正典にする。
             if not hints and (_is_numbertales(record) or not build_appearance_detail_block(record, form)):

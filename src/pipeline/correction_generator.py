@@ -271,7 +271,7 @@ def _apply_correction_gemini(
         hints = record.get("ai_hints") or {}
         _common = hints.get("common") or {}
         identity_tags = ", ".join(((_common.get("identity_tags") or []) + (_common.get("immutable_traits") or []))[:6])
-        num_val = (record.get("data") or {}).get("Num", "?")
+        num_val = record_num(record)
         palette_summary = _record_palette_summary(record, form)
         palette_line = f"- 配色 (DB実測値): {palette_summary}\n" if palette_summary else ""
 
@@ -354,7 +354,7 @@ def _apply_correction_openai(
     identity_tags = ", ".join((
         (_common.get("identity_tags") or []) + (_common.get("immutable_traits") or [])
     )[:6])
-    num_val = (record.get("data") or {}).get("Num", "?")
+    num_val = record_num(record)
     palette_summary = _record_palette_summary(record, form)
     palette_line = f"Color palette (from DB, keep): {palette_summary}\n" if palette_summary else ""
 
