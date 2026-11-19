@@ -56,7 +56,7 @@ from src.utils import (  # noqa: E402
 
 from src.utils.dataset import (  # noqa: E402
     IMAGE_TEXT_POLICY, _build_number_print_block, build_appearance_detail_block, is_detail_reference,
-    _creations_db_repo_root, _try_resolve_url_to_local_path, resolve_badge,
+    _creations_db_repo_root, _try_resolve_url_to_local_path, resolve_badge, resolve_target,
 )
 
 
@@ -334,6 +334,7 @@ def generate_image(
             f" -> 次ラベル: {iter_label} / 修正指示 {len(revision_items)} 件"
         )
 
+    num, form, work_key = resolve_target(num, form, work_key)  # バッジ → Num / 他作品は humanoid
     # out_dir 明示時 (パイプラインの各ステージ配下) は日付フォルダを作らずフラットに置く。
     output_dir = build_run_output_dir(
         provider="gemini",

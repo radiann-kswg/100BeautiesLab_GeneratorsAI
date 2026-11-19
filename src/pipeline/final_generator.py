@@ -23,6 +23,8 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
+from src.utils.dataset import record_num, work_title  # noqa: E402
+
 _FINAL_IMAGE_COUNT = 3  # 完成画像枚数 (固定)
 
 
@@ -76,7 +78,7 @@ def _synthesize_with_gemini(
         print(f"[Stage5-Synth] ({i + 1}/{count}) ラフ {len(extra_locals)} 枚から合成中...")
         try:
             paths = generate_image(
-                num=record["data"]["Num"],
+                num=record_num(record),
                 form=form,
                 work_key=work_key,
                 out_dir=str(synth_dir),
@@ -108,7 +110,7 @@ def _export_canva(
     """Canva Connect API で画像をデザイン化して書き出す。"""
     from src.canva.generate import export_via_canva
 
-    num = record["data"]["Num"]
+    num = record_num(record)
     from src.utils.paths import format_num as _fmt
     num_s = _fmt(num)
     char_name = record["data"].get("Name_JP") or record["data"].get("Name") or f"#{num_s}"
@@ -120,7 +122,7 @@ def _export_canva(
             work_key=work_key,
             out_dir=str(stage_dir),
             from_image=str(source_image),
-            title=f"NumberTales #{num_s} {char_name} {form} [pipeline-v{index}]",
+            title=f"{work_title(record, 'en')} #{num_s} {char_name} {form} [pipeline-v{index}]",
         )
     except SystemExit as err:
         print(f"[WARN] Stage5 Canva ({index}): {err}")

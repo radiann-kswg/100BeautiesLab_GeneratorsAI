@@ -155,6 +155,8 @@ pip install -r requirements.txt
 python -m src.pipeline.image_pipeline --badge 57 --form corefolder
 python -m src.pipeline.image_pipeline --badge 57 --form corefolder \
     --scene "図書館で本を読んでいるシーン" --skip-canva
+# NumberTales 以外の作品 (獣爾騎兵・豹変系女子): 作品コード付きのバッジで指定する (--work 不要・形態は humanoid 扱い)
+python -m src.pipeline.image_pipeline --badge SAR-EZ1 --scene "訓練場で構えているシーン" --skip-canva
 # 合同キャラ: Stage 3-4 をキャラ別に実行 → Stage 5 で全員を 1 枚に合成
 # (Stage 3 終了時点で全体構図ラフ 1 枚を同時生成 → stage3_comp_rough/ に保存)
 python -m src.pipeline.image_pipeline --nums 25,57 --form corefolder \
@@ -203,7 +205,7 @@ PowerShell で `npm test` が解決できない環境では `npm.cmd test` を�
 ## 出力パス規則
 
 - 生成画像は2階層構造 `output/{YYYYMMDD}/{ts}_{provider}_{form}_num{NNN}[_suffix]/` (日付フォルダ + 1実行フォルダ) へ保存する。
-  - `provider`: `gemini` / `openai`、`form`: `corefolder` / `humanoid`、`NNN`: 3 桁ゼロパディングのキャラクター番号
+  - `provider`: `gemini` / `openai`、`form`: `corefolder` / `humanoid`、`NNN`: 3 桁ゼロパディングのキャラクター番号（NumberTales 以外の作品は作品内の識別子。例: `numMouse`）
   - `_suffix`: i2i 時の `_iter1` / `_iter2` ... や `_prompt-assist` など
   - 例: `output/20260616/20260616_140532_gemini_corefolder_num057/num057_corefolder_01.png`
   - パイプラインは「1実行=1フォルダ」。各ステージ配下の子生成は `date_group=False` で日付フォルダを作らずフラットに置く (`{stageN}/{ts}_{provider}_{form}_num{NNN}/`)。
@@ -218,6 +220,7 @@ PowerShell で `npm test` が解決できない環境では `npm.cmd test` を�
 ### Stage 2 のデザイン参照と確認待ち
 
 - 特徴情報は CreationsAI の AIHints 文面を正典とし、利用許可された公式 DB 設定画像の観察を補助に使う。画像観察で AIHints を上書きしない。
+- AIHints を持たない作品（NumberTales 以外）は、`AppearanceDetail` の文面を外見の正典として観察へ進む。NumberTales は従来どおり AIHints が正典で、無ければ確認待ちにする。
 - 形態別 `ai_tags` がある場合は生成用文面で優先し、旧衣装・形状説明との混在を避ける。Stage 2 の `run_meta.json` は原文を `ai_hints`、生成用文面を `generation_ai_hints` に記録する（詳細は [docs/output-and-logs.md](docs/output-and-logs.md)）。
 - 部位画像の追跡には `stage2_db/db_summary.json` の `character_spec`（番号仕様・部位仕様・部位図パス）と観察の `sources` を確認する。各フィールドは [docs/output-and-logs.md](docs/output-and-logs.md#stage-2-画像観察ログ) を参照。
 - Stage 2 の観察を Stage 3 のラフ生成と Stage 4 の検査に渡す。観察失敗時はラフ生成前に停止し、理由を表示して利用者に続行/中止を確認する。
@@ -311,6 +314,7 @@ git -C _creations-ai submodule update --remote creations-db
 - 参照画像のキャラクター同定は `src/utils/dataset.py` の `_looks_like_target_character()` に集約し、
   ファイル名から読み取ったバッジとレコードのバッジを厳密一致させる。**番号の部分一致で判定しない**
   （`NTS-10-2` の接尾辞を `Num:2` が拾う、`NTS-2B` を `Num:2` が拾う等の混入が起きる）。
+- **キャラクターの指定はこのバッジで行う。** `--badge` / `--nums` は、作品別 `db_type.json` の `$IndexDef.$badge` 宣言から組み立てたバッジ本体（`57` / `2B` / `EZ1` / `ENE`）と、作品コード付き（`NTS-57` / `SAR-EZ1`。`--work` 不要）を受け付ける。実装は `record_badge()` / `resolve_target()`、詳細は [`docs/usage-generation.md`](docs/usage-generation.md) の「バッジでの指定と NumberTales 以外の作品」。
 - **バッジからファイル名を組み立てる実装は追加しない。** 接尾辞・連名が復元できないため上流も持たない。
   DB の `images` に書かれた実名を正とする。
 - 詳細と回帰テストは [`docs/tools.md`](docs/tools.md) の「リファレンス参照画像の解決」節を参照。

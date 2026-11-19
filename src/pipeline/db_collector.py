@@ -33,6 +33,9 @@ from src.utils.dataset import (  # noqa: E402
     build_appearance_detail_block,
     is_detail_reference,
     generation_ai_hints,
+    record_badge,
+    record_num,
+    work_title,
 )
 from src.pipeline.design_reference import collect_design_reference
 
@@ -150,7 +153,8 @@ def _build_character_spec(record: dict, form: str) -> dict:
         "correction_instruction": correction_instruction,
         "form": form,
         "char_name": extract_char_name(record),
-        "char_num": record["data"]["Num"],
+        "work_title": work_title(record),
+        "char_num": record_num(record),
     }
 
 
@@ -158,10 +162,10 @@ def _save_db_summary(
     stage_dir: Path, record: dict, form: str, references: dict, spec: dict
 ) -> None:
     summary = {
-        "num": record["data"]["Num"],
+        "num": record_num(record),
         # 2026-08-02: 画像ファイル名の識別子はインデックスバッジ (`NTS-2B` 等) へ移行した。
         # Num とバッジが一致しないキャラ (`2-alt` → `2B`) の参照解決を後から追えるよう残す。
-        "num_badge": _extract_record_badge(record),
+        "num_badge": record_badge(record) or _extract_record_badge(record),
         "name": extract_char_name(record, fallback=""),
         "form": form,
         "reference_url_count": len(references["urls"]),

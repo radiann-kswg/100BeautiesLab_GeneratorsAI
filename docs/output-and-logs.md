@@ -19,6 +19,8 @@ output/
         └── notes.md                       # 手書きレビュー
 ```
 
+NumberTales 以外の作品は `num{NNN}` の位置に作品内の識別子が入る（獣爾騎兵 `SAR-EZ1` → `…_gemini_humanoid_numMouse` / `numMouse_humanoid_01.png`）。形態は常に `humanoid`、作品キーは `run_meta.json` の `work_key` で確認する。
+
 > **旧 3 階層 (`{YYYYMMDD}/{YYYYMMDD_HH}/{run}/`) からの変更点**: 「1 回の実行ごとに
 > フォルダを分けて見やすく」という方針に合わせ、時間帯フォルダ `{YYYYMMDD_HH}/` を
 > 廃止し **日付フォルダ + 実行フォルダの 2 階層** にした。パイプライン各ステージ配下の

@@ -31,10 +31,17 @@ def is_detail_reference(path: str) -> bool:
     return "/attr/" in str(path).replace("\\", "/").lower()
 
 
+_PIPELINE_FORMS = ("corefolder", "humanoid")
+# 形態名以外の Formation は作品内の状態 (豹変系女子の豹変前後)。既定で描くのは beforeChange。
+# shortcut: 既定の状態はこの 1 語だけ。他作品が状態別の外見を持ったらここへ足す。
+_DEFAULT_STATES = ("beforeChange",)
+
+
 def appearance_details_for_form(record: dict, form: str) -> list[dict]:
     entries = ((record.get("db_record") or {}).get("AppearanceDetail")
                or (record.get("data") or {}).get("AppearanceDetail") or [])
-    return [e for e in entries if isinstance(e, dict) and e.get("Formation") in (None, form)]
+    return [e for e in entries if isinstance(e, dict)
+            and (e.get("Formation") in (None, form) or e.get("Formation") not in _PIPELINE_FORMS)]
 
 
 def _vocab_tail(token: Any) -> str:
@@ -63,6 +70,10 @@ def _format_appearance_detail_entry(entry: dict) -> str:
             values.append(str(value))
     note = entry.get("Note_EN") or entry.get("Note_JP")
     img = entry.get("img_PNGName")
+    state = entry.get("Formation")
+    if state not in (None, *_PIPELINE_FORMS, *_DEFAULT_STATES):
+        # 設定画には別状態も描かれている。捨てると観察・検査が通常の姿の特徴と取り違える。
+        head = f"[別状態 {state} だけの特徴。シーンがこの状態を指定した場合だけ描く] {head}"
     return (f"- {head}: " + "; ".join(values)
             + (f" ({note})" if note else "")
             + (f" [部位図: {img}]" if img else ""))
@@ -74,9 +85,12 @@ def build_appearance_detail_block(record: dict, form: str) -> str:
     entries = appearance_details_for_form(record, form)
     if not entries:
         return ""
+    canon = ("AIHints を正典とし、以下は対象形態の部位・左右・形状・配色・番号の補助仕様。"
+             if record.get("ai_hints") or _is_numbertales(record) else
+             "AIHints を持たない作品のため、以下の部位・左右・形状・配色の仕様を外見の正典とする。")
     return (
         "[DB部位別仕様]\n"
-        "AIHints を正典とし、以下は対象形態の部位・左右・形状・配色・番号の補助仕様。"
+        + canon +
         "部位図はその部位だけの拡大資料であり、全身や構図の見本ではない。\n"
         + "\n".join(_format_appearance_detail_entry(e) for e in entries) + "\n\n"
     )
@@ -1562,11 +1576,116 @@ def resolve_badge(
         records = load_manifest(manifest_path)
     except (OSError, json.JSONDecodeError):
         return text
-    hits = [r for r in records
-            if r.get("_type") == "character" and r.get("work_key") == work_key
-            and not str(r.get("db_source") or "").replace("\\", "/").startswith("data/References/")
-            and str((r.get("data") or {}).get("Num_Badge") or "").lower() == text.lower()]
-    return (hits[0].get("data") or {}).get("Num", text) if hits else text
+    chars = [r for r in records
+             if r.get("_type") == "character" and r.get("work_key") == work_key
+             and not str(r.get("db_source") or "").replace("\\", "/").startswith("data/References/")]
+    hits = [r for r in chars
+            if str((r.get("data") or {}).get("Num_Badge") or "").lower() == text.lower()]
+    if hits:
+        return (hits[0].get("data") or {}).get("Num", text)
+    # Num を持たない作品はバッジ ("EZ1") か作品内の識別子 ("mouse") で指し、識別子 ("Mouse") へ揃える。
+    return next((_identity_label(r) for r in chars
+                 if (r.get("data") or {}).get("Num") is None
+                 and text.lower() in (record_badge(r).lower(), _identity_label(r).lower())), text)
+
+
+def _identity_label(record: dict[str, Any]) -> str:
+    """作品内でレコードを指す識別子 (獣爾騎兵は獣名 "Mouse"、豹変系女子は方位 "ENE")。"""
+    index = (record.get("record_identity") or {}).get("index") or {}
+    return next((str(v) for v in index.values() if v not in (None, "")), "")
+
+
+def record_num(record: dict[str, Any]) -> Any:
+    """レコードを指す値。NumberTales は `Num`、`Num` を持たない作品は作品内の識別子。"""
+    num = (record.get("data") or {}).get("Num")
+    return num if num is not None else _identity_label(record)
+
+
+def normalize_form(form: str, work_key: str = "#Works_NumberTales") -> str:
+    """コアフォルダ形態は NumberTales 固有。他作品のキャラクターは人型 (humanoid) として扱う。"""
+    return form if work_key == "#Works_NumberTales" else "humanoid"
+
+
+def _is_numbertales(record: dict[str, Any]) -> bool:
+    """コアフォルダ形態・私服の区別・AIHints 必須など、NumberTales 固有の指定を出すレコードか。"""
+    return (record.get("work_key") or "#Works_NumberTales") == "#Works_NumberTales"
+
+
+def work_title(record: dict[str, Any], lang: str = "ja") -> str:
+    """プロンプトに書く作品名 (manifest の先頭行)。無ければ NumberTales の表記。"""
+    fallback = "ナンバーテールズ" if lang == "ja" else "NumberTales"
+    return str(record.get(f"work_title_{lang}") or fallback).split("\n")[0].strip()
+
+
+# コアフォルダ形態と「私服寄り」の区別は NumberTales 固有。他作品は設定画どおりの人型を描く。
+_OTHER_WORK_FORM_LOCK = (
+    "- 腕は 2 本、手は 2 つで固定し、余分な腕を描かないこと\n"
+    "- 衣装と付属物は [DB部位別仕様] と参照画像のとおりに描くこと"
+)
+
+
+@lru_cache(maxsize=64)
+def _load_creations_db_json(rel: str) -> Any:
+    """原典 DB の `data/` 配下の JSON を読む。読めなければ None。"""
+    try:
+        return json.loads((_creations_db_repo_root() / "data" / rel).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def record_badge(record: dict[str, Any]) -> str:
+    """レコードのインデックスバッジ本体 (`57` / `2B` / `EZ1` / `ENE`)。宣言が読めなければ空文字。
+
+    上流 `lib/graph/graph-badge.js` の `buildBadgeBody()` と同じく、作品別 `db_type.json` の
+    `$IndexDef.$badge` 宣言から組み立てる (番号や獣名から機械導出しない)。
+    """
+    work_dir = _extract_work_dir_from_key(str(record.get("work_key") or ""))
+    data = record.get("data") or {}
+    types = _load_creations_db_json(f"{work_dir}/DataBases/db_type.json") or {}
+    index_def = (types.get("$IndexDef_" + str(record.get("db_key") or "").removeprefix("#DB_"))
+                 or types.get("$IndexDef") or {})
+    root, subs = index_def.get("hashTag"), index_def.get("$type")
+    pairs = (data.get(root) if isinstance(subs, list) else {root: data.get(root)}) or {}
+    spec = index_def.get("$badge") or {}
+    keys = spec.get("keys") or [subs[0].get("hashTag") if isinstance(subs, list) and subs else root]
+
+    def value_of(key: Any) -> Any:  # インデックスの値が先、無ければレコードのフィールド (Num_Badge など)
+        return next((source[key] for source in (pairs, data)
+                     if isinstance(source, dict) and source.get(key) not in (None, "")), None)
+
+    parts: list[str] = []
+    for key in keys:
+        key = {"key": key} if isinstance(key, str) else (key or {})
+        if key.get("whenMissing") and value_of(key["whenMissing"]) is not None:
+            continue
+        piece = value_of(key.get("key"))
+        if piece is None:
+            continue
+        piece = str(piece).strip()
+        if key.get("codeFrom"):
+            # shortcut: 作品別 dict_<キー名>.json の文字列の列だけを引く。$dict 宣言や配列の列は必要になったら対応する。
+            rows = _load_creations_db_json(f"{work_dir}/Dictionaries/dict_{key['key']}.json") or []
+            piece = next((str(row[key["codeFrom"]]).strip() for row in rows
+                          if isinstance(row, dict) and str(row.get(key["key"])) == piece
+                          and row.get(key["codeFrom"])), piece)
+        parts.append(f"{key.get('prefix', '')}{piece}")
+    return str(spec.get("separator", "-")).join(parts)
+
+
+def resolve_target(
+    badge: Any, form: str = "corefolder", work_key: str = "#Works_NumberTales"
+) -> tuple[int | str, str, str]:
+    """CLI / MCP の指定を、生成処理で使う ``(num, form, work_key)`` へ揃える。
+
+    バッジは作品コード付き (`SAR-EZ1` / `NTS-57`) でもよく、その場合は作品キーをコードから決める。
+    """
+    code, _, body = str(badge).strip().partition("-")
+    works = (_load_creations_db_json("db_meta.json") or {}).get("CreationWorks") or {}
+    coded = next((key for key, entry in works.items() if isinstance(entry, dict)
+                  and str(entry.get("Works_Code") or "").lower() == code.lower()), None) if code and body else None
+    if coded:
+        badge, work_key = body, coded
+    return resolve_badge(badge, work_key), normalize_form(form, work_key), work_key
 
 
 def find_character(
@@ -1590,12 +1709,15 @@ def find_character(
         data = r.get("data", {})
         if (r.get("_type") == "character" and r.get("work_key") == work_key
                 and not str(r.get("db_source") or "").replace("\\", "/").startswith("data/References/")
-                and _num_matches(data.get("Num"), num)):
+                and (_num_matches(data.get("Num"), num) if data.get("Num") is not None
+                     else _identity_label(r) == str(num))):
             target = r
             break
 
     if target is not None and ai_training_axis(target) == "rights":
         return target
+    if target is not None and (target.get("data") or {}).get("Num") is None:
+        return target  # 原典 DB パッケージと実物 API は Num でしか引けない
 
     # ── pkg/python 経由で原典 DB レコードを取得してマージ ──
     db_record = _fetch_db_record_via_creations_db_pkg(num=num, work_key=work_key)
@@ -2512,6 +2634,7 @@ _COLOR_ROLE_LABELS: dict[str, str] = {
     "#ColorRole_Secondary": "補助色",
     "#ColorRole_Accent": "差し色",
     "#ColorRole_Sub": "副色",
+    "#ColorRole_CommonOverride": "共通配色の上書き",
 }
 _COLOR_ROLE_ORDER: tuple[str, ...] = (
     "#ColorRole_Primary",
@@ -3169,6 +3292,8 @@ def build_dalle_prompt(
         cross_form_block = "- 対象形態の AIHints にない humanoid 衣装・人型体型を混入しない"
     else:
         cross_form_block = "- corefolder 形態由来の球体コア・ハーネス・フードを一切混入しない"
+    if not _is_numbertales(record):
+        form_lock, cross_form_block = _OTHER_WORK_FORM_LOCK, "- (なし)"
 
     # シーン指定・作風ヒントを末尾に付け足す。
     variation_block_text = _build_variation_block(
@@ -3318,6 +3443,8 @@ def build_gemini_prompt(
         form_lock += "\n" + "\n".join(
             f"- {item}" for item in form_immutable_constraints
         )
+    if not _is_numbertales(record):
+        form_lock, cross_form_block = _OTHER_WORK_FORM_LOCK, "- (なし)"
 
     # corefolder では「[シルエット特徴]」ブロック (共通 silhouette 由来の髪型・ポニーテール) を出さない。
     # ただし瞳色・耳・尾など「顔/種別記号」は corefolder でも保持したいため、抽出して別ブロックに記載しわも衡とる。

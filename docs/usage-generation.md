@@ -50,7 +50,7 @@ python -m src.pipeline.image_pipeline --badge 57 --form corefolder --skip-canva
 
 | フラグ | 既定値 | 説明 |
 |---|---|---|
-| `--badge` | (いずれか必須) | キャラクター番号 (単体生成) |
+| `--badge` | (いずれか必須) | キャラクターのバッジ (単体生成)。`57` / `2B` / `SAR-EZ1` など。下の「バッジでの指定と NumberTales 以外の作品」参照 |
 | `--nums` | — | 複数キャラクター番号 カンマ区切り (例: `25,52`) — **2 件以上で全員を 1 枚に合同生成** |
 | `--natural TEXT` | — | 自然文からパラメータを LLM 抽出 |
 | `--story FILE` | — | テキストファイルから LLM 抽出 |
@@ -65,6 +65,30 @@ python -m src.pipeline.image_pipeline --badge 57 --form corefolder --skip-canva
 | `--prefer-gemini-parse` | false | `--natural` / `--story` のパース時に Gemini を OpenAI より優先 |
 | `--field-override FIELD=VALUE` | None | `RaceType` 等の曖昧フィールド（複数候補から1つ選ぶ必要があるもの）を明示指定。繰り返し指定可能（例: `--field-override RaceType=最終的な設計目標 --field-override Height_cm=190`）。未指定時はシーン文脈から LLM が自動判定する |
 | `--non-interactive` | false | 実ターミナル (TTY) 実行時でも曖昧フィールドの対話確認プロンプトを出さない |
+
+**バッジでの指定と NumberTales 以外の作品 (2026-11-19):**
+
+`--badge` / `--nums` は創作 DB のインデックスバッジ（公式画像のファイル名に載る識別子）を受け付ける。
+バッジ本体は作品別 `db_type.json` の `$IndexDef.$badge` 宣言から組み立てる（上流 `lib/graph/graph-badge.js` と同じ規則。実装は `src/utils/dataset.py` の `record_badge()` / `resolve_target()`）。
+
+| 作品 | バッジ | 作品コード付き | 内部で使う値 (出力名など) |
+|---|---|---|---|
+| NumberTales | `57` / `2B` | `NTS-57` / `NTS-2B` | `Num` (`57` / `2-alt`) |
+| 獣爾騎兵 | `EZ1` | `SAR-EZ1` | 獣名 (`Mouse`) |
+| 豹変系女子 | `ENE` | `SCG-ENE` | 方位 (`ENE`) |
+
+- 作品コード付きのバッジなら `--work` は不要（コードから作品キーを決める）。バッジ本体だけを渡すときは `--work "#Works_ShauErRiders"` を併用する。
+- 従来の指定（`Num` の `2-alt`、作品内の識別子 `Mouse`）もそのまま使える。
+- NumberTales 以外の作品はコアフォルダ形態を持たないため、`--form` の指定にかかわらず `humanoid` として扱う。プロンプトからコアフォルダ・私服の区別などの固定文言を外し、作品名も切り替える。
+- AIHints を持たない作品では、`AppearanceDetail` の文面を外見の正典として Stage 2 の観察へ進む（NumberTales は従来どおり AIHints が正典で、無ければ確認待ち）。バッチの `skip_no_hints` も同じ基準で判定する。
+- `Formation` が形態名でない項目（豹変系女子の `beforeChange` / `afterChanged`）は作品内の状態として扱う。`beforeChange` は通常の項目、それ以外は「別状態だけの特徴。シーンがこの状態を指定した場合だけ描く」と付けて `[DB部位別仕様]` に残す。
+- 出力フォルダーは `…_{provider}_humanoid_num{識別子}`（例: `…_pipeline_humanoid_numMouse`）。作品キーは `run_meta.json` に残る。
+- 対象外: `--natural` / `--story` での他作品の名前解決、作品をまたぐ合同生成（`--nums` は 1 作品）、豹変後の姿を選ぶ専用オプション、SDXL（NumberTales 用 LoRA）。
+
+```bash
+python -m src.pipeline.image_pipeline --badge SAR-EZ1 --scene "訓練場で構えているシーン" --skip-canva
+python -m src.batch_generate --nums SAR-EZ1,SAR-EZ4 --forms both --provider both --dry-run
+```
 
 **出力構成 (単体キャラ `--badge`):**
 ```
@@ -179,9 +203,9 @@ python -m src.pipeline.text_pipeline --badge 57 --mode caption \
 
 | フラグ          | 必須       | 型 / 既定値                                     | 役割                                                                   |
 | --------------- | ---------- | ----------------------------------------------- | ---------------------------------------------------------------------- |
-| `--badge`         | ○ (single) | int                                             | キャラクター番号 (例: `57`)。`batch_generate` では `--nums "15,22,57"` |
-| `--form`        | ―          | `corefolder` / `humanoid` (default: corefolder) | 描画する形態                                                           |
-| `--work`        | ―          | `#Works_NumberTales`                            | 作品キー                                                               |
+| `--badge`         | ○ (single) | int / str                                       | キャラクターのバッジ (例: `57` / `2B` / `SAR-EZ1`)。`batch_generate` では `--nums "15,22,57"` |
+| `--form`        | ―          | `corefolder` / `humanoid` (default: corefolder) | 描画する形態 (NumberTales 以外の作品は常に `humanoid` 扱い)                |
+| `--work`        | ―          | `#Works_NumberTales`                            | 作品キー。作品コード付きのバッジ (`SAR-EZ1`) を渡した場合はコードから決まる |
 | `--out`         | ―          | None                                            | 出力ベース。省略時は env `OUTPUT_BASE_DIR` → `output`                  |
 | `--scene`       | ―          | `""`                                            | シーン/ポーズ説明 (プロンプト末尾 `[シーン・追加要望]` に追加)         |
 | `--style`       | ―          | `""`                                            | 作風ヒント (例: `"watercolor"`, `"pixel art"`)                         |

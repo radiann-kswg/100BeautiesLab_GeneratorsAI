@@ -74,7 +74,9 @@ if str(_PROJECT_ROOT) not in sys.path:
 from src.utils import build_run_output_dir, extract_char_name  # noqa: E402
 from src.pipeline.prompt_refiner import refine_prompt_dual, generate_random_scene  # noqa: E402
 from src.pipeline.db_collector import collect_character_data  # noqa: E402
-from src.utils.dataset import IMAGE_TEXT_POLICY, build_appearance_detail_block  # noqa: E402
+from src.utils.dataset import (  # noqa: E402
+    IMAGE_TEXT_POLICY, build_appearance_detail_block, normalize_form, record_num, resolve_target,
+)
 from src.pipeline.design_reference import add_design_reference  # noqa: E402
 from src.pipeline.rough_generator import generate_rough_images, retry_rough_images  # noqa: E402
 from src.pipeline.correction_generator import correct_rough_images  # noqa: E402
@@ -191,6 +193,7 @@ def run_image_pipeline(
     """
     start_time = datetime.now()
 
+    num, form, work_key = resolve_target(num, form, work_key)  # バッジ → Num / 他作品は humanoid
     pipeline_dir = build_run_output_dir(
         provider="pipeline",
         num=num,
@@ -539,7 +542,7 @@ def _compose_multi_char(
         print(f"[Stage5-Compose] ({i + 1}/{count}) キャラクターレンダー {len(render_strs)} 枚から合成中...")
         try:
             paths = generate_image(
-                num=base_record["data"]["Num"],
+                num=record_num(base_record),
                 form=form,
                 work_key=work_key,
                 out_dir=str(synth_dir),
@@ -611,6 +614,11 @@ def run_combined_pipeline(
     """
     from src.utils import apply_generation_gate, find_character
     from src.gemini.generate import generate_image
+
+    # 先頭のバッジが作品コード付きなら作品を決め、全員を同じ作品の Num / 形態へ揃える。
+    _, form, work_key = resolve_target(nums[0], form, work_key)
+    nums = [resolve_target(n, form, work_key)[0] for n in nums]
+    forms = [normalize_form(str(f).strip().lower() or form, work_key) for f in forms] if forms else forms
 
     # キャラ別形態マップを構築する。forms が指定されていればそれを優先し、
     # 不足分は form で補完する。
@@ -694,7 +702,7 @@ def run_combined_pipeline(
 
     per_char_prompts: dict[int, dict] = {}
     for rec in records:
-        n = rec["data"]["Num"]
+        n = record_num(rec)
         prompts = refine_prompt_dual(
             rec, forms_map[n], scene=scene, style=style,
             composition=composition, background=background,
@@ -717,7 +725,7 @@ def run_combined_pipeline(
     stage1_dir = pipeline_dir / "stage1_prompt"
     stage1_dir.mkdir(parents=True, exist_ok=True)
     for rec in records:
-        n = rec["data"]["Num"]
+        n = record_num(rec)
         char_stage1_dir = stage1_dir / f"char_{_fmt_num(n)}"
         char_stage1_dir.mkdir(parents=True, exist_ok=True)
         _save_stage1(char_stage1_dir, per_char_prompts[n])
@@ -744,7 +752,7 @@ def run_combined_pipeline(
     inter_char_sleep = float(os.environ.get("GEMINI_INTER_CHAR_SLEEP", "30"))
 
     for i, rec in enumerate(records):
-        n = rec["data"]["Num"]
+        n = record_num(rec)
         if isinstance(n, float):
             n = int(n)
         if i > 0:
@@ -841,7 +849,7 @@ def run_combined_pipeline(
     all_stage4_paths: dict[str, list[str]] = {}
 
     for rec in records:
-        n = rec["data"]["Num"]
+        n = record_num(rec)
         if isinstance(n, float):
             n = int(n)
         rough_paths = per_char_roughs.get(n) or []

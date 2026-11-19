@@ -26,7 +26,7 @@ from src.utils import (  # noqa: E402
     describe_ambiguous_field_resolutions,
     extract_char_name,
 )
-from src.utils.dataset import generation_ai_hints  # noqa: E402
+from src.utils.dataset import generation_ai_hints, work_title  # noqa: E402
 
 _RANDOM_SCENE_SYSTEM = (
     "あなたはナンバーテールズシリーズのクリエイティブディレクターです。"
@@ -71,7 +71,7 @@ def generate_random_scene(record: dict, form: str) -> str:
             model=text_model,
             contents=user_msg,
             config=genai_types.GenerateContentConfig(
-                system_instruction=_RANDOM_SCENE_SYSTEM,
+                system_instruction=_RANDOM_SCENE_SYSTEM.replace("ナンバーテールズ", work_title(record)),
                 max_output_tokens=80,
             ),
         )
@@ -84,9 +84,9 @@ def generate_random_scene(record: dict, form: str) -> str:
     return ""
 
 
-def _system_instruction(char_name: str, form: str) -> str:
+def _system_instruction(char_name: str, form: str, series: str = "NumberTales") -> str:
     return (
-        f"You are an expert image generation prompt engineer for the NumberTales series character "
+        f"You are an expert image generation prompt engineer for the {series} series character "
         f"'{char_name}' in {form} form. "
         "Optimize the given base prompt for high-quality character image generation. "
         "CRITICAL: preserve all immutable traits — ear type, tail count, hair color, eye color. "
@@ -163,7 +163,7 @@ def refine_with_openai(
         response = client.chat.completions.create(
             model=gpt_model,
             messages=[
-                {"role": "system", "content": _system_instruction(char_name, form)},
+                {"role": "system", "content": _system_instruction(char_name, form, work_title(record, "en"))},
                 {"role": "user", "content": _user_message(
                     base_prompt, scene, style, composition, background, costume)},
             ],
@@ -214,7 +214,7 @@ def refine_with_gemini(
             model=text_model,
             contents=_user_message(base_prompt, scene, style, composition, background, costume),
             config=genai_types.GenerateContentConfig(
-                system_instruction=_system_instruction(char_name, form),
+                system_instruction=_system_instruction(char_name, form, work_title(record, "en")),
                 max_output_tokens=600,
             ),
         )
