@@ -1584,7 +1584,7 @@ def resolve_badge(
     if hits:
         return (hits[0].get("data") or {}).get("Num", text)
     # Num を持たない作品はバッジ ("EZ1") か作品内の識別子 ("mouse") で指し、識別子 ("Mouse") へ揃える。
-    return next((_identity_label(r) for r in chars
+    return next((record_num(r, manifest_path) for r in chars
                  if (r.get("data") or {}).get("Num") is None
                  and text.lower() in (record_badge(r).lower(), _identity_label(r).lower())), text)
 
@@ -1595,10 +1595,26 @@ def _identity_label(record: dict[str, Any]) -> str:
     return next((str(v) for v in index.values() if v not in (None, "")), "")
 
 
-def record_num(record: dict[str, Any]) -> Any:
-    """レコードを指す値。NumberTales は `Num`、`Num` を持たない作品は作品内の識別子。"""
+def record_num(record: dict[str, Any], manifest_path: str | None = None) -> Any:
+    """レコードを指す値。NumberTales は `Num`、`Num` を持たない作品は作品内の識別子。
+
+    識別子が同じ作品の別 DB と重なる場合 (豹変系女子 #DB_Regioministrators の "W" と
+    #DB_Primary の "W") は、後ろの DB のレコードをバッジ ("AW") で指す。
+    """
     num = (record.get("data") or {}).get("Num")
-    return num if num is not None else _identity_label(record)
+    if num is not None:
+        return num
+    label = _identity_label(record)
+    try:
+        records = load_manifest(manifest_path)
+    except (OSError, json.JSONDecodeError):
+        return label
+    first = next((r for r in records
+                  if r.get("_type") == "character" and r.get("work_key") == record.get("work_key")
+                  and (r.get("data") or {}).get("Num") is None and _identity_label(r) == label
+                  and not str(r.get("db_source") or "").replace("\\", "/").startswith("data/References/")),
+                 record)
+    return label if first.get("db_key") == record.get("db_key") else record_badge(record)
 
 
 def normalize_form(form: str, work_key: str = "#Works_NumberTales") -> str:
@@ -1710,7 +1726,7 @@ def find_character(
         if (r.get("_type") == "character" and r.get("work_key") == work_key
                 and not str(r.get("db_source") or "").replace("\\", "/").startswith("data/References/")
                 and (_num_matches(data.get("Num"), num) if data.get("Num") is not None
-                     else _identity_label(r) == str(num))):
+                     else str(num) in (_identity_label(r), record_badge(r)))):
             target = r
             break
 
@@ -2453,6 +2469,8 @@ def _build_number_print_block(record: dict[str, Any], form: str) -> str:
     immutable_traits / silhouette_notes.attached_items から拾った
     番号関連行を箇条書きで列挙する。
     """
+    if not _is_numbertales(record):
+        return ""  # 番号印字は NumberTales 固有。他作品の数値タグ (尾の本数など) を番号と取り違えない
     data = record.get("data") or {}
     num_value = data.get("Num")
     num_token: str | None = None

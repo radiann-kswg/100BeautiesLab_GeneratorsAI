@@ -36,6 +36,9 @@ def test_badges_follow_the_upstream_declaration():
     assert record_badge(find_character("ENE", _SCG)) == "ENE"
     # 許可済みキャラクターは全員、作品コード付きのバッジ 1 語で本人に届く
     codes = {_NTS: "NTS", _SAR: "SAR", _SCG: "SCG"}
+    # 同じ識別子 "W" を別 DB に持つ豹変系女子は、後ろの DB をバッジで指す
+    assert find_character(resolve_target("SCG-W")[0], _SCG)["db_key"] == "#DB_Primary"
+    assert find_character(resolve_target("SCG-AW")[0], _SCG)["db_key"] == "#DB_Regioministrators"
     for record in get_characters():
         code = codes.get(record["work_key"])
         if not code or str(record_badge(record)).isdigit():
@@ -65,7 +68,8 @@ def test_other_work_prompts_drop_numbertales_rules_and_keep_story_states():
     for prompt in (build_gemini_prompt(mouse, "humanoid", scene="x")["prompt"],
                    build_dalle_prompt(mouse, "humanoid", scene="x")):
         assert "corefolder" not in prompt and "私服" not in prompt and "番号印字仕様" not in prompt
-        assert "AIHints を持たない作品のため" in prompt
+        # 2026-11-19 の上流で獣爾騎兵にも AIHints が入った。有無に応じて正典の書き方が変わる
+        assert ("AIHints を正典とし" if mouse.get("ai_hints") else "AIHints を持たない作品のため") in prompt
         assert "Mouse (large and round)" in prompt and "count: 1" in prompt
         assert "共通配色の上書き #408784" in prompt
     runo = build_gemini_prompt(find_character("E", _SCG), "humanoid", scene="x")["prompt"]

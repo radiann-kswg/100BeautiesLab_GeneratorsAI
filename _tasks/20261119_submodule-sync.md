@@ -83,3 +83,40 @@
 
 課金を伴う画像・文章生成、実 Vision 観察、公開サーバー反映、コミット・push は実施していない。
 
+
+## 自動同期の追補 — 2026-11-19（スケジュール実行・サブモジュール追従ボット）
+
+| サブモジュール | 追跡先 | 旧 | 新 | 判定 |
+|---|---|---|---|---|
+| `_creations-ai` | origin/master | bc86099 | b7ccb20 | UPDATED |
+| `_creations-ai/creations-db`（ネスト） | CreationsAI の gitlink | 8484bb1 | 688a349 | 親の記録に追従 |
+
+取り込み範囲:
+
+```text
+b7ccb20 chore: sync ai-dataset (creations-db@688a3492) — ai_training allowed: 187 -> 191 [skip ci]
+
+ 18 files changed, 112 insertions(+), 85 deletions(-)
+
+creations-db 8484bb1..688a349:
+688a3492 AIHints調整(対象DB拡張周り) 続き
+563a4763 AIHints調整(対象DB拡張周り)
+3e3e52f0 Merge branch 'develop' into addon-ai-tag
+1c70567d DB情報追加(獣爾騎兵＆豹変系女子) `addon-ai-tag`向け
+09b69694 AIHints拡張(獣爾騎兵＆豹変系女子) 続き
+44805400 AIHints拡張(獣爾騎兵＆豹変系女子)
+ 23 files changed, 3692 insertions(+), 63 deletions(-)
+```
+
+### 最適化メモ
+
+- 差分把握: CreationsAI は dataset の再生成のみ（manifest のフィールド追加・削除なし）。豹変系女子 `#DB_Regioministrators` の AI 利用が許可され（許可 187→191 件）、獣爾騎兵・豹変系女子の AIHints が拡張された（AIHints 付き 122→139 件）。
+- 影響判定: スキーマ・フィールド名・API・参照パスの変更はない。ただし既存テスト 3 件が失敗し、データ変化による実害を 2 点確認した。
+  1. 新しく許可された Regioministrators の 4 件は作品内の識別子が `W`/`X`/`Y`/`Z`（バッジは `AW`〜`AZ`）で、`W` が `#DB_Primary` の神夜崎 ユノ（方位 `W`）と重なる。扇 零夏・スフィリアは Primary`ENE` と Regioministrators`AW` の 2 レコードになった。
+  2. 獣爾騎兵に AIHints が入ったことで、尾の本数タグ（`..., 1, pale pink, ...`）が番号関連行として拾われ、他作品のプロンプトに `[番号印字仕様]` が出ていた。
+- 実施した変更:
+  - `src/utils/dataset.py`: `record_num()` は識別子が同作品の先行 DB と重なるときバッジ（`AW`）を返す。`resolve_badge()` はその値を返し、`find_character()` は識別子かバッジで照合する。`SCG-W` はユノ、`SCG-AW` は Regioministrators のスフィリアに届き、合同生成の辞書キーも衝突しない。
+  - `src/utils/dataset.py`: `_build_number_print_block()` を NumberTales 限定にした。
+  - `tests/test_other_works.py`: AIHints の有無で正典の書き方を判定し、`SCG-W`/`SCG-AW` の解決を追加。
+  - `docs/usage-generation.md`: `[番号印字仕様]` が NumberTales のみであることを追記。
+- テスト結果: 課金キーを空にして `python -m pytest tests -q` → 113 件成功・1 件 skip。PIL の `_imaging` 読み込み失敗（環境の Pillow 不整合）は pip で Pillow を入れ直して解消した（リポジトリの変更なし）。
