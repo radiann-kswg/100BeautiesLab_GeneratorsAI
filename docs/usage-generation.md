@@ -519,6 +519,8 @@ python -m src.batch_generate --nums 15,22,49,57 --forms both --provider both --s
 `[DB部位別仕様]` に、対象形態（`Formation` が対象形態または null）の
 `AppearanceDetail` を平文に圧縮して渡す（生 JSON・語彙トークン・null は送らない）。部位・左右・全 `Attrs`・注記・画像名を含み、
 AIHints を補助する。番号の装飾を一律禁止する指示は使用しない。
+`Attrs` は `value_EN`/`value_JP`、辞書コード（`vdict_*` は末尾の語）、辞書コードに添えた個体差の補足（`about_*` は括弧書き。例: `Fox (left ear droops)`）、
+本数（`value_Num` は `count: 1`）を読む（2026-11-19: 補足と本数を追加）。
 番号仕様の1行が複数部位を表す場合（666の光輪・ブローチ・翼など）は、行数を表示箇所数に変換せず、原典の位置・個数・回転配置を保持する。
 Stage 1 の要約や i2i の `prompt_override` でも、Gemini/OpenAI の送信時に番号仕様と部位仕様を保持する。
 

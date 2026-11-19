@@ -154,6 +154,20 @@ def test_gemini_payload_keeps_details_after_guides(tmp_path, monkeypatch, num, m
     assert "[DB部位別仕様]" in prompt
 
 
+def test_appearance_block_keeps_shape_notes_and_counts():
+    """辞書コードに添えた補足 (about_*) と本数 (value_Num) を [DB部位別仕様] から落とさない。"""
+    from src.utils.dataset import build_appearance_detail_block
+    record = {"data": {"AppearanceDetail": [{
+        "Formation": None, "BodyPart": ["#BodyPart_Tail"], "DesignElement": "#Element_Motif",
+        "Attrs": [
+            {"AttrLabel": "#DesignAttr_Shape", "vdict_TailShapeType": "#TailShapeType_Mouse",
+             "about_EN": "thread-like"},
+            {"AttrLabel": "#DesignAttr_Count", "value_Num": 1},
+        ]}]}}
+    assert "- Tail / Motif: Mouse (thread-like); count: 1\n" in build_appearance_detail_block(record, "humanoid")
+    assert "Fox (left ear droops)" in build_appearance_detail_block(find_character(1), "humanoid")
+
+
 def test_openai_edit_receives_all_declared_details(tmp_path, monkeypatch):
     import openai
     from src.openai.generate import generate_image_dalle

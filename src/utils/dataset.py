@@ -54,6 +54,11 @@ def _format_appearance_detail_entry(entry: dict) -> str:
             continue
         value = attr.get("value_EN") or attr.get("value_JP") or next(
             (_vocab_tail(v) for k, v in attr.items() if k.startswith("vdict_")), "")
+        if not value and attr.get("value_Num") is not None:  # 尾・翼の本数 (#DesignAttr_Count)
+            value = f"{_vocab_tail(attr.get('AttrLabel')).lower()}: {attr['value_Num']}"
+        about = attr.get("about_EN") or attr.get("about_JP")
+        if value and about:  # 辞書コードに添えた個体差 (垂れ耳・フードで隠れる等)
+            value = f"{value} ({about})"
         if value:
             values.append(str(value))
     note = entry.get("Note_EN") or entry.get("Note_JP")

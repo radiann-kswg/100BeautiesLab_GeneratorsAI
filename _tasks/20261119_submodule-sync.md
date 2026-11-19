@@ -49,3 +49,37 @@
 
 課金を伴う画像・文章生成、実 Vision 観察、公開サーバー反映、コミット・push は実施していない。
 
+## 手動同期の追補 その2 — 2026-11-19（獣爾騎兵・豹変系女子の外見・配色拡張）
+
+先輩の「サブモジュールのデータ拡張を GeneratorsAI と ShapeChangerAI へ適応」依頼に基づき、同日 12:17 に fetch・FF 更新を実施。
+
+| 対象 | 更新前 | 更新後 | 確認 |
+|---|---|---|---|
+| `_creations-ai` / `origin/master` | `60ecce3efdb4751564c1aa5840362048a4b42424` | `bc8609926a08b5b8494402adc698a2bc1d985590` | FF・ローカル変更なし |
+| `_creations-ai/creations-db` / `origin/addon-ai-tag` | `51244fc580a71aa3c78361e486010cd115ec548c` | `8484bb11fafd31b0836915546dcaa74621435c4a` | CreationsAI の固定 gitlink・build-info と一致 |
+
+### 取り込んだ更新の内容（追補その2）
+
+- CreationsDB 6 コミット（「DB情報追加(獣爾騎兵＆豹変系女子) その１〜３＆UI改善」「進捗ログ整備」）。38 ファイル +4,189 / −2,915 行、うち `data/` は 6 ファイル +3,756 / −62 行（削除の大半は `_work_in_progress/` の旧ログ整理）。
+- manifest はキャラクター 732 件・許可 187 件のまま増減なし。変わったのは 19 レコード（獣爾騎兵 7・豹変系女子 12）の `AppearanceDetail` / `ColorPalette` だけで、NumberTales のレコードは無変更。
+- 新しい書き方: 耳・尾の形状を作品別の辞書コード（`vdict_EarShapeType` / `vdict_TailShapeType`）と補足（`about_*`）で、尾や翼の本数を `value_Num` で、豹変前後を `Formation: beforeChange / afterChanged` で持つ。獣爾騎兵の制服共通 7 色は作品メタ `$EnumDef_CommonColor` へ移り、個別パレットには差し替え色だけが `#ColorRole_CommonOverride` で残る。豹変系女子 N / USE は外見本文を持たず、`AnotherRegions_DBLink` で NumberTales 0 / 00 から継承する。
+
+### 最適化メモ（追補その2）
+
+- **生成経路への影響なし（判定根拠）**: `find_character()` は `Num` / `Num_Badge` で引くため、`BeastType.Beast`（獣爾騎兵）や `Drc`（豹変系女子）で索引されるレコードを解決できない（`find_character("Mouse", "#Works_ShauErRiders")` と `("E", "#Works_SinisterChangingGirls")` が `None` になることを実機確認）。今回変わった 19 レコードは生成パイプラインへ届かない。
+- **`[DB部位別仕様]` の読み落としを修正**: `_format_appearance_detail_entry()` が、辞書コードに添えた補足（`about_*`）と本数（`value_Num`）を落としていた。補足は NumberTales の耳で既に使われており（許可 121 件 × 2 形態で 73 行。例: `Fox (left ear droops)`）、本数は今回の拡張で初めて登場した書き方。両方を出力へ足し、`docs/usage-generation.md` に追記した。
+- **追従しなかったもの**:
+  - 豹変前後の `Formation`: `appearance_details_for_form()` は対象形態と null だけを通すため落ちるが、該当レコードが検索に届かないので未対応のまま。ShapeChangerAI 側は対応済み（同リポジトリの `_tasks/20261119_submodule-sync.md`）。
+  - 制服共通色と `#ColorRole_CommonOverride`: 共通色は manifest に無く、キャラクターごとの使用有無の記録も無い（巳は黄を使わない、子と寅は別配色）ため、一律に足すと使っていない色を指定する。`extract_color_palette()` は従来どおり個別パレットだけを読み、上書き行は未知ロールのフォールバック表示（`common override`）で残る。
+  - N / USE の外見継承: manifest に展開されない。
+- `verify_appearance_detail --all --work-key` は `has_appearance_detail` で対象を選ぶため、今回から獣爾騎兵・豹変系女子のレコードも拾う。この経路は未実行（`_attr_text()` は本数を値なしのラベルとして出す）。
+
+### 検証（追補その2）
+
+- `pytest tests -q`：101 件成功（追加 1 件。依存 SDK 由来の非推奨警告 1 件）。API キーを環境から外し、dotenv 読込を無効化して実施。コード変更前の新データでも既存 100 件が成功することを先に確認した。
+- `node scripts/validate-dataset.js`：成功。11 作品 / 732 キャラクター / 許可 187・不許可 545 / 画像参照 699 件実在・未解決 2 件（既存）。
+- `batch_generate --nums 1,57 --forms both --provider both --dry-run`：8 件すべて DRY-RUN（課金 API 未実行）。
+- `git diff --check`：成功。両サブモジュール内部の作業ツリーは未変更。
+
+課金を伴う画像・文章生成、実 Vision 観察、公開サーバー反映、コミット・push は実施していない。
+
