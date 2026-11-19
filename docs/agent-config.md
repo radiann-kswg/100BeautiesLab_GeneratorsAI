@@ -103,6 +103,38 @@ cd .agents\skills\100btys-lab-imagegen
 Codex はリポジトリ内 `.agents/skills/` を直接読むため追加操作は不要です
 （別途パーソナル化したい場合のみ `-LinkCodexPersonal` を付ける。参照先は実機の Codex 版を確認すること）。
 
+### スキル名変更時の移行（旧 `numbertales-imagegen` を使っていた場合）
+
+旧名でインストール済みのパーソナルスキルは旧ディレクトリを参照し続けるため、
+`git pull` とミラー同期だけでは新しい `SKILL.md` を読み込めません。新名の正本からインストーラを再実行してください。
+Codex のパーソナルリンクも利用していた場合は `-LinkCodexPersonal` を付けます。
+Codex のスキル置き場を既定以外にしている場合は `-CodexPersonalDir` も指定してください。
+
+```powershell
+cd .agents\skills\100btys-lab-imagegen
+./install-personal-skill.ps1
+
+# Codex のパーソナルリンクも作成していた場合
+./install-personal-skill.ps1 -LinkCodexPersonal
+# Codex の置き場が既定と異なる場合
+./install-personal-skill.ps1 -LinkCodexPersonal -CodexPersonalDir "$HOME\.codex\skills"
+```
+
+新名のスキルが設定画面やスキル一覧で読み込まれることを確認してから、旧名のジャンクションだけを削除します。
+削除前に `Get-Item` で `LinkType` と `Target` がジャンクションおよび旧ディレクトリであることを確認し、
+`rmdir` でリンク自体を外してください。Codex のリンクを作成していた場合も、その旧リンクを同様に確認して削除します。
+
+```powershell
+$oldLink = "$HOME\.claude\skills\numbertales-imagegen"
+Get-Item $oldLink | Format-List FullName, LinkType, Target
+cmd /c rmdir $oldLink
+
+# Codex の既定の置き場に旧リンクがある場合
+$oldLink = "$HOME\.codex\skills\numbertales-imagegen"
+Get-Item $oldLink | Format-List FullName, LinkType, Target
+cmd /c rmdir $oldLink
+```
+
 ### スキルを書くときの注意
 
 - **ツール中立に書くこと。** 「実機 Claude Code」「実機 Codex」のような特定ツール名の断定を避け、
