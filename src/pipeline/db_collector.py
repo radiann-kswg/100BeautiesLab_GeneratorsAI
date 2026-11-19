@@ -32,6 +32,10 @@ from src.utils.dataset import (  # noqa: E402
     _build_number_print_block,
     build_appearance_detail_block,
     is_detail_reference,
+    generation_ai_hints,
+    record_badge,
+    record_num,
+    work_title,
 )
 from src.pipeline.design_reference import collect_design_reference
 
@@ -102,7 +106,7 @@ def collect_character_data(
 
 def _build_character_spec(record: dict, form: str) -> dict:
     """形態別の違反検出・修正指示用スペックを構築する。"""
-    hints = record.get("ai_hints") or {}
+    hints = generation_ai_hints(record)
     common = hints.get("common") or {}
     form_data = (hints.get("forms") or {}).get(form) or {}
 
@@ -113,7 +117,6 @@ def _build_character_spec(record: dict, form: str) -> dict:
             "human legs or feet",
             "standing bipedal human body shape",
             "clothed human torso",
-            "human hair visible on spherical body",
         ]
         correction_instruction = (
             "このキャラクターはコアフォルダ形態 (球体型の小動物ロボット) です。\n"
@@ -143,13 +146,15 @@ def _build_character_spec(record: dict, form: str) -> dict:
             common.get("immutable_traits") or [], form
         ),
         "form_tags": form_data.get("form_tags") or [],
+        "ai_tags": form_data.get("ai_tags") or [],
         "negative_keywords": form_data.get("negative_keywords") or [],
         "color_palette": extract_color_palette(record, form),
         "violation_features": violation_features,
         "correction_instruction": correction_instruction,
         "form": form,
         "char_name": extract_char_name(record),
-        "char_num": record["data"]["Num"],
+        "work_title": work_title(record),
+        "char_num": record_num(record),
     }
 
 
@@ -157,10 +162,10 @@ def _save_db_summary(
     stage_dir: Path, record: dict, form: str, references: dict, spec: dict
 ) -> None:
     summary = {
-        "num": record["data"]["Num"],
+        "num": record_num(record),
         # 2026-08-02: 画像ファイル名の識別子はインデックスバッジ (`NTS-2B` 等) へ移行した。
         # Num とバッジが一致しないキャラ (`2-alt` → `2B`) の参照解決を後から追えるよう残す。
-        "num_badge": _extract_record_badge(record),
+        "num_badge": record_badge(record) or _extract_record_badge(record),
         "name": extract_char_name(record, fallback=""),
         "form": form,
         "reference_url_count": len(references["urls"]),

@@ -75,7 +75,7 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from src.utils import build_run_output_dir, find_character, resolve_badge  # noqa: E402
-from src.utils.dataset import apply_generation_gate  # noqa: E402
+from src.utils.dataset import apply_generation_gate, record_num, resolve_target  # noqa: E402
 from src.pipeline.prompt_refiner import (  # noqa: E402
     refine_prompt_dual,
     generate_random_scene,
@@ -152,6 +152,12 @@ def _parse_nums(spec: "str | None") -> list[int | str]:
     return [resolve_badge(x) for x in str(spec).replace(" ", "").split(",") if x != ""]
 
 
+def _resolve_arg_num(args: argparse.Namespace, state: dict) -> None:
+    """--badge を run の作品で解決する (他作品のバッジ "EZ1" → state のキー "Mouse")。"""
+    if getattr(args, "num", None) is not None:
+        args.num = resolve_target(args.num, state["form"], state["work_key"])[0]
+
+
 def _char_key(n: int | str) -> str:
     """chars 辞書のキー (JSON キーは文字列)。"""
     return str(n)
@@ -171,6 +177,8 @@ def _stage1_combined(args: argparse.Namespace) -> None:
     nums = _parse_nums(args.nums)
     if len(nums) < 2:
         sys.exit("[ERROR] --nums は 2 件以上を指定してください (例: 24,42)。")
+    _, args.form, args.work = resolve_target(nums[0], args.form, args.work)
+    nums = [resolve_target(n, args.form, args.work)[0] for n in nums]
 
     records: list[dict] = []
     for n in nums:
@@ -203,7 +211,7 @@ def _stage1_combined(args: argparse.Namespace) -> None:
     stage1_dir = run_dir / "stage1_prompt"
     chars: dict[str, dict] = {}
     for rec in records:
-        n = rec["data"]["Num"]
+        n = record_num(rec)
         prompts = refine_prompt_dual(
             rec, args.form, scene=scene, style=args.style,
             composition=args.composition, background=args.background,
@@ -253,6 +261,7 @@ def cmd_stage1(args: argparse.Namespace) -> None:
     if args.num is None:
         sys.exit("[ERROR] stage1 は --num (単体) か --nums (合同) のいずれかが必要です。")
 
+    args.num, args.form, args.work = resolve_target(args.num, args.form, args.work)
     record = find_character(args.num, args.work)
     if record is None:
         sys.exit(f"[ERROR] キャラクター #{args.num} ({args.work}) が見つかりません。")
@@ -323,6 +332,7 @@ def cmd_stage1(args: argparse.Namespace) -> None:
 def cmd_stage2(args: argparse.Namespace) -> None:
     run_dir = Path(args.run_dir)
     state = _load_state(run_dir)
+    _resolve_arg_num(args, state)
     decision = getattr(args, "reference_decision", None)
     confirm = None
     if decision:
@@ -387,6 +397,7 @@ def cmd_stage2(args: argparse.Namespace) -> None:
 def cmd_stage3(args: argparse.Namespace) -> None:
     run_dir = Path(args.run_dir)
     state = _load_state(run_dir)
+    _resolve_arg_num(args, state)
     # 既定枚数は通しパイプラインと同じ (単体 5 / 合同 3 枚×キャラ)。--count は明示指定時のみ上書き
     count = args.count or (_MULTI_ROUGH_PER_CHAR if _is_combined(state) else _ROUGH_COUNT)
 
@@ -466,6 +477,7 @@ def cmd_stage3(args: argparse.Namespace) -> None:
 def cmd_stage4(args: argparse.Namespace) -> None:
     run_dir = Path(args.run_dir)
     state = _load_state(run_dir)
+    _resolve_arg_num(args, state)
 
     if _is_combined(state):
         n = getattr(args, "num", None)

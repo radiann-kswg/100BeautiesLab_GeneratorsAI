@@ -111,7 +111,7 @@ class GenerateCharacterInput(_Base):
 
     num: Union[int, str] = Field(
         ...,
-        description="キャラクターのバッジ (DB の Num_Badge, 例: '2B' / '67B')、番号 (1-100 の整数)、特殊ID ('2-alt' 等)、またはキャラ名 (例: 57 / '2B' / 'バイナ')",
+        description="キャラクターのバッジ (DB の Num_Badge, 例: '2B' / '67B')、番号 (1-100 の整数)、特殊ID ('2-alt' 等)、またはキャラ名 (例: 57 / '2B' / 'バイナ')。NumberTales 以外の作品は作品コード付きのバッジ (例: 'SAR-EZ1' / 'SCG-ENE'。work_key は不要)",
     )
 
     @field_validator("num")

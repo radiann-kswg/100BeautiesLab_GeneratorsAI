@@ -60,7 +60,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-from src.utils.dataset import resolve_badge  # noqa: E402
+from src.utils.dataset import generation_ai_hints, resolve_badge  # noqa: E402
 from src.utils import (  # noqa: E402
     apply_generation_gate,
     build_run_output_dir,
@@ -121,9 +121,9 @@ _GEMINI_REVIEW_SYSTEM = (
 )
 
 
-def _build_char_summary(record: dict) -> str:
+def _build_char_summary(record: dict, form: str) -> str:
     data = record.get("data") or {}
-    hints = record.get("ai_hints") or {}
+    hints = generation_ai_hints(record)
     common = hints.get("common") or {}
 
     lines: list[str] = []
@@ -142,6 +142,9 @@ def _build_char_summary(record: dict) -> str:
     natural_desc = (common.get("natural_language_description") or "").strip()
     if natural_desc:
         lines.append(f"外見: {natural_desc}")
+    form_desc = ((hints.get("forms") or {}).get(form) or {}).get("natural_language_description")
+    if form_desc:
+        lines.append(f"対象形態の外見: {form_desc}")
     return "\n".join(lines)
 
 
@@ -165,7 +168,7 @@ def _generate_openai(
 
     gpt_model = os.environ.get("GPT_MODEL", "gpt-4o")
     name = record["data"].get("Name_JP") or record["data"].get("Name") or "Unknown"
-    char_summary = _build_char_summary(record)
+    char_summary = _build_char_summary(record, form)
     template = _USER_TEMPLATES.get(mode, _USER_TEMPLATES["scene"])
     user_msg = template.format(
         name=name, form=form,
@@ -209,16 +212,12 @@ def _review_gemini(
         return primary_text
 
     text_model = os.environ.get("GEMINI_TEXT_MODEL", "gemini-2.5-flash")
-    hints = record.get("ai_hints") or {}
-    common = hints.get("common") or {}
-    immutable = common.get("immutable_traits") or []
     name = record["data"].get("Name_JP") or record["data"].get("Name") or "Unknown"
 
-    immutable_display = [re.sub(r"\s*\((corefolder|humanoid)\)\s*$", "", t) for t in immutable]
     review_prompt = (
         f"以下は「{name}」というキャラクターについての{mode}テキストです。\n\n"
-        "[このキャラクターの不変特徴（必ず正確に反映すること）]\n"
-        + ("\n".join(f"- {t}" for t in immutable_display) or "- （未設定）")
+        "[このキャラクターの特徴（必ず正確に反映すること）]\n"
+        + _build_char_summary(record, form)
         + f"\n\n[レビュー対象テキスト]\n{primary_text}\n\n"
         "上記テキストをレビューし、改善したテキストのみを出力してください。"
         "（レビューコメント・説明文は不要）"

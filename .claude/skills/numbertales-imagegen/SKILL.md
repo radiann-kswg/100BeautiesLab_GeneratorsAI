@@ -108,6 +108,7 @@ NT_MODULE=src.pipeline.natural_parser ./bin/ntimg.sh "コアフォルダ姿の25
 ```
 
 - `--form` は `corefolder`（既定）/ `humanoid`。
+- `--badge` は創作 DB のバッジ（`57` / `2B`）。NumberTales 以外の作品（獣爾騎兵・豹変系女子）は、作品コード付きのバッジ（`SAR-EZ1` / `SCG-ENE`）で指定でき、`--work` は不要。コアフォルダ形態を持たないため `humanoid` として扱われる。`--natural` と作品をまたぐ合同生成は NumberTales のみ。
 - `--scene` 省略時は Stage 1 がキャラに合うシーンを自動生成する。
 - ヒントは `--style` / `--composition` / `--background` で追加できる。
 

@@ -34,7 +34,9 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-from src.utils.dataset import resolve_badge  # noqa: E402
+from src.utils.dataset import (  # noqa: E402
+    build_appearance_detail_block, normalize_form, resolve_badge, resolve_target,
+)
 from src.utils import (  # noqa: E402
     apply_generation_gate,
     collect_record_capabilities,
@@ -196,6 +198,10 @@ def run_batch(
     ``dry_run=True`` のときは実 API を一切呼ばず、各組み合わせの予定 (RUN/SKIP) と
     capability だけをログ出力する。
     """
+    if nums:  # 先頭のバッジが作品コード付きなら作品を決める。他作品は humanoid の 1 形態だけ。
+        work_key = resolve_target(nums[0], forms[0], work_key)[2]
+        nums = [resolve_target(n, forms[0], work_key)[0] for n in nums]
+        forms = list(dict.fromkeys(normalize_form(f, work_key) for f in forms))
     results: list[BatchResult] = []
     total = len(nums) * len(forms) * len(providers)
     print(f"[BATCH] 実行予定: {total} 件 "
@@ -236,7 +242,11 @@ def run_batch(
             for provider in providers:
                 idx += 1
                 header = f"\n[BATCH {idx}/{total}] #{num} {form} {provider}"
-                if skip_no_hints and not cap.get("current_form_hints_present"):
+                # AIHints を持たない作品 (NumberTales 以外) は AppearanceDetail の文面が正典。
+                has_spec = cap.get("current_form_hints_present") or (
+                    record.get("work_key") != "#Works_NumberTales"
+                    and build_appearance_detail_block(record, form))
+                if skip_no_hints and not has_spec:
                     print(
                         f"{header} -> SKIP (current_form_hints_present=False) "
                         f"forms_available={cap.get('form_hints_available')}"

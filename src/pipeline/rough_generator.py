@@ -25,6 +25,8 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
+from src.utils.dataset import record_num  # noqa: E402
+
 
 def _generate_gemini_rough(
     record: dict,
@@ -74,7 +76,7 @@ def _generate_gemini_rough(
 
     try:
         paths = generate_image(
-            num=record["data"]["Num"],
+            num=record_num(record),
             form=form,
             work_key=work_key,
             out_dir=str(stage_dir),
@@ -169,7 +171,7 @@ def _generate_sdxl_rough(
     sdxl_dir = stage_dir / "sdxl_guide"
     try:
         return sdxl_generate(
-            num=record["data"]["Num"],
+            num=record_num(record),
             form=form,
             work_key=work_key,
             count=count,

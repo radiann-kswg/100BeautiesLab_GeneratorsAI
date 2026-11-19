@@ -43,6 +43,7 @@ from src.utils.dataset import (  # noqa: E402
     IMAGE_TEXT_POLICY,
     _build_number_print_block,
     _format_color_palette_lines,
+    record_num,
 )
 
 _NUMBER_FIX_RE = re.compile(r"番号|数字|字形|number|digit|glyph|font", re.IGNORECASE)
@@ -147,7 +148,7 @@ def _analyze_rough_with_openai(
     )
 
     system = (
-        f"あなたはナンバーテールズキャラクター「{char_name}」の{form}形態イラストの品質検査AIです。\n"
+        f"あなたは{spec.get('work_title', 'ナンバーテールズ')}キャラクター「{char_name}」の{form}形態イラストの品質検査AIです。\n"
         "画像に対して以下を確認し、**JSONのみ**を返してください（説明文・マークダウン不要）:\n"
         '{"violations": ["違反内容1", ...], "missing": ["欠落要素1", ...], '
         '"composition_issues": ["構図問題1", ...], "overall_ok": true}'
@@ -156,6 +157,7 @@ def _analyze_rough_with_openai(
         f"このイラストを検査してください。\n"
         f"形態: {form}\n"
         f"不変特徴 (必ず存在するべき・違反扱い禁止): {immutable}\n"
+        f"対象形態の特徴 (AIHints ai_tags): {', '.join(spec.get('ai_tags') or [])}\n"
         "上記の不変特徴が画像に無い・数や形が違う場合は missing に追加してください。\n"
         f"以下の要素が存在する場合は violations に追加してください"
         f"（ただし上記の不変特徴として期待されるものは violations に含めないこと）:\n{violation_list}\n"
@@ -269,7 +271,7 @@ def _apply_correction_gemini(
         hints = record.get("ai_hints") or {}
         _common = hints.get("common") or {}
         identity_tags = ", ".join(((_common.get("identity_tags") or []) + (_common.get("immutable_traits") or []))[:6])
-        num_val = (record.get("data") or {}).get("Num", "?")
+        num_val = record_num(record)
         palette_summary = _record_palette_summary(record, form)
         palette_line = f"- 配色 (DB実測値): {palette_summary}\n" if palette_summary else ""
 
@@ -299,7 +301,7 @@ def _apply_correction_gemini(
 
     try:
         return generate_image(
-            num=record["data"]["Num"],
+            num=record_num(record),
             form=form,
             work_key=work_key,
             out_dir=str(correct_subdir),
@@ -352,7 +354,7 @@ def _apply_correction_openai(
     identity_tags = ", ".join((
         (_common.get("identity_tags") or []) + (_common.get("immutable_traits") or [])
     )[:6])
-    num_val = (record.get("data") or {}).get("Num", "?")
+    num_val = record_num(record)
     palette_summary = _record_palette_summary(record, form)
     palette_line = f"Color palette (from DB, keep): {palette_summary}\n" if palette_summary else ""
 

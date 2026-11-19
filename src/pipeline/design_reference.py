@@ -11,7 +11,8 @@ from urllib.parse import urlparse
 from src.utils.image_io import load_reference_bytes
 from src.utils.run_log import initialize_run_logs, write_run_meta
 from src.utils.dataset import (_creations_db_repo_root, _image_category, extract_char_name,
-                               is_detail_reference, build_appearance_detail_block)
+                               is_detail_reference, build_appearance_detail_block, generation_ai_hints,
+                               record_num, _is_numbertales)
 
 
 class ReferenceConfirmationRequired(RuntimeError):
@@ -104,38 +105,55 @@ def collect_design_reference(
     hints = record.get("ai_hints") or {}
     canonical = {"common": hints.get("common") or {},
                  "form": (hints.get("forms") or {}).get(form) or {}}
+    current = generation_ai_hints(record)
+    model_hints = {"common": current.get("common") or {},
+                   "form": (current.get("forms") or {}).get(form) or {}}
+    appearance_detail = build_appearance_detail_block(record, form)
     log_dir = stage_dir / "design_reference"
     meta_path = log_dir / "run_meta.json"
     saved = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
     if saved:
-        if saved.get("ai_hints") != canonical or saved.get("references") != references:
-            raise ValueError("同一実行の AIHints/参照画像が変わっています。新規実行してください。")
+        if (saved.get("ai_hints") != canonical or saved.get("references") != references
+                or saved.get("form") != form or saved.get("appearance_detail") != appearance_detail):
+            raise ValueError("同一実行の形態/AIHints/部位仕様/参照画像が変わっています。新規実行してください。")
         if saved.get("status") in ("ok", "fallback_approved"):
             return saved["design_reference"]
         if saved.get("status") == "cancelled":
             raise ReferenceCancelled("この実行は中止済みです。新規実行してください。")
-    prompt = (
-        f"公式設定画像の #{record['data']['Num']} {extract_char_name(record)} の {form} 形態だけを観察してください。"
+    head = (
+        f"公式設定画像の #{record_num(record)} {extract_char_name(record)} の {form} 形態だけを観察してください。"
         "他キャラクターの特徴は含めないでください。以下の AIHints 文面が正典です。\n"
         "画像観察で AIHints を上書きしないでください。他形態の特徴を混ぜないでください。\n"
+    )
+    if not _is_numbertales(record) and not hints:
+        head = (
+            f"公式設定画像の {extract_char_name(record)} だけを観察してください。"
+            "他キャラクターの特徴は含めないでください。以下の [DB部位別仕様] が正典です。\n"
+            "画像観察で正典を上書きしないでください。"
+            "「別状態」と書かれた項目の特徴を、通常の姿の特徴に混ぜないでください。\n"
+        )
+    prompt = (
+        head +
         "耳・尻尾の本数と束構成・シルエット・配色・番号・非対称要素を観察してください。\n"
         "部位図では番号の字形・線幅・間隔・切れ目を観察し、全体図で装着位置を確認してください。\n"
         "左右はキャラクター自身の左右と画像上の左右を区別。隠れた部位は推測せず不明にしてください。\n"
         "JSON の observations / unknowns / conflicts に文字列配列で返してください。"
-        "AIHints と矛盾する観察は conflicts のみに入れてください。\n[AIHints 原文]\n"
-        + json.dumps(canonical, ensure_ascii=False) + "\n"
-        + build_appearance_detail_block(record, form)
+        "AIHints と矛盾する観察は conflicts のみに入れてください。\n[AIHints 生成用文面]\n"
+        + json.dumps(model_hints, ensure_ascii=False) + "\n"
+        + appearance_detail
     )
     design = {"ai_hints": canonical, "observations": [], "unknowns": [], "conflicts": [], "sources": []}
-    design["num"] = record["data"]["Num"]
+    design["num"] = record_num(record)
     design["form"] = form
     if not saved:
-        initialize_run_logs(log_dir, provider="openai", num=record["data"]["Num"],
+        initialize_run_logs(log_dir, provider="openai", num=record_num(record),
                             form=form, work_key=record.get("work_key", "#Works_NumberTales"),
                             model=os.environ.get("GPT_MODEL", "gpt-4o"), prompt_text=prompt,
-                            meta={"ai_hints": canonical, "references": references})
+                            meta={"ai_hints": canonical, "generation_ai_hints": model_hints,
+                                  "references": references, "appearance_detail": appearance_detail})
         try:
-            if not hints:
+            # AIHints は NumberTales の正典。持たない作品は AppearanceDetail の文面を正典にする。
+            if not hints and (_is_numbertales(record) or not build_appearance_detail_block(record, form)):
                 raise ValueError("CreationsAI の AIHints がありません")
             design.update(_observe(prompt, _official_settings(references)))
         except Exception as exc:
@@ -148,7 +166,7 @@ def collect_design_reference(
                 "BadRequestError": "OpenAI API が参照画像または観察リクエストを受け付けませんでした",
                 "ModuleNotFoundError": "画像観察に必要なライブラリがありません",
             }.get(type(exc).__name__, f"画像観察に失敗しました ({type(exc).__name__})")
-            warning = {"status": "awaiting_confirmation", "num": record["data"]["Num"],
+            warning = {"status": "awaiting_confirmation", "num": record_num(record),
                        "form": form, "reason": reason, "log_dir": str(log_dir),
                        "question": "画像観察に失敗しました。AIHints と既存参照画像だけで続行しますか？"}
             write_run_meta(log_dir, {"status": "awaiting_confirmation", "warning": warning})
@@ -158,7 +176,7 @@ def collect_design_reference(
     else:
         warning = saved.get("warning") or {
             "status": "awaiting_confirmation", "reason": "前回の画像観察が未完了です",
-            "num": record["data"]["Num"], "form": form, "log_dir": str(log_dir)}
+            "num": record_num(record), "form": form, "log_dir": str(log_dir)}
     approved = (confirm or confirm_in_terminal)(warning)
     if approved is not True:
         write_run_meta(log_dir, {"status": "cancelled",
@@ -171,13 +189,18 @@ def collect_design_reference(
 
 
 def design_reference_block(design: dict) -> str:
+    canonical = design.get("ai_hints") or {}
+    form = design.get("form", "corefolder")
+    current = generation_ai_hints({"ai_hints": {"common": canonical.get("common") or {},
+                                  "forms": {form: canonical.get("form") or {}}}})
+    model_design = {**design, "ai_hints": {"common": current["common"], "form": current["forms"][form]}}
     return (
         "[キャラクターデザイン遵守]\n"
-        "AIHints は正典。対象形態に適用される原文を守ること。画像観察は補助情報であり、"
+        "AIHints は正典。対象形態の ai_tags を優先した以下の文面を守ること。画像観察は補助情報であり、"
         "AIHints と衝突したら採用しない。不明点・矛盾を確定特徴として描かない。\n"
         "公式画像は個体デザイン、構図ガイド・過去の生成画像は構図だけの参考。"
         "シーンや衣装変更でも不変特徴を変えない。\n"
-        + json.dumps(design, ensure_ascii=False) + "\n\n"
+        + json.dumps(model_design, ensure_ascii=False) + "\n\n"
     )
 
 

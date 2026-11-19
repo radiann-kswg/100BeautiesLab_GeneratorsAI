@@ -53,7 +53,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 from dotenv import load_dotenv
 load_dotenv()
 
-from src.utils import collect_reference_images, find_character, resolve_badge  # noqa: E402
+from src.utils import collect_reference_images, find_character, record_num, resolve_badge  # noqa: E402
 
 _IMS_TOKEN_URL = "https://ims-na1.adobelogin.com/ims/token/v3"
 _IMS_SCOPE = (
@@ -397,7 +397,7 @@ def create_composition_guide(
     保存した構図ガイド画像のパスリスト
     """
     stage_dir.mkdir(parents=True, exist_ok=True)
-    num = record["data"]["Num"]
+    num = record_num(record)
 
     refs = collect_reference_images(record, form=form)
     ref_paths = refs["local_paths"]

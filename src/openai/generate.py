@@ -42,6 +42,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 from src.utils.dataset import (  # noqa: E402
     IMAGE_TEXT_POLICY, _build_number_print_block, build_appearance_detail_block, is_detail_reference,
     resolve_badge,
+    resolve_target,
 )
 
 from src.utils import (  # noqa: E402
@@ -144,6 +145,7 @@ def generate_image_dalle(
             f" -> 次ラベル: {iter_label} / 修正指示 {len(revision_items)} 件"
         )
 
+    num, form, work_key = resolve_target(num, form, work_key)  # バッジ → Num / 他作品は humanoid
     # out_dir 明示時 (パイプラインの各ステージ配下) は日付フォルダを作らずフラットに置く。
     output_dir = build_run_output_dir(
         provider="openai",
@@ -384,6 +386,7 @@ def assist_prompt_gpt(
 
     gpt_model = os.environ.get("GPT_MODEL", "gpt-4o")
 
+    num, form, work_key = resolve_target(num, form, work_key)  # バッジ → Num / 他作品は humanoid
     record = find_character(num, work_key)
     if record is None:
         sys.exit(f"[ERROR] キャラクター #{num} ({work_key}) が見つかりません。")

@@ -33,6 +33,90 @@ def test_observation_preserves_hints_and_reuses_same_run(tmp_path, monkeypatch):
     assert dr.add_design_reference(prompts, {"design_reference": design}) == prompts
 
 
+def test_other_work_with_ai_hints_uses_hints_as_canon(tmp_path, monkeypatch):
+    prompts = []
+    monkeypatch.setattr(dr, "_observe", lambda prompt, refs: (
+        prompts.append(prompt) or {
+            "observations": ["丸い耳"], "unknowns": [], "conflicts": [], "sources": ["official.png"]}))
+    character = record()
+    character["work_key"] = "#Works_ShauErRiders"
+
+    dr.collect_design_reference(character, "corefolder", {}, tmp_path)
+
+    assert "以下の AIHints 文面が正典です" in prompts[0]
+    assert "[DB部位別仕様] が正典です" not in prompts[0]
+
+
+@pytest.mark.parametrize("change", ["form", "appearance_detail"])
+def test_saved_observation_rejects_changed_form_or_part_specification(tmp_path, monkeypatch, change):
+    monkeypatch.setattr(dr, "_observe", lambda *a: {
+        "observations": ["丸い耳"], "unknowns": [], "conflicts": [], "sources": ["official.png"]})
+    record = {
+        "work_key": "#Works_ShauErRiders",
+        "record_identity": {"index": {"Name": "Mouse"}},
+        "data": {"AppearanceDetail": [{
+            "Formation": None, "BodyPart": ["#BodyPart_Ear"],
+            "Attrs": [{"AttrLabel": "#DesignAttr_Shape", "value_EN": "round"}],
+        }]},
+    }
+    original_detail = dr.build_appearance_detail_block(record, "humanoid")
+    dr.collect_design_reference(record, "humanoid", {}, tmp_path)
+    meta = json.loads((tmp_path / "design_reference" / "run_meta.json").read_text(encoding="utf-8"))
+    assert meta["form"] == "humanoid"
+    assert meta["appearance_detail"] == original_detail
+
+    if change == "form":
+        form = "corefolder"
+    else:
+        record["data"]["AppearanceDetail"][0]["Attrs"][0]["value_EN"] = "oval"
+        form = "humanoid"
+    with pytest.raises(ValueError, match="部位仕様"):
+        dr.collect_design_reference(record, form, {}, tmp_path)
+
+
+def test_openai_correction_uses_record_num_for_character_lookup(tmp_path, monkeypatch):
+    from src.pipeline import correction_generator as cg
+
+    record = {"data": {}, "record_identity": {"index": {"Name": "Mouse"}}}
+    monkeypatch.setattr(cg, "record_num", lambda value: "Mouse")
+    monkeypatch.setenv("OPENAI_CORRECTION_MODEL", "gpt-image-1")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-not-a-real-key")
+    monkeypatch.setenv("OPENAI_IMAGE_SLEEP", "0")
+    received = {}
+
+    def generate_image_dalle(**kwargs):
+        received.update(kwargs)
+        return tmp_path / "corrected.png"
+
+    monkeypatch.setattr("src.openai.generate.generate_image_dalle", generate_image_dalle)
+    result = cg._apply_correction_openai(
+        record, "humanoid", tmp_path / "rough.png", {"violations": ["wrong shape"]},
+        tmp_path, "#Works_ShauErRiders", 1,
+    )
+    assert received["num"] == "Mouse"
+    assert "Character #Mouse" in received["prompt_override"]
+    assert result == [tmp_path / "corrected.png"]
+
+
+def test_multi_character_prompt_uses_record_num_for_form_and_part_spec(monkeypatch):
+    from src.pipeline import image_pipeline as ip
+
+    record = {
+        "data": {"AppearanceDetail": [{
+            "Formation": None, "BodyPart": ["#BodyPart_Ear"],
+            "Attrs": [{"AttrLabel": "#DesignAttr_Shape", "value_EN": "round"}],
+        }]},
+        "record_identity": {"index": {"Name": "Mouse"}},
+    }
+    monkeypatch.setattr(ip, "record_num", lambda value: "Mouse")
+    prompt = ip._build_multi_char_composition_prompt(
+        [record], {"Mouse": "humanoid"}, "scene",
+    )
+    assert "- #Mouse: humanoid 形態" in prompt
+    assert "#Mouse の部位仕様" in prompt
+    assert "- Ear: round" in prompt
+
+
 def test_failure_waits_and_only_explicit_true_allows_fallback(tmp_path, monkeypatch):
     def fail(*args):
         raise ValueError("参照画像が壊れています")
