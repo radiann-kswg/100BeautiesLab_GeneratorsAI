@@ -11,7 +11,7 @@ _tasks/
 docs/
 *.md
 !README.md
-numbertales-imagegen.skill
+100btys-lab-imagegen.skill
 .venv/
 venv/
 node_modules/

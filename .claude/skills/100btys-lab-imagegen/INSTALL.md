@@ -1,19 +1,19 @@
-# numbertales-imagegen — 適用手順（実機 Windows で実行）
+# 100btys-lab-imagegen — 適用手順（実機 Windows で実行）
 
-このフォルダはスキル一式の**正本**です（`.agents/skills/numbertales-imagegen/`）。
-`.claude/skills/numbertales-imagegen/` は同期スクリプトが作る**生成ミラー**なので、直接編集しないでください。
+このフォルダはスキル一式の**正本**です（`.agents/skills/100btys-lab-imagegen/`）。
+`.claude/skills/100btys-lab-imagegen/` は同期スクリプトが作る**生成ミラー**なので、直接編集しないでください。
 
 ## 0. 配置の考え方
 
 | パス | 位置づけ | 読むエージェント |
 |---|---|---|
-| `.agents/skills/numbertales-imagegen/` | **正本（実体）** | GPT Codex（プロジェクトスキル） |
-| `.claude/skills/numbertales-imagegen/` | 生成ミラー | Claude Code / Cowork |
-| `~/.claude/skills/numbertales-imagegen` | ジャンクション | Claude パーソナルスキル |
+| `.agents/skills/100btys-lab-imagegen/` | **正本（実体）** | GPT Codex（プロジェクトスキル） |
+| `.claude/skills/100btys-lab-imagegen/` | 生成ミラー | Claude Code / Cowork |
+| `~/.claude/skills/100btys-lab-imagegen` | ジャンクション | Claude パーソナルスキル |
 
 ## 1. 更新版を持ち込む場合（.skill 展開版など）
 
-このフォルダの中身を、リポジトリの `.agents/skills/numbertales-imagegen/` へ上書きコピー:
+このフォルダの中身を、リポジトリの `.agents/skills/100btys-lab-imagegen/` へ上書きコピー:
 
 ```
 SKILL.md / REFERENCE.md / install-personal-skill.ps1 / build-skill-package.ps1 / bin/ntimg.ps1 / bin/ntimg.sh
@@ -24,12 +24,12 @@ SKILL.md / REFERENCE.md / install-personal-skill.ps1 / build-skill-package.ps1 /
 ## 2. インストール（正本 → ミラー → パーソナルスキル）
 
 ```powershell
-cd "C:\Visual Studio Code UserFile\100BeautiesLab_GeneratorsAI\.agents\skills\numbertales-imagegen"
+cd "C:\Visual Studio Code UserFile\100BeautiesLab_GeneratorsAI\.agents\skills\100btys-lab-imagegen"
 ./install-personal-skill.ps1
 ```
 
-→ `repo_path.txt` を生成 → `.claude/skills/` へミラー同期 → `~/.claude/skills/numbertales-imagegen` にジャンクション。
-   Settings > Capabilities で Code execution を ON、スキル一覧で `numbertales-imagegen` を ON。
+→ `repo_path.txt` を生成 → `.claude/skills/` へミラー同期 → `~/.claude/skills/100btys-lab-imagegen` にジャンクション。
+   Settings > Capabilities で Code execution を ON、スキル一覧で `100btys-lab-imagegen` を ON。
 
 Codex はリポジトリ内 `.agents/skills/` をプロジェクトスキルとして直接読むため、追加操作は不要です。
 
@@ -54,7 +54,7 @@ powershell -ExecutionPolicy Bypass -File scripts\sync-agent-skills.ps1 -Apply   
 ## 5.（任意）配布用 .skill を作る
 
 ```powershell
-./build-skill-package.ps1     # numbertales-imagegen.skill を出力（repo_path.txt 除外）
+./build-skill-package.ps1     # 100btys-lab-imagegen.skill を出力（repo_path.txt 除外）
 ```
 
 ## 関連ドキュメント

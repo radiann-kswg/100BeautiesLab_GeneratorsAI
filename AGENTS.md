@@ -49,13 +49,13 @@ License: [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/)
 
 生成パイプラインの確認・引き継ぎを依頼された場合は、[docs/agent-config.md の確認手順](docs/agent-config.md#6-codex-で生成パイプラインを確認する) を読み、実装・CLI・ローカルデータ・既存ログの確認結果を報告する。
 
-作画支援スキル `numbertales-imagegen` も、設定書と同じくベンダー中立側を正本とする。
+作画支援スキル `100btys-lab-imagegen` も、設定書と同じくベンダー中立側を正本とする。
 
 | パス | 位置づけ |
 |---|---|
-| [`.agents/skills/numbertales-imagegen/`](.agents/skills/) | **正本（実体）。** ベンダー中立のスキル配置規約。GPT Codex がプロジェクトスキルとして読む |
-| `.claude/skills/numbertales-imagegen/` | **生成ミラー。** Claude Code / Cowork 用。直接編集せず同期スクリプトで反映する |
-| `~/.claude/skills/numbertales-imagegen` | パーソナルスキル用ジャンクション（`install-personal-skill.ps1` が作成） |
+| [`.agents/skills/100btys-lab-imagegen/`](.agents/skills/) | **正本（実体）。** ベンダー中立のスキル配置規約。GPT Codex がプロジェクトスキルとして読む |
+| `.claude/skills/100btys-lab-imagegen/` | **生成ミラー。** Claude Code / Cowork 用。直接編集せず同期スクリプトで反映する |
+| `~/.claude/skills/100btys-lab-imagegen` | パーソナルスキル用ジャンクション（`install-personal-skill.ps1` が作成） |
 
 ```powershell
 # 差分チェック（CI / 作業前確認。差分ありなら exit 1）

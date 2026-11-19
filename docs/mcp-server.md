@@ -103,7 +103,7 @@ Claude Desktop の `claude_desktop_config.json` 例:
 ### GPT / Codex から利用する
 
 生成本体と MCP は共通で、Claude 専用ではない。Codex のローカルスキルは
-`.agents/skills/numbertales-imagegen/` をそのまま利用できる。
+`.agents/skills/100btys-lab-imagegen/` をそのまま利用できる。
 
 Codex の MCP 設定例（`~/.codex/config.toml` またはプロジェクトの `.codex/config.toml` に追加）:
 

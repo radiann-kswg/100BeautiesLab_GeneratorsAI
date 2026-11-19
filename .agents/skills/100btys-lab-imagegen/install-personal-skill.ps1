@@ -1,11 +1,11 @@
 ﻿# install-personal-skill.ps1
-# numbertales-imagegen を「正本 .agents/skills/ → ミラー .claude/skills/ → パーソナルスキル」の
+# 100btys-lab-imagegen を「正本 .agents/skills/ → ミラー .claude/skills/ → パーソナルスキル」の
 # 順に配置するインストーラ。
 #
-#   1. 正本 .agents/skills/numbertales-imagegen/ を確定（.skill 展開版から実行された場合は取り込む）
+#   1. 正本 .agents/skills/100btys-lab-imagegen/ を確定（.skill 展開版から実行された場合は取り込む）
 #   2. repo_path.txt にライブリポジトリの絶対パスを記録
 #   3. scripts/sync-agent-skills.ps1 で .claude/skills/ へミラー
-#   4. ~/.claude/skills/numbertales-imagegen からジャンクションを張る
+#   4. ~/.claude/skills/100btys-lab-imagegen からジャンクションを張る
 #
 # ジャンクションなので "git pull" + 同期で SKILL.md 等が自動的に最新化される
 # （= 作業フォルダの更新がパーソナルスキルにも常に反映される）。
@@ -14,7 +14,7 @@
 #   1. PowerShell を開く
 #   2. このフォルダから実行:  ./install-personal-skill.ps1
 #
-# アンインストール: ~/.claude/skills/numbertales-imagegen を削除
+# アンインストール: ~/.claude/skills/100btys-lab-imagegen を削除
 #   （ジャンクションのみ削除され、リポジトリ側の実体は残る）
 
 [CmdletBinding()]
@@ -39,7 +39,7 @@ if (-not (Test-Path (Join-Path $repo 'src\pipeline\image_pipeline.py'))) {
 Write-Host "Repo root: $repo"
 
 # --- 1) 正本 (.agents/skills/) を確定 ---------------------------------------
-$canonical = Join-Path $repo '.agents\skills\numbertales-imagegen'
+$canonical = Join-Path $repo '.agents\skills\100btys-lab-imagegen'
 New-Item -ItemType Directory -Force -Path $canonical          | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $canonical 'bin') | Out-Null
 
@@ -74,14 +74,14 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
-$mirror = Join-Path $repo '.claude\skills\numbertales-imagegen'
+$mirror = Join-Path $repo '.claude\skills\100btys-lab-imagegen'
 Set-Content -Path (Join-Path $mirror 'repo_path.txt') -Value $repo -NoNewline -Encoding utf8
 
 # --- 4) ~/.claude/skills からジャンクション（パーソナルスキル） -------------
 function New-SkillJunction {
     param([string]$PersonalDir, [string]$Target, [string]$Label)
     New-Item -ItemType Directory -Force -Path $PersonalDir | Out-Null
-    $link = Join-Path $PersonalDir 'numbertales-imagegen'
+    $link = Join-Path $PersonalDir '100btys-lab-imagegen'
     if (Test-Path $link) {
         Write-Host "[i] Replacing existing link/folder: $link"
         Remove-Item $link -Force -Recurse
@@ -102,5 +102,5 @@ else {
 
 Write-Host ""
 Write-Host "Done! Settings > Capabilities で Code execution を有効化し、"
-Write-Host "スキル一覧の 'numbertales-imagegen' を ON にしてください。"
+Write-Host "スキル一覧の '100btys-lab-imagegen' を ON にしてください。"
 Write-Host "以後 'git pull' + sync-agent-skills.ps1 -Apply で SKILL.md / ランチャーも最新化されます。"

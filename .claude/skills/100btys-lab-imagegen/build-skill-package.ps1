@@ -1,5 +1,5 @@
 ﻿# build-skill-package.ps1
-# numbertales-imagegen スキル一式を配布用 .skill（zip）にまとめる。
+# 100btys-lab-imagegen スキル一式を配布用 .skill（zip）にまとめる。
 # .skill は SKILL.md を含むスキルディレクトリの zip アーカイブで、
 # Cowork / デスクトップ版 Claude の "Save skill" でインストールできる。
 #
@@ -19,14 +19,14 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 
-$src  = $PSScriptRoot   # .agents\skills\numbertales-imagegen（正本）
+$src  = $PSScriptRoot   # .agents\skills\100btys-lab-imagegen（正本）
 $repo = (Resolve-Path (Join-Path $src '..\..\..')).Path
 if (-not $OutDir) { $OutDir = $repo }
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 
 # 一時ステージング（除外ファイルを抜いた複製を作ってから zip 化）
 $stage = Join-Path ([System.IO.Path]::GetTempPath()) ("nt-skill-" + [guid]::NewGuid().ToString('N'))
-$pkgDir = Join-Path $stage 'numbertales-imagegen'
+$pkgDir = Join-Path $stage '100btys-lab-imagegen'
 New-Item -ItemType Directory -Force -Path $pkgDir | Out-Null
 
 $exclude = @('repo_path.txt')
@@ -34,7 +34,7 @@ Get-ChildItem -Path $src -Force | Where-Object {
     $_.Name -notin $exclude -and $_.Extension -ne '.skill'
 } | Copy-Item -Destination $pkgDir -Recurse -Force
 
-$zip = Join-Path $OutDir 'numbertales-imagegen.skill'
+$zip = Join-Path $OutDir '100btys-lab-imagegen.skill'
 if (Test-Path $zip) { Remove-Item $zip -Force }
 
 # .skill は zip。拡張子 .skill のままアーカイブを作る。

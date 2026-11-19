@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ntimg.sh — numbertales-imagegen launcher (bash / macOS / Cowork サンドボックス)
+# ntimg.sh — 100btys-lab-imagegen launcher (bash / macOS / Cowork サンドボックス)
 #
 # 役割: パーソナルスキルが任意の cwd から呼ばれても、リポジトリルートを
 #       自動解決して image_pipeline などを実行できるようにするラッパー。

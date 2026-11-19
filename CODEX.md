@@ -49,9 +49,9 @@
 
 ### スキル（`.agents/skills/`）
 
-- ナンバーテールズの作画依頼（「57をコアフォルダで生成して」「図書館シーンの絵を作って」「前回の表情だけ直して」
-  「25と57を並べて」等）は **`numbertales-imagegen` スキル**を使う。
-  Codex はこれを [`.agents/skills/numbertales-imagegen/`](.agents/skills/numbertales-imagegen/) から読み込む。
+- 百花繚乱研究所のキャラクターの作画依頼（「57をコアフォルダで生成して」「図書館シーンの絵を作って」「前回の表情だけ直して」
+  「25と57を並べて」等）は **`100btys-lab-imagegen` スキル**を使う。
+  Codex はこれを [`.agents/skills/100btys-lab-imagegen/`](.agents/skills/100btys-lab-imagegen/) から読み込む。
 - **`.agents/skills/` がスキルの正本。** ここを編集したら、必ずミラーへ同期すること。
 
   ```powershell
@@ -61,8 +61,8 @@
 
 - スキル本文は**ツール中立に書く**（「実機 Codex」等の断定を避ける）。同じファイルが Claude 側にも配られるため。
 - 実行は原則、スキル配下のランチャー
-  [`.agents/skills/numbertales-imagegen/bin/ntimg.ps1`](.agents/skills/numbertales-imagegen/bin/ntimg.ps1) /
-  [`.agents/skills/numbertales-imagegen/bin/ntimg.sh`](.agents/skills/numbertales-imagegen/bin/ntimg.sh) を経由する（cwd 非依存）。
+  [`.agents/skills/100btys-lab-imagegen/bin/ntimg.ps1`](.agents/skills/100btys-lab-imagegen/bin/ntimg.ps1) /
+  [`.agents/skills/100btys-lab-imagegen/bin/ntimg.sh`](.agents/skills/100btys-lab-imagegen/bin/ntimg.sh) を経由する（cwd 非依存）。
   `bin/` はスキルディレクトリ基準。リポジトリ直下には存在しない。
   `python` が PATH に無い場合は、利用可能な仮想環境を有効化するか、リポジトリルートで
   `.venv/Scripts/python.exe -m ...` を使う。起動が拒否された場合は現在の承認機構で実行権限を確認する。

@@ -41,7 +41,7 @@ Cowork は Claude Code CLI や Copilot と異なり、デスクトップアプ�
 
 ### Skill の活用
 
-- ナンバーテールズの作画依頼（「57をコアフォルダで生成して」「図書館シーンの絵を作って」「前回の表情だけ直して」「25と57を並べて」等）は **`numbertales-imagegen` スキル** を使うこと。自然文・キャラ番号・i2i改稿・合同/バッチ・出力ログ規則・不変特徴/NCライセンス遵守を扱う。
+- 百花繚乱研究所のキャラクターの作画依頼（「57をコアフォルダで生成して」「図書館シーンの絵を作って」「前回の表情だけ直して」「25と57を並べて」等）は **`100btys-lab-imagegen` スキル** を使うこと。自然文・キャラ番号・i2i改稿・合同/バッチ・出力ログ規則・不変特徴/NCライセンス遵守を扱う。
 - 成果物が docx / xlsx / pptx / pdf の場合のみ、リサーチ完了後に各 SKILL.md を読む（先に読まない）。
 
 ### MCP / コネクタ・computer use
@@ -58,4 +58,4 @@ Cowork は Claude Code CLI や Copilot と異なり、デスクトップアプ�
 - 使い方ドキュメント: [docs/README.md](docs/README.md)
 - エージェント設定の配布とスキル同期: [docs/agent-config.md](docs/agent-config.md)
 - 対をなす薄い設定書: [CODEX.md](CODEX.md)（GPT Codex 向け） ／ [CLAUDE.md](CLAUDE.md)（Claude Code 向け） ／ [.github/copilot-instructions.md](.github/copilot-instructions.md)（Copilot 向け）
-- 作画支援スキル: `numbertales-imagegen`（ナンバーテールズの作画依頼時に使用）。正本は [.agents/skills/numbertales-imagegen/](.agents/skills/numbertales-imagegen/)、`.claude/skills/` は生成ミラー
+- 作画支援スキル: `100btys-lab-imagegen`（作画依頼時に使用）。正本は [.agents/skills/100btys-lab-imagegen/](.agents/skills/100btys-lab-imagegen/)、`.claude/skills/` は生成ミラー
