@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 from src.utils.image_io import load_reference_bytes
 from src.utils.run_log import initialize_run_logs, write_run_meta
 from src.utils.dataset import (_creations_db_repo_root, _image_category, extract_char_name,
-                               is_detail_reference, build_appearance_detail_block)
+                               is_detail_reference, build_appearance_detail_block, generation_ai_hints)
 
 
 class ReferenceConfirmationRequired(RuntimeError):
@@ -104,6 +104,9 @@ def collect_design_reference(
     hints = record.get("ai_hints") or {}
     canonical = {"common": hints.get("common") or {},
                  "form": (hints.get("forms") or {}).get(form) or {}}
+    current = generation_ai_hints(record)
+    model_hints = {"common": current.get("common") or {},
+                   "form": (current.get("forms") or {}).get(form) or {}}
     log_dir = stage_dir / "design_reference"
     meta_path = log_dir / "run_meta.json"
     saved = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
@@ -122,8 +125,8 @@ def collect_design_reference(
         "部位図では番号の字形・線幅・間隔・切れ目を観察し、全体図で装着位置を確認してください。\n"
         "左右はキャラクター自身の左右と画像上の左右を区別。隠れた部位は推測せず不明にしてください。\n"
         "JSON の observations / unknowns / conflicts に文字列配列で返してください。"
-        "AIHints と矛盾する観察は conflicts のみに入れてください。\n[AIHints 原文]\n"
-        + json.dumps(canonical, ensure_ascii=False) + "\n"
+        "AIHints と矛盾する観察は conflicts のみに入れてください。\n[AIHints 生成用文面]\n"
+        + json.dumps(model_hints, ensure_ascii=False) + "\n"
         + build_appearance_detail_block(record, form)
     )
     design = {"ai_hints": canonical, "observations": [], "unknowns": [], "conflicts": [], "sources": []}
@@ -133,7 +136,8 @@ def collect_design_reference(
         initialize_run_logs(log_dir, provider="openai", num=record["data"]["Num"],
                             form=form, work_key=record.get("work_key", "#Works_NumberTales"),
                             model=os.environ.get("GPT_MODEL", "gpt-4o"), prompt_text=prompt,
-                            meta={"ai_hints": canonical, "references": references})
+                            meta={"ai_hints": canonical, "generation_ai_hints": model_hints,
+                                  "references": references})
         try:
             if not hints:
                 raise ValueError("CreationsAI の AIHints がありません")
@@ -171,13 +175,18 @@ def collect_design_reference(
 
 
 def design_reference_block(design: dict) -> str:
+    canonical = design.get("ai_hints") or {}
+    form = design.get("form", "corefolder")
+    current = generation_ai_hints({"ai_hints": {"common": canonical.get("common") or {},
+                                  "forms": {form: canonical.get("form") or {}}}})
+    model_design = {**design, "ai_hints": {"common": current["common"], "form": current["forms"][form]}}
     return (
         "[キャラクターデザイン遵守]\n"
-        "AIHints は正典。対象形態に適用される原文を守ること。画像観察は補助情報であり、"
+        "AIHints は正典。対象形態の ai_tags を優先した以下の文面を守ること。画像観察は補助情報であり、"
         "AIHints と衝突したら採用しない。不明点・矛盾を確定特徴として描かない。\n"
         "公式画像は個体デザイン、構図ガイド・過去の生成画像は構図だけの参考。"
         "シーンや衣装変更でも不変特徴を変えない。\n"
-        + json.dumps(design, ensure_ascii=False) + "\n\n"
+        + json.dumps(model_design, ensure_ascii=False) + "\n\n"
     )
 
 

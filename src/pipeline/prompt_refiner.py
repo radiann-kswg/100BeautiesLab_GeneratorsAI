@@ -26,6 +26,7 @@ from src.utils import (  # noqa: E402
     describe_ambiguous_field_resolutions,
     extract_char_name,
 )
+from src.utils.dataset import generation_ai_hints  # noqa: E402
 
 _RANDOM_SCENE_SYSTEM = (
     "あなたはナンバーテールズシリーズのクリエイティブディレクターです。"
@@ -49,7 +50,7 @@ def generate_random_scene(record: dict, form: str) -> str:
     if not api_key:
         return ""
 
-    hints = record.get("ai_hints") or {}
+    hints = generation_ai_hints(record)
     common = hints.get("common") or {}
     form_data = (hints.get("forms") or {}).get(form) or {}
     identity = ", ".join((common.get("identity_tags") or [])[:5])

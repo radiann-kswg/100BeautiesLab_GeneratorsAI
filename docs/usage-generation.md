@@ -492,14 +492,27 @@ python -m src.batch_generate --nums 15,22,49,57 --forms both --provider both --s
 | 2    | `[参照画像]` / `[参照画像URL]` / `[参照画像ローカル]` | URL とローカル添付の存在告知 (humanoid 形態は尾構造参考画像 `images.tails_unit` も含む)                       | `ai_hints.*.reference_images`, レコード `images`（`concept`/`corefolder`/`humanoid`/`arts`/`design_alt`/`catalog`/`tails_unit`）および `AppearanceDetail[].img_PNGName` |
 | 2.5  | `[参照N｜役割]` (API 送信時・各画像の直前)             | 添付画像ごとに「起点画像（前回生成）」「下絵・ラフ」「公式原典」の役割ラベルをテキストパートとして挟む。原典以外の配色・崩れ・蛇足を引き継がせないための明示。合同合成は「キャラクター単体レンダー」 | `gemini/generate.py` の `REF_LABEL_*` / `extra_ref_label` (プロンプト本文ではなく `contents` に差し込む) |
 | 3    | `[素体特徴]`                                          | 不変特徴 (耳・尻尾・髪色・瞳色)                                                                               | `ai_hints.common.immutable_traits` / `identity_tags`                           |
-| 4    | `[今回の姿]`                                          | 現在形態の自然文記述                                                                                          | `ai_hints.forms.{form}.natural_language_description`                           |
-| 5    | **`[番号印字仕様 (必須・最優先)]`**                   | 番号の位置・個数・色・原典の字形（線幅・間隔・切れ目・装飾）を保持 | AppearanceDetail の NumberMark / identity_tags / immutable_traits / outfit_features / silhouette_notes から抽出 |
+| 4    | `[今回の姿]`                                          | 現在形態のタグ（未収録時のみ旧自然文記述） | `ai_hints.forms.{form}.ai_tags` → `natural_language_description` |
+| 5    | **`[番号印字仕様 (必須・最優先)]`**                   | 番号の位置・個数・色・原典の字形（線幅・間隔・切れ目・装飾）を保持 | AppearanceDetail の NumberMark / identity_tags / immutable_traits / ai_tags（未収録時は outfit_features / silhouette_notes）から抽出 |
 | 6    | `[形態固定ルール]`                                    | 形態固有の immutable_constraints / 形態共通データセット (`required_shape_keywords[]`)                         | `Works_NumberTales.json` + `ai_hints.forms.{form}.immutable_constraints`       |
 | 6.8  | **`[配色仕様 (DB実測値・遵守すること)]`**             | 作者が設定画に描いたカラーチップ由来の HEX を Role (主色/補助色/差し色/副色) 別に列挙し、`AppliesTo` の適用部位を併記 (例: `- 主色 #E8F152 : arm, foot`)。参照画像と矛盾して見える場合は参照画像を優先させる | `db_record.ColorPalette` / `data.ColorPalette`（不在時は `ai_hints.common.palette_priority` へフォールバック） |
-| 7    | `[現在形態の重点要素]`                                | `silhouette_notes` の body_description / attached_items を 2 行に分けて提示                                   | `ai_hints.forms.{form}.silhouette_notes`                                       |
+| 7    | `[現在形態の重点要素]`                                | `ai_tags` 未収録時のみ旧 `outfit_features` / `silhouette_notes` を提示 | `ai_hints.forms.{form}.outfit_features` / `silhouette_notes` |
 | 8    | `[禁止語]` / negative                                 | 形態共通データセットの `disallow_cross_form_keywords[]` + `negative_keywords`                                 | `Works_NumberTales.json` + `ai_hints.forms.{form}.negative_keywords`           |
 | 6.5  | `[形態共通データセット]`                              | 形態定義・シルエット要約・共通装備 + **DB原典/識別モチーフ(en)** (両形態) / **DB原典/尾の構造(en)・種別・身長** (humanoid 限定) | `_ideas/form_common_datasets/{Work}.json` + `db_record.AppearanceDetail`(`#Element_Motif`/`#Element_CostumeItem`、旧 `IdentityMotif.Motif_EN` 廃止済み) / `db_record.TailsUnit`（構造化） / `db_record.RaceType`・`Height_cm`（曖昧フィールド解決） |
 | 9    | `[シーン・追加要望]`                                  | `--scene` / `--style` / `--composition` / `--background` の指定値                                             | CLI フラグ                                                                     |
+
+**2026-11-19: AIHints 構造再同期への追従**
+
+`forms.{form}.ai_tags` がある場合は、構造再同期で更新されたその文面を優先する。
+旧 Vision 由来の `outfit_features` / `silhouette_notes` / `natural_language_description` を混在させず、
+`ai_tags` と一致する負指定（前後空白・英字大小は無視）も生成用文面から除く。
+`TODO:` で始まる未充填タグは送信せず、残る有効タグを維持する。形態を明示したタグは衣装語フィルタで削らない。
+原文レコードは変更せず、画像生成・Stage 2 の観察・Stage 4 の検査・テキスト生成で同じ生成用文面を使う。
+`ai_tags` が無い形態は従来の説明へフォールバックする。尾の数は各キャラクターの AIHints / TailsUnit に従う。
+
+キャラクター列挙は引き続き `ai_training.allowed=true` のレコードだけを対象とする。
+バッジ解決・個別検索は全件 manifest のキャラクターを参照するため、制作途中の `10D` 等もローカルで同定できる。
+既知の権利拒否レコードは API で補完せず生成ゲートで拒否し、制作途中は用途別の警告・拒否を維持する。
 
 **2026-10-01: 公式部位図と番号字形の保持**
 
@@ -548,7 +561,7 @@ Stage 1 の要約や i2i の `prompt_override` でも、Gemini/OpenAI の送信�
 
 Stage 2 で OpenAI Vision が利用許可された公式 DB の設定画像を観察する（追加の API 利用が発生）。
 `GPT_MODEL` と既存の `OPENAI_API_KEY` を使う。CreationsAI の AIHints の共通部・対象形態の文面を
-原文のまま保持し、観察・不明点・矛盾を分離する。`[キャラクターデザイン遵守]` ブロックを
+ログでは原文のまま保持し、モデルには上記の `ai_tags` 優先の生成用文面を渡す。観察・不明点・矛盾を分離し、`[キャラクターデザイン遵守]` ブロックを
 Stage 3 の生成プロンプト（ラフ再生成を含む）と Stage 4 の検査へ追加し、最終生成にも引き継ぐ。
 画像観察の対象は DB 内の設定画カテゴリで、外部の原点アンカーや生成済み画像は含めない。
 現状は最大3画像を観察し、遮蔽された部位は不明として扱う。特徴の完全遵守を保証する検査ではない。

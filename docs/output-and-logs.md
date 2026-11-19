@@ -253,10 +253,11 @@ output/{YYYYMMDD}/{ts}_pipeline_{form}_nums{AAA}_{BBB}/
 
 `stage2_db/design_reference/`（合同では `char_{NNN}/stage2_db/design_reference/`）に
 `prompt.txt` / `run_meta.json` / `notes.md` を保存する。
-`run_meta.json` は AIHints 原文、参照候補、観察で実際に使った `sources`、
+`run_meta.json` は AIHints 原文（`ai_hints`）、`ai_tags` を優先したモデル投入文面（`generation_ai_hints`）、参照候補、観察で実際に使った `sources`、
 `observations` / `unknowns` / `conflicts`、失敗理由 `warning`、回答 `user_decision` を保持する。
 `stage2_db/db_summary.json` の `character_spec` には `number_print_spec`（番号仕様原文）、
-`appearance_detail_spec`（対象形態の部位仕様原文）、`detail_reference_paths`（Stage 4・合同合成へ渡す部位図）も保存する。
+`appearance_detail_spec`（対象形態の部位仕様原文）、`ai_tags`（対象形態の現行特徴）、`detail_reference_paths`（Stage 4・合同合成へ渡す部位図）も保存する。
+保存済み `design_reference.ai_hints` は原文を維持し、Stage 3・4 への投入時にも同じ生成用文面へ整える。
 参照候補リストと実添付は異なるため、観察に使われた画像は `design_reference.sources` で確認する。
 
 状態は `running` → `ok`、または `awaiting_confirmation` → `fallback_approved` / `cancelled`。

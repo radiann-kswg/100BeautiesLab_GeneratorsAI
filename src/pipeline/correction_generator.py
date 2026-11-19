@@ -156,6 +156,7 @@ def _analyze_rough_with_openai(
         f"このイラストを検査してください。\n"
         f"形態: {form}\n"
         f"不変特徴 (必ず存在するべき・違反扱い禁止): {immutable}\n"
+        f"対象形態の特徴 (AIHints ai_tags): {', '.join(spec.get('ai_tags') or [])}\n"
         "上記の不変特徴が画像に無い・数や形が違う場合は missing に追加してください。\n"
         f"以下の要素が存在する場合は violations に追加してください"
         f"（ただし上記の不変特徴として期待されるものは violations に含めないこと）:\n{violation_list}\n"

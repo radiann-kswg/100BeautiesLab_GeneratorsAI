@@ -106,6 +106,34 @@ def _append_unique(values: list[str], value: Any) -> None:
         values.append(text)
 
 
+def generation_ai_hints(record: dict[str, Any]) -> dict[str, Any]:
+    """構造再同期済み ai_tags を優先し、原文を変更せず生成用の文面を返す。"""
+    hints = record.get("ai_hints") or {}
+    common = dict(hints.get("common") or {})
+    for key, value in common.items():
+        if isinstance(value, str) and value.lstrip().lower().startswith("todo:"):
+            common[key] = ""
+        elif isinstance(value, list):
+            common[key] = [item for item in value if not isinstance(item, str)
+                           or not item.lstrip().lower().startswith("todo:")]
+    forms = {}
+    for form, source in (hints.get("forms") or {}).items():
+        if not source.get("ai_tags"):
+            forms[form] = source
+            continue
+        tags = [tag for tag in source["ai_tags"] if not tag.lstrip().lower().startswith("todo:")]
+        positive = {tag.strip().casefold() for tag in tags}
+        # Vision 由来の旧説明は構造再同期で更新されないため、混在させない。
+        current = dict(source, ai_tags=tags, natural_language_description=", ".join(tags),
+                       outfit_features=[], silhouette_notes={})
+        for key in ("negative_visuals", "negative_keywords"):
+            current[key] = [item for item in source.get(key) or [] if item.strip().casefold() not in positive]
+        current["prompt_export"] = ", ".join(tags)
+        current["negative_prompt_export"] = ", ".join(current["negative_visuals"])
+        forms[form] = current
+    return {**hints, "common": common, "forms": forms}
+
+
 def _sanitize_natural_language_description(text: Any) -> str:
     """翻訳指示のメタ文言を除去し、モデルに渡す説明文を安定化する。"""
     if not isinstance(text, str):
@@ -1526,12 +1554,13 @@ def resolve_badge(
     if text.isdigit():
         return int(text)
     try:
-        records = get_characters(manifest_path)
+        records = load_manifest(manifest_path)
     except (OSError, json.JSONDecodeError):
         return text
     hits = [r for r in records
-            if str((r.get("data") or {}).get("Num_Badge") or "").lower() == text.lower()]
-    hits.sort(key=lambda r: r.get("work_key") != work_key)  # 指定作品を優先
+            if r.get("_type") == "character" and r.get("work_key") == work_key
+            and not str(r.get("db_source") or "").replace("\\", "/").startswith("data/References/")
+            and str((r.get("data") or {}).get("Num_Badge") or "").lower() == text.lower()]
     return (hits[0].get("data") or {}).get("Num", text) if hits else text
 
 
@@ -1551,11 +1580,17 @@ def find_character(
     """
     num = resolve_badge(num, work_key, manifest_path)
     target: dict[str, Any] | None = None
-    for r in get_characters(manifest_path):
+    # 列挙用の許可フィルタを通すと、拒否/制作途中のレコードが API 経路へ抜けてしまう。
+    for r in load_manifest(manifest_path):
         data = r.get("data", {})
-        if r.get("work_key") == work_key and _num_matches(data.get("Num"), num):
+        if (r.get("_type") == "character" and r.get("work_key") == work_key
+                and not str(r.get("db_source") or "").replace("\\", "/").startswith("data/References/")
+                and _num_matches(data.get("Num"), num)):
             target = r
             break
+
+    if target is not None and ai_training_axis(target) == "rights":
+        return target
 
     # ── pkg/python 経由で原典 DB レコードを取得してマージ ──
     db_record = _fetch_db_record_via_creations_db_pkg(num=num, work_key=work_key)
@@ -1876,7 +1911,7 @@ def _extract_number_print_spec(record: dict[str, Any], form: str) -> list[str]:
     `ai_hints.forms.{form}.silhouette_notes.attached_items` / `outfit_features`
     から、番号関連のエントリだけを抽出する。重複排除済み。
     """
-    hints = record.get("ai_hints") or {}
+    hints = generation_ai_hints(record)
     common = hints.get("common") or {}
     form_data = (hints.get("forms") or {}).get(form) or {}
 
@@ -1893,6 +1928,7 @@ def _extract_number_print_spec(record: dict[str, Any], form: str) -> list[str]:
         common.get("identity_tags") or [],
         _filter_immutable_traits_by_form(common.get("immutable_traits") or [], form),
         form_data.get("outfit_features") or [],
+        form_data.get("ai_tags") or [],
     ):
         for item in source:
             if isinstance(item, str):
@@ -2989,7 +3025,7 @@ def _build_form_common_dataset_block(
 
 def build_novelai_prompt(record: dict[str, Any], form: str = "corefolder") -> dict[str, str]:
     """NovelAI / Stable Diffusion 用のポジティブ・ネガティブプロンプトを返す。"""
-    hints = record.get("ai_hints") or {}
+    hints = generation_ai_hints(record)
     form_data = (hints.get("forms") or {}).get(form) or {}
     return {
         "positive": form_data.get("prompt_export", ""),
@@ -3008,7 +3044,7 @@ def build_dalle_prompt(
     field_overrides: dict[str, str] | None = None,
 ) -> str:
     """DALL-E / ChatGPT 用の自然文プロンプトを返す。"""
-    hints = record.get("ai_hints") or {}
+    hints = generation_ai_hints(record)
     common = hints.get("common") or {}
     form_data = (hints.get("forms") or {}).get(form) or {}
     references = collect_reference_images(record, form=form)
@@ -3045,7 +3081,7 @@ def build_dalle_prompt(
     ]
     negative_visuals = ", ".join(negative_parts)
     ref_urls = ", ".join(references["urls"])
-    if form == "corefolder":
+    if form == "corefolder" and not form_data.get("ai_tags"):
         current_form_description = _sanitize_corefolder_form_description(
             form_data.get("natural_language_description", "")
         )
@@ -3079,8 +3115,7 @@ def build_dalle_prompt(
             "- humanoid 形態として描く\n"
             "- corefolder 装備を混入しない\n"
             "- 私服寄りの表現を優先する\n"
-            "- 腕は必ず 2 本、手は 2 つ（余分な腕・手を描かない）\n"
-            "- 尾は枝分かれを含めて·合計 7 本·を守る（定義以上も以下も描かない）"
+            "- 腕は必ず 2 本、手は 2 つ（余分な腕・手を描かない）"
         )
     if form_immutable_constraints:
         form_lock += "\n" + "\n".join(
@@ -3126,7 +3161,7 @@ def build_dalle_prompt(
     # 別形態由来のセクションは「抽象表現」のみとし、具体的な衣装単語をプロンプトに露出しない。
     # （拡散モデルは否定語より「具体名のチラ見せ」に引きずられやすいため）
     if form == "corefolder":
-        cross_form_block = "- humanoid 形態由来の衣装・人型体型・髪型を一切混入しない"
+        cross_form_block = "- 対象形態の AIHints にない humanoid 衣装・人型体型を混入しない"
     else:
         cross_form_block = "- corefolder 形態由来の球体コア・ハーネス・フードを一切混入しない"
 
@@ -3145,7 +3180,7 @@ def build_dalle_prompt(
 
     # [素体特徴] — manifest が空なら db_record["AIHints"] → silhouette_features の順でフォールバック
     _body_nld = _sanitize_natural_language_description(common.get('natural_language_description', ''))
-    if not _body_nld:
+    if not _body_nld and not form_data.get("ai_tags"):
         _db_ai_common = ((record.get("db_record") or {}).get("AIHints") or {}).get("common") or {}
         _body_nld = _sanitize_natural_language_description(_db_ai_common.get('natural_language_description', ''))
     if not _body_nld:
@@ -3192,7 +3227,7 @@ def build_gemini_prompt(
     field_overrides: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Gemini / Imagen 用のプロンプトと参照画像 URL を返す。"""
-    hints = record.get("ai_hints") or {}
+    hints = generation_ai_hints(record)
     common = hints.get("common") or {}
     form_data = (hints.get("forms") or {}).get(form) or {}
     references = collect_reference_images(record, form=form)
@@ -3235,7 +3270,7 @@ def build_gemini_prompt(
         ]
     )
     ref_urls = "\n".join(f"- {u}" for u in references["urls"])
-    if form == "corefolder":
+    if form == "corefolder" and not form_data.get("ai_tags"):
         current_form_description = _sanitize_corefolder_form_description(
             form_data.get("natural_language_description", "")
         )
@@ -3265,14 +3300,13 @@ def build_gemini_prompt(
             "- humanoid 形態由来の要素に一切寄せないこと\n"
             "- 人型の腕・手・脚・足を描かないこと（非人型シルエットを維持）"
         )
-        cross_form_block = "- humanoid 形態由来の衣装・人型体型・髪型を一切混入しない"
+        cross_form_block = "- 対象形態の AIHints にない humanoid 衣装・人型体型を混入しない"
     else:
         form_lock = (
             "- 必ず humanoid 形態として描くこと\n"
             "- corefolder 装備（harness/hoodie）を混入させないこと\n"
             "- 私服寄りの humanoid 表現を優先すること\n"
-            "- 腕は 2 本、手は 2 つで固定し、余分な腕を描かないこと\n"
-            "- 尾は枝分かれを含めて·合計 7 本·を守る（それ以上も以下も描かない）"
+            "- 腕は 2 本、手は 2 つで固定し、余分な腕を描かないこと"
         )
         cross_form_block = "- corefolder 形態由来の球体コア・ハーネス・フードを一切混入しない"
     if form_immutable_constraints:
@@ -3330,7 +3364,7 @@ def build_gemini_prompt(
 
     # [素体特徴] — manifest が空なら db_record["AIHints"] → silhouette_features の順でフォールバック
     _body_nld = _sanitize_natural_language_description(common.get('natural_language_description', ''))
-    if not _body_nld:
+    if not _body_nld and not form_data.get("ai_tags"):
         _db_ai_common = ((record.get("db_record") or {}).get("AIHints") or {}).get("common") or {}
         _body_nld = _sanitize_natural_language_description(_db_ai_common.get('natural_language_description', ''))
     if not _body_nld:

@@ -218,6 +218,7 @@ PowerShell で `npm test` が解決できない環境では `npm.cmd test` を�
 ### Stage 2 のデザイン参照と確認待ち
 
 - 特徴情報は CreationsAI の AIHints 文面を正典とし、利用許可された公式 DB 設定画像の観察を補助に使う。画像観察で AIHints を上書きしない。
+- 形態別 `ai_tags` がある場合は生成用文面で優先し、旧衣装・形状説明との混在を避ける。Stage 2 の `run_meta.json` は原文を `ai_hints`、生成用文面を `generation_ai_hints` に記録する（詳細は [docs/output-and-logs.md](docs/output-and-logs.md)）。
 - 部位画像の追跡には `stage2_db/db_summary.json` の `character_spec`（番号仕様・部位仕様・部位図パス）と観察の `sources` を確認する。各フィールドは [docs/output-and-logs.md](docs/output-and-logs.md#stage-2-画像観察ログ) を参照。
 - Stage 2 の観察を Stage 3 のラフ生成と Stage 4 の検査に渡す。観察失敗時はラフ生成前に停止し、理由を表示して利用者に続行/中止を確認する。
 - 利用者が明示的に続行を選んだ場合だけ、AIHints と既存参照画像へフォールバックする。無回答・期限切れは承認ではない。権利軸の拒否はこの確認で解除できない。

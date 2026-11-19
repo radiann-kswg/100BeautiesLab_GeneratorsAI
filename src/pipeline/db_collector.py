@@ -32,6 +32,7 @@ from src.utils.dataset import (  # noqa: E402
     _build_number_print_block,
     build_appearance_detail_block,
     is_detail_reference,
+    generation_ai_hints,
 )
 from src.pipeline.design_reference import collect_design_reference
 
@@ -102,7 +103,7 @@ def collect_character_data(
 
 def _build_character_spec(record: dict, form: str) -> dict:
     """形態別の違反検出・修正指示用スペックを構築する。"""
-    hints = record.get("ai_hints") or {}
+    hints = generation_ai_hints(record)
     common = hints.get("common") or {}
     form_data = (hints.get("forms") or {}).get(form) or {}
 
@@ -113,7 +114,6 @@ def _build_character_spec(record: dict, form: str) -> dict:
             "human legs or feet",
             "standing bipedal human body shape",
             "clothed human torso",
-            "human hair visible on spherical body",
         ]
         correction_instruction = (
             "このキャラクターはコアフォルダ形態 (球体型の小動物ロボット) です。\n"
@@ -143,6 +143,7 @@ def _build_character_spec(record: dict, form: str) -> dict:
             common.get("immutable_traits") or [], form
         ),
         "form_tags": form_data.get("form_tags") or [],
+        "ai_tags": form_data.get("ai_tags") or [],
         "negative_keywords": form_data.get("negative_keywords") or [],
         "color_palette": extract_color_palette(record, form),
         "violation_features": violation_features,
