@@ -31,13 +31,16 @@
 #>
 [CmdletBinding()]
 param(
-    [switch]$DryRun
+    [switch]$DryRun,
+    # 既定は本スクリプトの親 (GeneratorsAI)。ShapeChangerAI など他リポジトリにも流用できる
+    [string]$RepoRoot,
+    [string]$Branch = 'develop'
 )
 
 $ErrorActionPreference = 'Stop'
 
-# --- リポジトリルートを解決 (このスクリプトは scripts/ 配下にある想定) ---
-$RepoRoot = Split-Path -Parent $PSScriptRoot
+# PS 5.1 は param 既定値の評価時に $PSScriptRoot が空なので本体で解決する
+if (-not $RepoRoot) { $RepoRoot = Split-Path -Parent $PSScriptRoot }
 Set-Location $RepoRoot
 
 # git は成功時にも stderr へ出力する (例: "Already on 'master'", "Previous HEAD position was ...")。
@@ -59,6 +62,13 @@ function Invoke-Git {
 
 if (-not (Test-Path (Join-Path $RepoRoot '.git'))) {
     Write-Error "git リポジトリが見つかりません: $RepoRoot"
+    exit 1
+}
+
+# 追従コミットは develop 上でのみ行う (master / 作業ブランチへの誤コミット防止)
+$curBranch = (Invoke-Git @('symbolic-ref', '--short', 'HEAD')).Output
+if ($curBranch -ne $Branch) {
+    Write-Error "現在のブランチが '$curBranch' です。'$Branch' をチェックアウトしてから実行してください。"
     exit 1
 }
 
@@ -235,19 +245,24 @@ if ($DryRun) {
 Write-Host "`nログ生成: $logPath" -ForegroundColor Green
 
 # --- コミット (push なし) ---
-$addResult = Invoke-Git @('add', '-A')
+# add -A だと作業中の未コミット変更 (他エージェントの編集など) まで巻き込むため、
+# トップレベルのサブモジュール gitlink と当日ログだけをステージする
+$topLevel = @($submodules | Where-Object { $p = $_.Path; -not ($submodules | Where-Object { $p.StartsWith($_.Path + '/') }) } | ForEach-Object { $_.Path })
+$addResult = Invoke-Git (@('add', '--') + $topLevel + @($logPath))
 if ($addResult.ExitCode -ne 0) {
     Write-Error ("git add 失敗: {0}" -f $addResult.Output)
     exit 1
 }
-$staged = (Invoke-Git @('diff', '--cached', '--name-only')).Output
+$commitPaths = $topLevel + @($logPath)
+$staged = (Invoke-Git (@('diff', '--cached', '--name-only', '--') + $commitPaths)).Output
 if (-not $staged) {
     Write-Host "コミット対象なし。終了します。"
     exit 0
 }
 
 $msg = "chore: サブモジュール更新に追従しログ生成 ($today)`n`n" + (($results | ForEach-Object { "- $($_.Name): $($_.Action) ($($_.Reason))" }) -join "`n") + "`n- push なし"
-$commitResult = Invoke-Git @('commit', '-m', $msg)
+# パス指定コミットで、事前に他者がステージしていた変更を混ぜない
+$commitResult = Invoke-Git (@('commit', '-m', $msg, '--') + $commitPaths)
 if ($commitResult.ExitCode -ne 0) {
     Write-Error ("git commit 失敗: {0}" -f $commitResult.Output)
     exit 1
