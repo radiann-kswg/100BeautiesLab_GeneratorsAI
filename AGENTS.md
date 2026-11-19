@@ -295,7 +295,11 @@ git -C _creations-ai submodule update --remote creations-db
 ```
 
 - 追跡ブランチはルート [`.gitmodules`](.gitmodules) に明示している（`_creations-ai` = `master` / `_creations-ai/creations-db` = `addon-ai-tag`）。ネストの `creations-db` もルートに登録済みのため、`--remote` 系の更新と [`scripts/daily-submodule-sync.ps1`](scripts/daily-submodule-sync.ps1) は両方を追跡ブランチ基準で FF 判定・同期する。
-- 毎朝の自動同期は `scripts/daily-submodule-sync.ps1`（Windows 実機・タスクスケジューラ登録）。fetch → FF 判定 → 取り込み → `_tasks/{YYYYMMDD}_submodule-sync.md` へログ生成 → コミット（push はしない）まで行う。取り込み前の確認は `-DryRun` を付けて実行する。
+- 毎朝の自動同期は claude.ai のクラウドルーチン `SubmoduleSync-DryRun-Daily`（毎日 06:00 JST、本リポジトリと ShapeChangerAI が対象。名前は旧来のままだが読み取り専用ではない）が担う。
+  1. `develop` でトップレベルのサブモジュールを追跡ブランチへ FF 取り込み（非 FF はスキップして報告）。
+  2. 更新があれば `_tasks/{YYYYMMDD}_submodule-sync.md` に進捗を追記しながら `src/`・`tests/`・`docs/` を機能適応し、テスト後に `develop` へコミット・push する。
+  3. `develop` の累積変更量（既定ブランチとの merge-base 比）が **サブモジュール側 500 行以上** または **本体側 200 行以上**（gitlink と `_tasks/` は除外）になったら、`ponytail:ponytail-review` 相当のレビューを経て `develop` からワークツリーで `pr/develop-sync-{YYYYMMDD}` ブランチを push し、既定ブランチ（本リポジトリは `master`）へ PR を作る。マージは人が行う。
+- 実機での手動同期は [`scripts/daily-submodule-sync.ps1`](scripts/daily-submodule-sync.ps1)（`develop` 以外では中断、gitlink と当日ログのみコミット、push なし。取り込み前の確認は `-DryRun`）、累積量の確認は [`scripts/check-develop-pr-threshold.ps1`](scripts/check-develop-pr-threshold.ps1)（閾値到達で exit 10）。旧 Windows タスク `100BeautiesLab_SubmoduleSync` はクラウドルーチンと `develop` が食い違うため無効化済み。
 
 サブモジュール更新後は、参照先仕様差分が `src/` 側のプロンプト生成ロジックに影響しないか確認する。確認結果は同期ログ（`_tasks/{YYYYMMDD}_submodule-sync.md`）の「最適化メモ」へ追記し、追従が不要だった場合もその判定根拠を残す。
 
