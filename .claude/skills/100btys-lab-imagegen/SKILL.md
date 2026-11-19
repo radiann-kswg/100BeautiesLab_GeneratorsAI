@@ -1,10 +1,10 @@
 ---
-name: numbertales-imagegen
-description: ナンバーテールズ（百花繚乱研究所の一次創作）のキャラクター画像を、このリポジトリのマルチLLM画像生成パイプライン (src.pipeline.image_pipeline) で生成・改稿するためのスキル。ユーザーが「57をコアフォルダで生成して」「図書館シーンの絵を作って」「前回の画像の表情だけ直して」「25と57を並べて」のようにナンバーテールズの作画を依頼したときに使用する。自然文リクエスト・キャラ番号指定・i2i改稿・合同/バッチ生成・出力ログ規則・不変特徴やNCライセンスの遵守を扱う。画像生成プロンプトの組み立てと検証もこのスキルの範囲。パーソナル/プロジェクトいずれのスキルとしても、任意のcwdから実行できる。
+name: 100btys-lab-imagegen
+description: 百花繚乱研究所の一次創作（ナンバーテールズ・獣爾騎兵・豹変系女子）のキャラクター画像を、このリポジトリのマルチLLM画像生成パイプライン (src.pipeline.image_pipeline) で生成・改稿するためのスキル。ユーザーが「57をコアフォルダで生成して」「図書館シーンの絵を作って」「前回の画像の表情だけ直して」「25と57を並べて」「SAR-EZ1を訓練場のシーンで」のように作画を依頼したときに使用する。自然文リクエスト・キャラ番号指定・i2i改稿・合同/バッチ生成・出力ログ規則・不変特徴やNCライセンスの遵守を扱う。画像生成プロンプトの組み立てと検証もこのスキルの範囲。パーソナル/プロジェクトいずれのスキルとしても、任意のcwdから実行できる。
 license: CC BY-NC 4.0 (Copyright RadianN_kswg). 商用利用の誘導は禁止。
 ---
 
-# ナンバーテールズ 画像生成スキル
+# 百花繚乱研究所 画像生成スキル
 
 ## 概要
 
@@ -208,14 +208,14 @@ NT_MODULE=src.batch_generate ./bin/ntimg.sh --nums 15,22,49,57 --forms both --pr
 
 ## 常に最新で使うために（配布形態）
 
-- **スキル実体（正本）はリポジトリ内 `.agents/skills/numbertales-imagegen/`。**
-  `.claude/skills/numbertales-imagegen/` は `scripts/sync-agent-skills.ps1` が作る**生成ミラー**なので直接編集しない。
+- **スキル実体（正本）はリポジトリ内 `.agents/skills/100btys-lab-imagegen/`。**
+  `.claude/skills/100btys-lab-imagegen/` は `scripts/sync-agent-skills.ps1` が作る**生成ミラー**なので直接編集しない。
 - **推奨: ジャンクション方式**（`install-personal-skill.ps1`）。正本をミラーへ同期したうえで、
-  `~/.claude/skills/numbertales-imagegen` からジャンクションを張る。
+  `~/.claude/skills/100btys-lab-imagegen` からジャンクションを張る。
   `git pull` でリポジトリが更新されると、パーソナルスキルにも即反映される（= どの環境でも最新）。
 - **.skill パッケージ**（`build-skill-package.ps1`）はリポジトリのスナップショット。
   リポジトリを持たない環境への配布用。最新追従はしないので、更新時は再ビルド/再インストールする。
-  生成物 `numbertales-imagegen.skill` は `repo_path.txt` を含まないため、設置先で `NUMBERTALES_REPO`
+  生成物 `100btys-lab-imagegen.skill` は `repo_path.txt` を含まないため、設置先で `NUMBERTALES_REPO`
   もしくは配置位置から repo を解決する。
 
 ---

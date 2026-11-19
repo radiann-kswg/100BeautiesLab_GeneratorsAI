@@ -4,7 +4,7 @@
 
 ## 確認した現状
 
-- `.agents/skills/numbertales-imagegen/` は既に Codex が読む正本。Claude 専用ではない。
+- `.agents/skills/100btys-lab-imagegen/` は既に Codex が読む正本。Claude 専用ではない。
 - `src/mcp_server/server.py` は FastMCP の stdio / Streamable HTTP を公開し、生成開始とジョブ照会を分離している。GPT 用に生成本体を複製する必要はない。
 - `src/pipeline/db_collector.py` が DB の不変特徴・配色と形態別参照画像を収集する。
 - `src/pipeline/correction_generator.py` の `_analyze_rough_with_openai()` は生成画像と公式画像を Vision で比較し、欠落・蛇足・左右反転を検査する。

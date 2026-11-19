@@ -14,7 +14,7 @@ GPT Codex 導入に伴って追加されました。
 .agents/
   README.md
   skills/
-    numbertales-imagegen/    ← 作画支援スキルの正本（実体）
+    100btys-lab-imagegen/    ← 作画支援スキルの正本（実体）
 ```
 
 ## スキルの正本とミラー

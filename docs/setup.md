@@ -180,7 +180,7 @@ MANIFEST_PATH=                          # manifest.jsonl の上書き。未設�
 > `load_manifest` は cwd ではなく `PROJECT_ROOT` 基準で `manifest.jsonl` を探すため、
 > リポジトリルート以外から実行しても動く。ランチャー (`bin/ntimg.ps1` / `bin/ntimg.sh`) は
 > `PROJECT_ROOT` / `PYTHONPATH` を自動設定する。詳細は
-> [`.claude/skills/numbertales-imagegen/REFERENCE.md`](../.claude/skills/numbertales-imagegen/REFERENCE.md)。
+> [`.claude/skills/100btys-lab-imagegen/REFERENCE.md`](../.claude/skills/100btys-lab-imagegen/REFERENCE.md)。
 
 ### プロバイダ別の鍵メモ
 

@@ -1,4 +1,4 @@
-﻿# ntimg.ps1 — numbertales-imagegen launcher (Windows / 実機のローカル CLI エージェント)
+﻿# ntimg.ps1 — 100btys-lab-imagegen launcher (Windows / 実機のローカル CLI エージェント)
 #
 # 役割: パーソナルスキルが任意の cwd から呼ばれても、リポジトリルートを
 #       自動解決して image_pipeline などを実行できるようにするラッパー。
@@ -30,7 +30,7 @@ function Test-RepoRoot([string]$path) {
     return Test-Path (Join-Path $path 'src\pipeline\image_pipeline.py')
 }
 
-$skillRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path   # numbertales-imagegen\
+$skillRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path   # 100btys-lab-imagegen\
 $repo = $null
 
 # 1) 環境変数 NUMBERTALES_REPO

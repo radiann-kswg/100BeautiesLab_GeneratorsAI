@@ -26,8 +26,8 @@
 - ファイル探索・編集は Claude Code のツール（Read / Grep / Glob / Edit 等）を優先する。
 - PowerShell 環境で `npm test` が解決できない場合は `npm.cmd test` を使う。
 - 課金を伴う生成（`src.pipeline.*` / `src.batch_generate`）は、バッチなら `--dry-run` を先に実行し RUN/SKIP 予定を先輩へ共有してから本番実行する。
-- 作画依頼では `numbertales-imagegen` スキルを使う。Claude Code は `.claude/skills/` から読むが、**そこは生成ミラー**。
-  スキルを直すときは正本 [.agents/skills/numbertales-imagegen/](.agents/skills/numbertales-imagegen/) を編集し、
+- 作画依頼では `100btys-lab-imagegen` スキルを使う。Claude Code は `.claude/skills/` から読むが、**そこは生成ミラー**。
+  スキルを直すときは正本 [.agents/skills/100btys-lab-imagegen/](.agents/skills/100btys-lab-imagegen/) を編集し、
   `powershell -ExecutionPolicy Bypass -File scripts\sync-agent-skills.ps1 -Apply` で反映すること。
 - 共通の実行コマンド・出力規則・禁止事項などは [AGENTS.md](AGENTS.md) を参照（本ファイルには再掲しない）。
 

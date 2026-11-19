@@ -1,4 +1,4 @@
-# REFERENCE — numbertales-imagegen
+# REFERENCE — 100btys-lab-imagegen
 
 `src.pipeline.image_pipeline` / `src.batch_generate` の詳細リファレンス。
 正本は `docs/usage-generation.md` / `docs/usage-iterate.md` / `docs/output-and-logs.md`。
@@ -168,12 +168,12 @@ NT_MODULE=src.tools.migrate_output_layout ./bin/ntimg.sh
 ### 6.1 ジャンクション方式（推奨・常に最新）
 
 ```powershell
-# .agents/skills/numbertales-imagegen/（正本）から実行
+# .agents/skills/100btys-lab-imagegen/（正本）から実行
 ./install-personal-skill.ps1
 ```
-- リポジトリ内 `.agents/skills/numbertales-imagegen/` を**正本**とし、
-  `.claude/skills/numbertales-imagegen/` へミラー同期したうえで、
-  `~/.claude/skills/numbertales-imagegen` からジャンクションを張る。
+- リポジトリ内 `.agents/skills/100btys-lab-imagegen/` を**正本**とし、
+  `.claude/skills/100btys-lab-imagegen/` へミラー同期したうえで、
+  `~/.claude/skills/100btys-lab-imagegen` からジャンクションを張る。
 - `repo_path.txt`（= ライブリポジトリの絶対パス）を自動生成。`.gitignore` 済み（機種固有）。
 - `git pull` でスキル本体・ランチャーが自動更新される。
 - 有効化: Settings > Capabilities で Code execution を ON にし、スキル一覧で本スキルを ON。
@@ -181,7 +181,7 @@ NT_MODULE=src.tools.migrate_output_layout ./bin/ntimg.sh
 ### 6.2 .skill パッケージ方式（スナップショット配布）
 
 ```powershell
-./build-skill-package.ps1                 # リポジトリ直下に numbertales-imagegen.skill を出力
+./build-skill-package.ps1                 # リポジトリ直下に 100btys-lab-imagegen.skill を出力
 ./build-skill-package.ps1 -OutDir C:\tmp  # 出力先指定
 ```
 - `repo_path.txt` は除外される。設置先では `NUMBERTALES_REPO` か配置位置から repo を解決。
@@ -191,7 +191,7 @@ NT_MODULE=src.tools.migrate_output_layout ./bin/ntimg.sh
 ### 6.3 ディレクトリ構成
 
 ```
-.agents/skills/numbertales-imagegen/     ← 正本（Codex がプロジェクトスキルとして読む）
+.agents/skills/100btys-lab-imagegen/     ← 正本（Codex がプロジェクトスキルとして読む）
   SKILL.md
   REFERENCE.md
   INSTALL.md
@@ -202,7 +202,7 @@ NT_MODULE=src.tools.migrate_output_layout ./bin/ntimg.sh
     ntimg.sh
   repo_path.txt        ← install 時に生成（gitignore / 配布から除外）
 
-.claude/skills/numbertales-imagegen/     ← 生成ミラー（Claude Code / Cowork 用・直接編集しない）
+.claude/skills/100btys-lab-imagegen/     ← 生成ミラー（Claude Code / Cowork 用・直接編集しない）
 ```
 
 同期は [`scripts/sync-agent-skills.ps1`](../../../scripts/sync-agent-skills.ps1) が担当する。

@@ -578,10 +578,10 @@ Cloud Run 上の MCP サーバは `numbertales_refresh_canva_token` ツールを
 
 ---
 
-## パーソナルスキル `numbertales-imagegen`
+## パーソナルスキル `100btys-lab-imagegen`
 
 `image_pipeline` / `batch_generate` を自然文依頼から実行するためのスキル一式。
-実体は [.claude/skills/numbertales-imagegen/](../.claude/skills/numbertales-imagegen/) にあり、
+実体は [.claude/skills/100btys-lab-imagegen/](../.claude/skills/100btys-lab-imagegen/) にあり、
 デスクトップ版 Claude / Claude Code / Cowork のいずれからでも、**任意の cwd から**実行できる。
 
 - ランチャー (パス非依存): `bin/ntimg.ps1`(Windows) / `bin/ntimg.sh`(bash・macOS・Cowork)。
@@ -593,8 +593,8 @@ Cloud Run 上の MCP サーバは `numbertales_refresh_canva_token` ツールを
 - インストール(常に最新): `install-personal-skill.ps1` がリポジトリ内実体への
   ジャンクションを `~/.claude/skills/` に張る。`git pull` で全環境が最新化される。
   `repo_path.txt`(機種固有・`.gitignore` 済み)も自動生成。
-- 配布(スナップショット): `build-skill-package.ps1` が `numbertales-imagegen.skill`(zip)を生成。
+- 配布(スナップショット): `build-skill-package.ps1` が `100btys-lab-imagegen.skill`(zip)を生成。
   `repo_path.txt` は除外され、設置先で `NUMBERTALES_REPO`/配置位置から repo を解決する。
-- 詳細: [.claude/skills/numbertales-imagegen/REFERENCE.md](../.claude/skills/numbertales-imagegen/REFERENCE.md)
+- 詳細: [.claude/skills/100btys-lab-imagegen/REFERENCE.md](../.claude/skills/100btys-lab-imagegen/REFERENCE.md)
 - 関連 src 変更: `load_manifest` を `PROJECT_ROOT` 基準に変更し cwd 非依存化
   ([src/utils/dataset.py](../src/utils/dataset.py))。

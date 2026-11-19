@@ -67,15 +67,15 @@ Codex は `AGENTS.md` をネイティブに読むため、そこを起点に固�
 
 ## 3. スキルの正本とミラー
 
-作画支援スキル `numbertales-imagegen` も同じ思想で配置しています。
+作画支援スキル `100btys-lab-imagegen` も同じ思想で配置しています。
 設定書が「中立な `AGENTS.md` が正典 / ツール別ファイルは薄い設定書」なのと対称に、
 スキルも「中立な `.agents/` が正本 / ツール別ディレクトリはミラー」です。
 
 | パス | 位置づけ | 読むエージェント |
 |---|---|---|
-| [`.agents/skills/numbertales-imagegen/`](../.agents/skills/numbertales-imagegen/) | **正本（実体）。編集はここ** | GPT Codex（プロジェクトスキル） |
-| `.claude/skills/numbertales-imagegen/` | **生成ミラー。直接編集しない** | Claude Code / Cowork |
-| `~/.claude/skills/numbertales-imagegen` | ジャンクション | Claude パーソナルスキル |
+| [`.agents/skills/100btys-lab-imagegen/`](../.agents/skills/100btys-lab-imagegen/) | **正本（実体）。編集はここ** | GPT Codex（プロジェクトスキル） |
+| `.claude/skills/100btys-lab-imagegen/` | **生成ミラー。直接編集しない** | Claude Code / Cowork |
+| `~/.claude/skills/100btys-lab-imagegen` | ジャンクション | Claude パーソナルスキル |
 
 ### 同期コマンド
 
@@ -95,7 +95,7 @@ powershell -ExecutionPolicy Bypass -File scripts\sync-agent-skills.ps1 -Apply
 ### インストール（パーソナルスキル化）
 
 ```powershell
-cd .agents\skills\numbertales-imagegen
+cd .agents\skills\100btys-lab-imagegen
 ./install-personal-skill.ps1
 ```
 
@@ -144,7 +144,7 @@ Codex のローカルスキルと、Codex / ChatGPT Web から共通 MCP を使�
 Stage 2 の画像観察失敗は自動続行せず、利用者への確認を要する。
 非対話のローカル実行では分割 CLI を使い、同じ run に回答して再開する。
 
-Claude で使っている共通設定は `AGENTS.md`、作画スキルは `.agents/skills/numbertales-imagegen/` が正本。
+Claude で使っている共通設定は `AGENTS.md`、作画スキルは `.agents/skills/100btys-lab-imagegen/` が正本。
 Codex では `AGENTS.md` → `CODEX.md` → この節の順に確認する。
 Claude 固有のツール設定をコピーする必要はない。
 
@@ -152,7 +152,7 @@ Claude 固有のツール設定をコピーする必要はない。
 
 | 確認対象 | 参照先 |
 |---|---|
-| 作画の依頼解釈・実行手順 | [SKILL.md](../.agents/skills/numbertales-imagegen/SKILL.md)、[REFERENCE.md](../.agents/skills/numbertales-imagegen/REFERENCE.md) |
+| 作画の依頼解釈・実行手順 | [SKILL.md](../.agents/skills/100btys-lab-imagegen/SKILL.md)、[REFERENCE.md](../.agents/skills/100btys-lab-imagegen/REFERENCE.md) |
 | Stage 1〜5 の呼び出しと CLI | [image_pipeline.py](../src/pipeline/image_pipeline.py) |
 | ステージ分割実行 | [stage_cli.py](../src/pipeline/stage_cli.py) |
 | キャラクター選定・生成可否 | [dataset.py](../src/utils/dataset.py) |
@@ -189,7 +189,7 @@ DB API へフォールバックするため、完全オフラインの確認で�
 ```powershell
 $env:PYTHONUTF8 = '1'
 . ./.venv/Scripts/Activate.ps1
-& ./.agents/skills/numbertales-imagegen/bin/ntimg.ps1 --help
+& ./.agents/skills/100btys-lab-imagegen/bin/ntimg.ps1 --help
 ```
 
 既存の生成結果を確認するときは、対象 run の `pipeline_summary.json`、`run_meta.json`、`prompt.txt`、
