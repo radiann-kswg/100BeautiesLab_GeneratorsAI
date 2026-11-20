@@ -75,3 +75,10 @@ AGENTS.md                                          |   12 +
 - 61 の扱い: 索引に戻った 61 の部位図は、通常衣装の項目が宣言する番号図・紋章と、尻尾ユニット。アイドル衣装の項目と画像 3 枚は、manifest にも索引にも無いまま。
 - テスト結果: `tests/` の 128 件がすべて成功（Windows 実機、`PYTHONUTF8=1`、API キーは空、`OUTPUT_SINK=local`）。上の「未解決の影響」に書いた `tests/test_detail_references.py` の 15 件の失敗は解消した。
 - 残ること: どのレコードも実名で宣言していない 10 件（`tailsUnit` の 7 件、28 の `earingBack`、SelfSecondary の `223-lot`・`753-lot`）は索引に載らない。使うには上流で宣言を足す（[CreationsAI #4](https://github.com/radiann-kswg/100BeautiesLab_CreationsAI/issues/4) のコメント）。
+
+### 再同期その 2（2026-11-20 17:50、上流の追い込みの取り込み）
+
+- 差分把握: `_creations-ai` `64e951c..964cd5c`（creations-db `f2d10b1..f517d18`）。上流が、どのレコードも実名で宣言していなかった部位図 10 件に宣言を足した（`TailsUnit_PNGName` 7 件: 2B・5・50・58・63・75・87、28 の `earingBack`、SelfSecondary の 223・753 のロットマーク）。`image-index.json` は 600 件から 610 件、`attr/` 配下は 130 件から 140 件。あわせて、この 10 レコードの AIHints が構造的再同期で更新され、223・753 は AIHints を新しく持った。
+- 影響判定: 追加だけで、レコードの増減・許可件数（187 件）・索引からの削除は無い。61 のアイドル衣装の画像は索引に無いまま。コード変更は要らない。`collect_reference_images()` で、28 の `earingBack`、2B・5・58 の尻尾ユニット、223・753 のロットマークが参照に入ることを確かめた。
+- テスト結果: `tests/` の 128 件がすべて成功（条件は上と同じ）。
+- 上の「残ること」に書いた未宣言 10 件は、これで解消した。
