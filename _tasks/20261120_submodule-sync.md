@@ -65,5 +65,5 @@ AGENTS.md                                          |   12 +
 - 差分把握: `_creations-ai` `b7ccb20..6f5b37d`（creations-db `688a349..f2d10b1`）。manifest に `AppearanceDetail[].Detachable`、`Formation` の `afterChanged`・`normal`・`beasted`、`Costume` の `onBusiness`・`private`・`jacketless` が届いた。D-Vines の 4 件は不許可になり、61 のアイドル衣装の項目と画像は無くなった（許可 191→187 件）。
 - **未解決の影響: 部位図（`AppearanceDetail[].img_PNGName`）が参照に入らなくなった。** CreationsAI `f037968`（AI オプトアウトの適用）から、`ai-dataset/image-index.json` が 763 件から 481 件に減り、`attr/` 配下は 144 件から 11 件になった。`attr_numberMarkNTS-93.png` などの部位図は、ファイルは `creations-db` にあるが索引に無い。`_collect_appearance_detail_images()` は索引に載った実名だけを通すので、空を返す。
 - テスト結果: `tests/test_detail_references.py` の 15 件が失敗、ほかの 104 件は成功（Windows 実機、`PYTHONUTF8=1`、API キーは空）。
-- 判断待ち: 索引から外れたのが権利上の意図（宣言の無い画像は渡さない）なのか、`img_PNGName` を宣言として数えていない取りこぼしなのかを、上流（CreationsAI）に確かめる。意図が分かるまで、下流で `creations-db` のパスを直接たどる回避はしない（索引は AI に渡してよい画像の正典）。テストも書き換えていない。
+- 上流へ依頼済み: 意図しない除外だった（2026-11-20 ラジアン確認）。`attr` 画像を AI オプトアウトの対象にしないよう、[CreationsAI #4](https://github.com/radiann-kswg/100BeautiesLab_CreationsAI/issues/4) を立てた。原因は、許可の一覧が `Images.*` と `TailsUnit` の宣言だけから作られ、`img_PNGName` が宣言に数えられていないこと。上流の修正と再生成のあとに同期し直す。それまで、下流で `creations-db` のパスを直接たどる回避はしない（索引は AI に渡してよい画像の正典）。テストも書き換えていない。
 - `state`・`Costume`・`Detachable` の追従（実装の順番の 2 番）は、ShapeChangerAI だけ済んだ。このリポジトリは未着手。

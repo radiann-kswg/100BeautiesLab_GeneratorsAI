@@ -5,6 +5,8 @@ Copyright © RadianN_kswg — CC BY-NC 4.0
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import json
 import importlib
 import os
@@ -139,7 +141,8 @@ def _vocab_tail(token: Any) -> str:
     return str(token).split("_", 1)[-1].lstrip("#") if token else ""
 
 
-def _format_appearance_detail_entry(entry: dict) -> str:
+def _format_appearance_detail_entry(entry: dict, drawn: tuple[str, ...] = ()) -> str:
+    """``drawn`` は名前で選んだ状態。空なら既定の状態（``_DEFAULT_STATES``）を描く。"""
     head = " / ".join(filter(None, (
         ", ".join(_vocab_tail(b) for b in entry.get("BodyPart") or []),
         _vocab_tail(entry.get("Laterality")),
@@ -161,9 +164,10 @@ def _format_appearance_detail_entry(entry: dict) -> str:
     note = entry.get("Note_EN") or entry.get("Note_JP")
     img = entry.get("img_PNGName")
     state = entry.get("Formation")
-    if state not in (None, *_PIPELINE_FORMS, *_DEFAULT_STATES):
+    if state not in (None, *_PIPELINE_FORMS, *(drawn or _DEFAULT_STATES)):
         # 設定画には別状態も描かれている。捨てると観察・検査が通常の姿の特徴と取り違える。
-        head = f"[別状態 {state} だけの特徴。シーンがこの状態を指定した場合だけ描く] {head}"
+        rule = "今回の絵には描かない" if drawn else "シーンがこの状態を指定した場合だけ描く"
+        head = f"[別状態 {state} だけの特徴。{rule}] {head}"
     return (f"- {head}: " + "; ".join(values)
             + (f" ({note})" if note else "")
             + (f" [部位図: {img}]" if img else ""))
@@ -174,7 +178,9 @@ def build_appearance_detail_block(record: dict, form: str) -> str:
     プロンプトを数千字薄めるため、部位/左右/要素/属性値/注記/部位図名だけに圧縮する。"""
     entries = appearance_details_for_form(record, form)
     if not entries:
-        return ""
+        return _state_block(record, form)
+    selected = (record.get("_selection") or {}).get("state")
+    drawn = (selected,) if selected else ()
     canon = ("AIHints を正典とし、以下は対象形態の部位・左右・形状・配色・番号の補助仕様。"
              if record.get("ai_hints") or _is_numbertales(record) else
              "AIHints を持たない作品のため、以下の部位・左右・形状・配色の仕様を外見の正典とする。")
@@ -182,7 +188,8 @@ def build_appearance_detail_block(record: dict, form: str) -> str:
         "[DB部位別仕様]\n"
         + canon +
         "部位図はその部位だけの拡大資料であり、全身や構図の見本ではない。\n"
-        + "\n".join(_format_appearance_detail_entry(e) for e in entries) + "\n\n"
+        + "\n".join(_format_appearance_detail_entry(e, drawn) for e in entries) + "\n\n"
+        + _state_block(record, form)
     )
 
 
@@ -1778,6 +1785,89 @@ def record_badge(record: dict[str, Any]) -> str:
     return str(spec.get("separator", "-")).join(parts)
 
 
+# ── 状態と衣装の指定 ─────────────────────────────────────────────
+# パイプラインは同じキャラクターを各ステージで find_character() し直す。指定を引数で配り回す代わりに、
+# 実行のあいだだけ有効な指定をここに置き、find_character() が返すレコードへ付ける。
+_SELECTION: contextvars.ContextVar[dict] = contextvars.ContextVar("character_selection", default={})
+
+
+@contextlib.contextmanager
+def character_selection(selection: dict[tuple[str, Any], dict[str, str]]):
+    """この実行のあいだ、``{(作品キー, 番号): {"state": …, "costume": …}}`` の指定を有効にする。"""
+    token = _SELECTION.set({(work, str(num)): chosen for (work, num), chosen in selection.items()})
+    try:
+        yield
+    finally:
+        _SELECTION.reset(token)
+
+
+def _all_appearance_entries(record: dict) -> list[dict]:
+    return [e for key in ("data", "db_record") if isinstance(record.get(key), dict)
+            for e in record[key].get("AppearanceDetail") or [] if isinstance(e, dict)]
+
+
+def state_names(record: dict) -> list[str]:
+    """DB に項目があって名前で選べる状態（豹変系女子の afterChanged、獣爾騎兵の beasted など）。"""
+    return sorted({e["Formation"] for e in _all_appearance_entries(record)
+                   if e.get("Formation") and e["Formation"] not in _PIPELINE_FORMS})
+
+
+def costume_names(num: int | str, work_key: str = "#Works_NumberTales") -> list[str]:
+    """DB に項目があって名前で選べる衣装（通常衣装を含む。AI 向けに使えない衣装は読み込みの時点で落ちている）。"""
+    record = _find_character(num, work_key) or {}
+    return sorted({str(e["Costume"]) for e in _all_appearance_entries(record) if e.get("Costume")})
+
+
+def _apply_selection(record: dict, chosen: dict[str, str]) -> dict:
+    """指定の衣装の項目だけを残し、状態と衣装の指定を ``_selection`` として付けたレコードを返す。
+
+    DB にある名前はその項目を選ぶ。名前に当たらない文は、体型と衣装・着用物だけを変える自由な指定として残す。
+    """
+    state, costume = (" ".join(str(chosen.get(key) or "").split()) for key in ("state", "costume"))
+    if (record.get("work_key"), costume) in _AI_EXCLUDED_COSTUMES:
+        raise ValueError(f"衣装 '{costume}' は、AI 向けの利用から外しているため選べません。")
+    costumes = sorted({str(e["Costume"]) for e in _all_appearance_entries(record) if e.get("Costume")})
+    named_costume = costume if costume in costumes else ""
+    states = state_names(record)
+    record = drop_costumes(record, lambda value: value != (named_costume or _DEFAULT_COSTUME))
+    if not (state or costume):
+        return record
+    return dict(record, _selection={
+        "state": state if state in states else "", "state_note": "" if state in states else state,
+        "costume": named_costume, "costume_note": "" if named_costume else costume,
+    })
+
+
+def _state_block(record: dict, form: str) -> str:
+    """状態と衣装の指定を、生成・観察・検査に渡す文にする。指定が無ければ空。"""
+    chosen = record.get("_selection") or {}
+    lines: list[str] = []
+    if chosen.get("state"):
+        lines.append(f"- 状態: {chosen['state']}（設定資料にある状態）。上の部位別仕様は、この状態のもの。")
+    if chosen.get("costume"):
+        lines.append(f"- 衣装: {chosen['costume']}（設定資料にある衣装）。上の部位別仕様は、この衣装のもの。")
+    if chosen.get("state_note"):
+        lines.append(f"- 状態の指定: {chosen['state_note']}")
+    if chosen.get("costume_note"):
+        lines.append(f"- 衣装の指定: {chosen['costume_note']}")
+    if not lines:
+        return ""
+    if chosen.get("state_note") or chosen.get("costume_note"):
+        lines.append("- 上の指定で変えてよいのは、体型と衣装・着用物だけ。耳、尾の種類と本数、髪、瞳、番号や紋章は設定のまま保つ。")
+    if chosen.get("state_note"):
+        drawn = (chosen["state"],) if chosen.get("state") else _DEFAULT_STATES
+        items = [next((str(a.get("value_JP") or a.get("value_EN")) for a in e.get("Attrs") or []
+                       if isinstance(a, dict) and (a.get("value_JP") or a.get("value_EN"))), "")
+                 for e in appearance_details_for_form(record, form)
+                 if e.get("Detachable") and e.get("Formation") in (None, form, *drawn)]
+        items = [item for item in items if item]
+        lines.append(f"- 外してよい着用物は、着脱できる設定のもの（{' / '.join(items)}）だけ。ほかの衣装は着たままにする。"
+                     if items else "- 着脱できる設定の着用物は無い。衣装を脱がせる指定は反映しない。")
+    lines.append("- 公式の参照画像と観察は、通常の状態・通常衣装の姿を写している。体型と衣装がこの指定と食い違うときは、"
+                 "この指定を採る。この指定で変えた体型と衣装は、違反や欠落に数えない。")
+    return "[状態と衣装の指定]\n" + "\n".join(lines) + "\n\n"
+
+
 def resolve_target(
     badge: Any, form: str = "corefolder", work_key: str = "#Works_NumberTales"
 ) -> tuple[int | str, str, str]:
@@ -1799,12 +1889,17 @@ def find_character(
     work_key: str = "#Works_NumberTales",
     manifest_path: str | None = None,
 ) -> dict[str, Any] | None:
-    """キャラクターを検索し、通常衣装の記述だけを残して返す。見つからない場合は None。
+    """キャラクターを検索し、描く衣装の記述だけを残して返す。見つからない場合は None。
 
-    別衣装（``Costume`` が usual 以外）の項目は生成に混ぜない。検索の手順は :func:`_find_character`。
+    指定が無ければ通常衣装（``Costume`` が usual）だけを残す。:func:`character_selection` で状態か衣装が
+    指定されている実行では、その衣装の項目を残し、指定を ``_selection`` として付ける。
+    検索の手順は :func:`_find_character`。
     """
     record = _find_character(num, work_key, manifest_path)
-    return record and drop_costumes(record, lambda costume: costume != _DEFAULT_COSTUME)
+    if not record:
+        return record
+    chosen = _SELECTION.get().get((record.get("work_key") or work_key, str(num)), {})
+    return _apply_selection(record, chosen)
 
 
 def _find_character(

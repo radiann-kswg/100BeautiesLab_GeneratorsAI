@@ -111,6 +111,7 @@ NT_MODULE=src.pipeline.natural_parser ./bin/ntimg.sh "コアフォルダ姿の25
 - `--badge` は創作 DB のバッジ（`57` / `2B`）。NumberTales 以外の作品（獣爾騎兵・豹変系女子）は、作品コード付きのバッジ（`SAR-EZ1` / `SCG-ENE`）で指定でき、`--work` は不要。コアフォルダ形態を持たないため `humanoid` として扱われる。`--natural` と作品をまたぐ合同生成は NumberTales のみ。
 - `--scene` 省略時は Stage 1 がキャラに合うシーンを自動生成する。
 - ヒントは `--style` / `--composition` / `--background` で追加できる。
+- 状態や衣装の指定がある依頼（「豹変後の姿で」「巫女服で」「ブレザーを脱いだ姿で」）は `--state` / `--costume`（合同は `--states "A;B"`）に渡す。DB にある名前（`afterChanged`、`beasted`、`miko` など）はその項目を描き、それ以外は依頼の文をそのまま渡す。文での指定が変えるのは体型と着用物だけなので、耳・尾・髪・瞳を変える依頼は、設定のまま描くことを依頼者に伝える。詳細は `docs/usage-generation.md` の「状態と衣装の指定」。
 
 ### C. i2i 改稿（前回画像の一部だけ直す）
 

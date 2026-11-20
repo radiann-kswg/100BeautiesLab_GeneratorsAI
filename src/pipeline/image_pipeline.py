@@ -55,6 +55,7 @@ Copyright © RadianN_kswg — CC BY-NC 4.0
 from __future__ import annotations
 
 import argparse
+import inspect
 import json
 import os
 import sys
@@ -140,7 +141,28 @@ class PipelineResult:
     elapsed_seconds: float = 0.0
 
 
-def run_image_pipeline(
+def run_image_pipeline(*args: Any, state: str = "", **kwargs: Any) -> "PipelineResult":
+    """状態と衣装の指定を有効にして、単体のパイプライン（:func:`_run_image_pipeline`）を実行する。
+
+    ``state`` と ``costume`` は、DB にある名前（``state_names`` / ``costume_names``）ならその項目を選ぶ。
+    名前に当たらない文は、体型と衣装・着用物だけを変える自由な指定になる。ほかの引数は本体と同じ。
+    """
+    from src.utils.dataset import character_selection, costume_names, find_character
+
+    bound = inspect.signature(_run_image_pipeline).bind(*args, **kwargs)
+    bound.apply_defaults()
+    params = bound.arguments
+    num, work_key = params["num"], params["work_key"]
+    with character_selection({(work_key, num): {"state": state, "costume": params["costume"]}}):
+        if params["costume"] in costume_names(num, work_key):
+            params["costume"] = ""      # DB にある衣装は部位別仕様で描く。自由な衣装差分として LLM へ渡さない
+        note = ((find_character(num, work_key) or {}).get("_selection") or {}).get("state_note")
+        if note:                        # 自由な文の状態は、値を複数持つ欄（身長など）の選び方にも効かせる
+            params["scene"] = "; ".join(filter(None, [params["scene"], f"状態: {note}"]))
+        return _run_image_pipeline(*bound.args, **bound.kwargs)
+
+
+def _run_image_pipeline(
     num: int | str,
     form: str = "corefolder",
     work_key: str = "#Works_NumberTales",
@@ -560,7 +582,29 @@ def _compose_multi_char(
     return results
 
 
-def run_combined_pipeline(
+def run_combined_pipeline(*args: Any, states: "list[str] | None" = None, **kwargs: Any) -> "MultiCharPipelineResult":
+    """状態と衣装の指定を有効にして、合同のパイプライン（:func:`_run_combined_pipeline`）を実行する。
+
+    ``states`` は ``nums`` と同じ順の、キャラクターごとの状態（空文字は既定）。``costume`` は全員に共通。
+    """
+    from src.utils.dataset import character_selection, costume_names
+
+    bound = inspect.signature(_run_combined_pipeline).bind(*args, **kwargs)
+    bound.apply_defaults()
+    params = bound.arguments
+    nums, work_key = list(params["nums"]), params["work_key"]
+    chosen = list(states or [])
+    if len(chosen) > len(nums):
+        raise ValueError("states の件数が nums のキャラクター数より多くなっています。")
+    chosen += [""] * (len(nums) - len(chosen))
+    selection = {(work_key, num): {"state": state, "costume": params["costume"]} for num, state in zip(nums, chosen)}
+    with character_selection(selection):
+        if any(params["costume"] in costume_names(num, work_key) for num in nums):
+            params["costume"] = ""      # DB にある衣装は部位別仕様で描く。自由な衣装差分として LLM へ渡さない
+        return _run_combined_pipeline(*bound.args, **bound.kwargs)
+
+
+def _run_combined_pipeline(
     nums: list[int | str],
     form: str = "corefolder",
     forms: "list[str] | None" = None,
@@ -957,6 +1001,7 @@ def run_multi_pipeline(
         print(f"{'=' * 60}")
         result = run_image_pipeline(
             num=cp["num"],
+            state=cp.get("state", ""),
             form=cp.get("form", "corefolder"),
             work_key=cp.get("work_key", "#Works_NumberTales"),
             out_dir=out_dir,
@@ -1172,9 +1217,20 @@ def main() -> None:
     parser.add_argument(
         "--costume", default="",
         help=(
-            "衣装差分の説明。デフォルト衣装から変更する場合に指定する。\n"
-            "例: '黒いワンピース姿の差分' / 'summer school uniform variation'"
+            "衣装の指定。DB にある衣装の名前 (例: miko) ならその衣装を、それ以外の文は衣装差分として描く。\n"
+            "例: 'miko' / '黒いワンピース姿の差分' / 'summer school uniform variation'"
         ),
+    )
+    parser.add_argument(
+        "--state", default="",
+        help=(
+            "状態の指定。DB にある状態の名前 (例: afterChanged, beasted) ならその状態を、\n"
+            "それ以外の文は体型と着用物だけを変える指定として描く。"
+        ),
+    )
+    parser.add_argument(
+        "--states", default="",
+        help="--nums の各キャラクターの状態 (--nums と同じ順に ; 区切り。空欄は既定)。",
     )
     parser.add_argument(
         "--field-override", action="append", default=None, dest="field_override",
@@ -1291,6 +1347,8 @@ def main() -> None:
                 cp["background"] = args.background
             if args.costume and not cp.get("costume"):
                 cp["costume"] = args.costume
+            if args.state and not cp.get("state"):
+                cp["state"] = args.state
             if field_override and not cp.get("field_overrides"):
                 cp["field_overrides"] = dict(field_override)
             if args.form != "corefolder":
@@ -1301,8 +1359,12 @@ def main() -> None:
         nums: list[int | str] = [_resolve_num_arg(s) for s in raw_nums]
         if not nums:
             sys.exit("[ERROR] --nums に有効な番号がありません。")
-        for n in nums:
+        nums_states = [s.strip() for s in args.states.split(";")] if args.states else []
+        if len(nums_states) > len(nums):
+            sys.exit("[ERROR] --states の件数が --nums のキャラクター数より多くなっています。")
+        for index, n in enumerate(nums):
             char_params.append({
+                "state": nums_states[index] if index < len(nums_states) else args.state,
                 "num": n,
                 "form": args.form,
                 "scene": args.scene,
@@ -1316,6 +1378,7 @@ def main() -> None:
 
     elif args.num:
         char_params.append({
+            "state": args.state,
             "num": _resolve_num_arg(args.num),
             "form": args.form,
             "scene": args.scene,
@@ -1348,6 +1411,7 @@ def main() -> None:
             composition=cp.get("composition", ""),
             background=cp.get("background", ""),
             costume=cp.get("costume", args.costume),
+            state=cp.get("state", args.state),
             field_overrides=cp.get("field_overrides") or field_override,
             skip_canva=args.skip_canva,
             correction_mode=args.correction_mode,
@@ -1392,6 +1456,7 @@ def main() -> None:
             composition=char_params[0].get("composition", args.composition),
             background=char_params[0].get("background", args.background),
             costume=char_params[0].get("costume", args.costume),
+            states=[cp.get("state", "") for cp in char_params],
             field_overrides=char_params[0].get("field_overrides") or field_override,
             skip_canva=args.skip_canva,
             correction_mode=args.correction_mode,

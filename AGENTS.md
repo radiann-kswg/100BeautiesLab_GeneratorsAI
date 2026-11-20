@@ -166,6 +166,9 @@ python -m src.pipeline.image_pipeline \
 # 衣装差分: --costume で Stage 1 のデフォルト衣装を上書きしてプロンプト生成
 python -m src.pipeline.image_pipeline --badge 57 --form corefolder \
     --costume "黒いワンピース姿の差分" --skip-canva
+# 状態と衣装: DB にある名前 (afterChanged / beasted / miko など) はその項目を描く。それ以外の文は体型と着用物だけを変える
+python -m src.pipeline.image_pipeline --badge 35 --form humanoid --costume miko --skip-canva
+python -m src.pipeline.image_pipeline --badge SAR-EZ6 --state beasted --skip-canva
 # i2i 改稿: --iterate-from で前回 run を起点に Stage 3〜5 を改稿モードで実行
 # GCS URL (MCP の numbertales_get_run_logs が返す intermediate URL) も直接渡せる
 python -m src.pipeline.image_pipeline --badge 57 --form corefolder --skip-canva \

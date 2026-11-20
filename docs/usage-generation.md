@@ -58,7 +58,9 @@ python -m src.pipeline.image_pipeline --badge 57 --form corefolder --skip-canva
 | `--scene` | `""` | シーン説明。**省略時は Stage 1 でキャラクターに合ったシーンを自動生成** |
 | `--style` / `--composition` / `--background` | `""` | 作風・構図・背景ヒント |
 | `--skip-canva` | false | Stage 5 の Canva をスキップ |
-| `--costume TEXT` | `""` | 衣装差分の説明 (例: `"黒いワンピース姿の差分"`)。指定時は Stage 1 でデフォルト衣装を上書きしてプロンプト生成する。不変特徴（耳・尻尾・髪色・瞳色）は維持される |
+| `--costume TEXT` | `""` | 衣装の指定。DB にある衣装の名前 (例: `miko`) ならその衣装の項目を描き、それ以外の文 (例: `"黒いワンピース姿の差分"`) は Stage 1 でデフォルト衣装を上書きする衣装差分になる。不変特徴（耳・尻尾・髪色・瞳色）は維持される |
+| `--state TEXT` | `""` | 状態の指定。DB にある状態の名前 (例: `afterChanged`, `beasted`) ならその状態の項目を描き、それ以外の文は体型と着用物だけを変える指定になる（下の「状態と衣装の指定」） |
+| `--states A;B` | `""` | `--nums` の各キャラクターの状態（`--nums` と同じ順に `;` 区切り。空欄は既定） |
 | `--correction-mode` | `t2i` | Stage 4 重度違反時の対処モード。`t2i`: Stage 4 内で T2I 再生成 / `stage3`: Stage 3 に差し戻してラフを再生成 |
 | `--iterate-from PATH` | None | 前回生成画像を起点に Stage 3 を **i2i モード**で実行。Stage 4/5 は通常通り走る。詳細は [`usage-iterate.md`](usage-iterate.md) |
 | `--revisions TEXT` | None | 修正指示（`; `/改行区切り）。`--iterate-from` と組み合わせて使用 |
@@ -578,6 +580,21 @@ Stage 1 の要約や i2i の `prompt_override` でも、Gemini/OpenAI の送信�
 > `src/utils/dataset.py` の `_AMBIGUOUS_FIELD_SPECS` を参照。新しい対象フィールドを追加する場合は
 > レジストリに1行足すだけでよい（対象外: `Weight_kg` は「基本値+装備品加算」という別の意味構造のため
 > 対象外）。
+
+### 状態と衣装の指定（2026-11-20）
+
+`--state` / `--costume`（合同は `--states`。MCP は `state` / `costume` / `states`）で、描く状態と衣装を選ぶ。
+
+| 指定 | 扱い |
+|---|---|
+| DB にある状態の名前（`afterChanged`、`beasted` など） | その状態の項目を通常の項目として描き、ほかの状態の項目に「今回の絵には描かない」を付ける |
+| DB にある衣装の名前（`miko`、`otaku`、`jacketless` など） | その衣装の項目と AIHints の文面を残し、通常衣装のものを落とす。LLM へ衣装差分としては渡さない |
+| 名前に当たらない文 | 自由な指定。変えてよいのは体型と衣装・着用物だけで、耳・尾・髪・瞳・番号は設定のまま。状態の文で外せる着用物は、DB で `Detachable` の印が付いた品目だけ。状態の文はシーンにも足し、身長などの曖昧フィールドの選び方に効かせる |
+
+- 指定は `[DB部位別仕様]` の後ろの `[状態と衣装の指定]` ブロックとして、Stage 1 のベースプロンプト、Stage 2 の観察、Stage 3 の生成、Stage 4 の検査仕様に入る。ブロックには「公式の参照画像は通常の状態・通常衣装の姿。指定で変えた体型と衣装は違反や欠落に数えない」と書く。
+- 実装: `src/utils/dataset.py` の `character_selection()`（実行のあいだだけ有効な指定）と `find_character()`。`run_image_pipeline(state=…)` / `run_combined_pipeline(states=…)` が指定を有効にする。選べる名前は `state_names()` / `costume_names()`。
+- 第三者がデザインした衣装（NumberTales 61 の `idol`）は選べない（`ValueError`）。
+- 表情の切り替えは、これまでどおり `--scene` で指定する。衣装ごとの参照画像の選び分けは、上流の画像の区分（CreationsDB #63）が入ってから。
 
 > **2026-11-20 更新（衣装の絞り込みと AI に渡さない衣装）**: `find_character()` は、`AppearanceDetail` の `Costume` が `usual` 以外の項目と、AIHints に写されたその項目の文面を落として返す（`drop_costumes()`）。指定が無いときは通常衣装だけを描き、別衣装（35 の `miko`、60 の `otaku` など）の特徴を混ぜない。`Costume` を持たない項目は、これまでどおりどの衣装でも描く。あわせて、権利上 AI に渡さない衣装と画像（`_AI_EXCLUDED_COSTUMES` / `_AI_EXCLUDED_IMAGE_STEMS`。NumberTales 61 のアイドル衣装）を、`load_manifest()` の時点でレコードから外し、`collect_reference_images()` でも参照画像の候補から外す。上流で衣装・画像の単位の AI オプトアウトを指定できるようになるまでの下流側の除外（CreationsDB #62）。DB の値で衣装を選ぶ機能はまだ無い。
 

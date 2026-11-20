@@ -11,8 +11,8 @@
 
 | ツール名 | 対応する入口 | 概要 |
 |---|---|---|
-| `numbertales_generate_character` | `run_image_pipeline` | 単体キャラ生成（Stage 1〜5）。`costume` フィールドで衣装差分指定可。`field_overrides` で `RaceType` 等の曖昧フィールドを明示指定可（未指定時はシーン文脈から LLM が自動判定） |
-| `numbertales_generate_joint` | `run_combined_pipeline` | 複数キャラを 1 枚に合同生成。Stage 3 で単体ラフ + 全体構図ラフを同時生成。`field_overrides` は全キャラ共通の1値（`costume` と同じ扱い） |
+| `numbertales_generate_character` | `run_image_pipeline` | 単体キャラ生成（Stage 1〜5）。`costume` で衣装（DB の衣装名か衣装差分の文）、`state` で状態（DB の状態名か、体型と着用物を変える文）を指定可。`field_overrides` で `RaceType` 等の曖昧フィールドを明示指定可（未指定時はシーン文脈から LLM が自動判定） |
+| `numbertales_generate_joint` | `run_combined_pipeline` | 複数キャラを 1 枚に合同生成。Stage 3 で単体ラフ + 全体構図ラフを同時生成。`field_overrides` は全キャラ共通の1値（`costume` と同じ扱い）。`states` でキャラクターごとの状態を指定可 |
 | `numbertales_generate_from_natural` | `parse_generation_request` → 上記 | 自然文からディスパッチ |
 | `numbertales_iterate` | `run_image_pipeline(iterate_from=…)` | i2i 改稿。GCS URL を `iterate_from` に直接渡せる。`field_overrides` も指定可 |
 | `numbertales_job_status` | — | ジョブ進捗・完成画像リンク照会（読取専用） |

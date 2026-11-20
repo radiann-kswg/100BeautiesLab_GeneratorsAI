@@ -126,7 +126,8 @@ class GenerateCharacterInput(_Base):
     style: str = Field(default="", description="作風ヒント (例: 'watercolor')", max_length=200)
     composition: str = Field(default="", description="構図ヒント (例: 'bust shot')", max_length=200)
     background: str = Field(default="", description="背景ヒント", max_length=200)
-    costume: str = Field(default="", description="衣装差分の説明 (例: '黒いワンピース姿の差分')。空ならデフォルト衣装", max_length=400)
+    costume: str = Field(default="", description="衣装の指定。DB にある衣装の名前 (例: 'miko') ならその衣装を、それ以外の文 (例: '黒いワンピース姿の差分') は衣装差分として描く。空ならデフォルト衣装", max_length=400)
+    state: str = Field(default="", description="状態の指定。DB にある状態の名前 (例: afterChanged, beasted) ならその状態を、それ以外の文は体型と着用物だけを変える指定として描く。空なら既定の状態", max_length=400)
     field_overrides: dict[str, str] = Field(
         default_factory=dict,
         description=(
@@ -165,7 +166,9 @@ class GenerateJointInput(_Base):
     style: str = Field(default="", description="作風ヒント", max_length=200)
     composition: str = Field(default="", description="構図ヒント", max_length=200)
     background: str = Field(default="", description="背景ヒント", max_length=200)
-    costume: str = Field(default="", description="衣装差分の説明（全キャラ共通）。空ならデフォルト衣装", max_length=400)
+    costume: str = Field(default="", description="衣装の指定（全キャラ共通）。DB にある衣装の名前か、衣装差分の説明。空ならデフォルト衣装", max_length=400)
+    states: list[str] = Field(default_factory=list, max_length=4,
+                              description="キャラクターごとの状態（nums と同じ順。空文字は既定）。DB にある状態の名前か、体型と着用物だけを変える文")
     field_overrides: dict[str, str] = Field(
         default_factory=dict,
         description=(
@@ -206,6 +209,8 @@ class IterateInput(_Base):
     iterate_from: str = Field(..., description="前回生成画像のパスまたは run-dir (例: 'output/20260609/20260609_15/..._num057')", min_length=1, max_length=600)
     revisions: str = Field(..., description="修正指示（';' または改行区切り。例: '尻尾は元のまま; 表情だけ笑顔にして'）", min_length=1, max_length=1000)
     form: Form = Field(default=Form.COREFOLDER, description="形態 (corefolder / humanoid)")
+    costume: str = Field(default="", description="衣装の指定（起点の絵と同じ指定を渡す）。DB にある衣装の名前か、衣装差分の説明", max_length=400)
+    state: str = Field(default="", description="状態の指定。DB にある状態の名前 (例: afterChanged, beasted) ならその状態を、それ以外の文は体型と着用物だけを変える指定として描く。空なら既定の状態", max_length=400)
     field_overrides: dict[str, str] = Field(
         default_factory=dict,
         description="RaceType 等の曖昧フィールドの明示上書き指定。例: {'RaceType': '最終的な設計目標'}",
@@ -475,6 +480,7 @@ async def numbertales_generate_character(params: GenerateCharacterInput) -> str:
             composition=p.composition,
             background=p.background,
             costume=p.costume,
+            state=p.state,
             field_overrides=p.field_overrides,
             skip_canva=p.skip_canva,
             correction_mode=p.correction_mode.value,
@@ -533,6 +539,7 @@ async def numbertales_generate_joint(params: GenerateJointInput) -> str:
             composition=p.composition,
             background=p.background,
             costume=p.costume,
+            states=p.states,
             field_overrides=p.field_overrides,
             skip_canva=p.skip_canva,
             correction_mode=p.correction_mode.value,
@@ -671,6 +678,8 @@ async def numbertales_iterate(params: IterateInput) -> str:
             correction_mode=p.correction_mode.value,
             iterate_from=p.iterate_from,
             revisions=p.revisions,
+            costume=p.costume,
+            state=p.state,
             field_overrides=p.field_overrides,
             stage_callback=_make_stage_callback(_job_id),
             reference_confirmation=lambda warning: MANAGER.confirm_reference(_job_id, warning),
