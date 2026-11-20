@@ -82,3 +82,9 @@ AGENTS.md                                          |   12 +
 - 影響判定: 追加だけで、レコードの増減・許可件数（187 件）・索引からの削除は無い。61 のアイドル衣装の画像は索引に無いまま。コード変更は要らない。`collect_reference_images()` で、28 の `earingBack`、2B・5・58 の尻尾ユニット、223・753 のロットマークが参照に入ることを確かめた。
 - テスト結果: `tests/` の 128 件がすべて成功（条件は上と同じ）。
 - 上の「残ること」に書いた未宣言 10 件は、これで解消した。
+
+### 再同期その 3（2026-11-20 17:55、『管理主』代理人の設定画の取り込み）
+
+- 差分把握: `_creations-ai` `964cd5c..c5031d1`（creations-db `f517d18..02cfe1e`）。豹変系女子の `#DB_Regioministrators` の 3 件（扇 零夏・スフィリア、扇 三春、扇 残冬）に、別 DB の設定画を指す `Images.concept_PNGName`（`_DBCrossLinkPath`）が入り、manifest の `images.concept` に載った。途中の `dc5e6c6` では `_IsoPath` の先頭に `concept/` が重なって 3 件とも未解決だったが、`02cfe1e` で直り、上流の未解決の画像参照は 0 件。
+- 影響判定: 追加だけで、レコードの増減・許可件数（187 件）・`image-index.json` の件数（610 件）は変わらない。コード変更は要らない。`collect_reference_images()` が 3 件とも設定画を返すこと（`SCG-AW`・`SCG-AX`・`SCG-AY`）と、`--badge SCG-AW --dry-run` が通ることを確かめた。
+- テスト結果: `tests/` の 128 件がすべて成功（条件は上と同じ）。
