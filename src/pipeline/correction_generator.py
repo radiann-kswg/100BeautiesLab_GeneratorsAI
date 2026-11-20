@@ -82,13 +82,17 @@ def _record_palette_summary(record: dict, form: str, limit: int = 4) -> str:
 # ──────────────────────────────────────────
 
 def _analyze_rough_with_openai(
-    image_path: Path, spec: dict, ref_image_path: Path | None = None
+    image_path: Path, spec: dict, ref_image_path: Path | None = None,
+    markup_path: Path | None = None,
 ) -> dict:
     """OpenAI Vision でラフ画像の違反特徴・構図問題を分析する。
 
     ref_image_path が指定されている場合は公式 DB 参照画像を 2 枚目として添付し、
     左右の向き・非対称要素の配置が原典と反転していないかも検査する
     （i2i 起点画像由来の左右反転を Stage 4 で検出・修正するため）。
+
+    markup_path が指定されている場合は、依頼者の赤入れ画像を添付し、指示した場所が直っているか、
+    赤い印や指示の文字が絵に残っていないかを composition_issues に数える。
 
     Returns
     -------
@@ -169,6 +173,19 @@ def _analyze_rough_with_openai(
         "問題がなければ overall_ok: true として violations / missing / composition_issues は空リストにしてください。"
     )
 
+    has_markup = bool(markup_path and Path(markup_path).is_file())
+    if has_markup:
+        user += (
+            "\n\n[赤入れの確認]\n"
+            "最後に添付した「赤入れ画像」は、描き直す前の絵に依頼者が赤で指示を描き込んだものです"
+            "（検査対象の絵ではありません）。\n"
+            "- 赤い線・丸・矢印・短い書き込みが指す場所が、検査対象の絵で指示のとおりに直っていなければ、"
+            "composition_issues に「赤入れ未反映: <場所と内容>」の形式で追加。\n"
+            "- 赤い印や指示の文字そのものが検査対象の絵に残っていれば、"
+            "composition_issues に「赤入れの印が残っている: <場所>」の形式で追加。\n"
+            "- 赤入れ画像の中のキャラクターの外見は、違反・欠落の判定に使わないこと。"
+        )
+
     if spec.get("design_reference"):
         from src.pipeline.design_reference import design_reference_block
         user = design_reference_block(spec["design_reference"]) + user
@@ -201,6 +218,15 @@ def _analyze_rough_with_openai(
         content.append({"type": "text", "text": "公式部位図 (この部位の形・字形のみ照合): " + path.name})
         content.append({"type": "image_url", "image_url": {
             "url": f"data:{detail_mime};base64,{base64.b64encode(raw).decode('ascii')}"}})
+
+    if has_markup:
+        from src.utils.image_io import load_reference_bytes
+        loaded = load_reference_bytes(Path(markup_path))  # type: ignore[arg-type]
+        if loaded is not None:
+            raw, markup_mime = loaded
+            content.append({"type": "text", "text": "赤入れ画像 (描き直す前の絵への指示書き。検査対象ではない):"})
+            content.append({"type": "image_url", "image_url": {
+                "url": f"data:{markup_mime};base64,{base64.b64encode(raw).decode('ascii')}"}})
 
     try:
         client = OpenAI(api_key=api_key)
@@ -414,6 +440,7 @@ def correct_rough_images(
     pipeline_dir: Path,
     work_key: str = "#Works_NumberTales",
     correction_mode: str = "t2i",
+    inputs: list[dict] | None = None,
 ) -> dict[str, list[Path]]:
     """Stage 4: ラフ画像の違反特徴を修正し、形態として違和感のない状態にする。
 
@@ -429,6 +456,7 @@ def correct_rough_images(
     correction_mode: 重度違反時の対処モード
                      "t2i"    — Stage 4 内で T2I フル再生成 (デフォルト)
                      "stage3" — Stage 3 に差し戻し (image_pipeline が再生成)
+    inputs:          依頼者が渡した入力画像 (src/pipeline/input_images.py)。検査に渡すのは赤入れだけ。
 
     Returns
     -------
@@ -469,13 +497,20 @@ def correct_rough_images(
     if ref_image_path:
         print(f"[Stage4] 左右整合チェック用の原典参照: {ref_image_path.name}")
 
+    from src.pipeline import input_images
+    markup_path: Path | None = next(
+        (Path(image["path"]) for image in input_images.for_stage(inputs, 4) if image["kind"] == "markup"), None)
+    if markup_path:
+        print(f"[Stage4] 赤入れの確認あり: {markup_path.name}")
+
     for i, rough_path in enumerate(rough_paths, 1):
         if not rough_path.exists():
             print(f"[Stage4] rough_{i:02d}: ファイルが見つかりません。スキップ。")
             continue
 
         print(f"[Stage4] ({i}/{len(rough_paths)}) {rough_path.name} を分析中...")
-        analysis = _analyze_rough_with_openai(rough_path, char_spec, ref_image_path=ref_image_path)
+        analysis = _analyze_rough_with_openai(
+            rough_path, char_spec, ref_image_path=ref_image_path, markup_path=markup_path)
 
         violations = analysis.get("violations") or []
         missing = analysis.get("missing") or []

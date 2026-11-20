@@ -5,6 +5,8 @@ Copyright © RadianN_kswg — CC BY-NC 4.0
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import json
 import importlib
 import os
@@ -32,9 +34,10 @@ def is_detail_reference(path: str) -> bool:
 
 
 _PIPELINE_FORMS = ("corefolder", "humanoid")
-# 形態名以外の Formation は作品内の状態 (豹変系女子の豹変前後)。既定で描くのは beforeChange。
-# shortcut: 既定の状態はこの 1 語だけ。他作品が状態別の外見を持ったらここへ足す。
-_DEFAULT_STATES = ("beforeChange",)
+# 形態名以外の Formation は作品内の状態。既定で描くのは、豹変系女子の beforeChange (豹変前) と
+# 獣爾騎兵の normal (獣化前)。
+# shortcut: 既定の状態は作品ごとの語を並べただけ。他作品が状態別の外見を持ったらここへ足す。
+_DEFAULT_STATES = ("beforeChange", "normal")
 
 
 def appearance_details_for_form(record: dict, form: str) -> list[dict]:
@@ -44,12 +47,102 @@ def appearance_details_for_form(record: dict, form: str) -> list[dict]:
             and (e.get("Formation") in (None, form) or e.get("Formation") not in _PIPELINE_FORMS)]
 
 
+# 指定が無いときに描く衣装。別衣装の項目が混ざると、2 着分の特徴が 1 枚に出る。
+_DEFAULT_COSTUME = "usual"
+# 権利上 AI に渡さない衣装と、その衣装を描いた画像。上流で指定できるようになるまで
+# 下流で外す (CreationsDB #62)。NumberTales 61 のアイドル衣装はデザインが第三者のもの。
+_AI_EXCLUDED_COSTUMES = frozenset({("#Works_NumberTales", "idol")})
+_AI_EXCLUDED_IMAGE_STEMS = frozenset({
+    "chr-dsgn-alt_wipNTS-61-idol", "emstk_corefolderNTS-61-idol1", "emstk_corefolderNTS-61-idol2",
+})
+
+
+def is_ai_excluded_image(path: Any) -> bool:
+    """AI に渡さない画像か。パス・URL・拡張子なしの DB 記載名のどれでも受ける。"""
+    return isinstance(path, str) and Path(path.replace("\\", "/")).stem in _AI_EXCLUDED_IMAGE_STEMS
+
+
+def _entry_texts(entry: dict) -> set[str]:
+    return {value.strip() for attr in entry.get("Attrs") or [] if isinstance(attr, dict)
+            for value in (attr.get("value_EN"), attr.get("value_JP"))
+            if isinstance(value, str) and value.strip()}
+
+
+def drop_costumes(record: dict[str, Any], dropped: Callable[[str], bool]) -> dict[str, Any]:
+    """``dropped(衣装の値)`` が真になる衣装の記述を落としたレコードを返す（元のレコードは変えない）。
+
+    AppearanceDetail の項目に加え、AIHints に写されたその項目の文面も落とす。AIHints は項目の
+    文面をそのまま、または ", " でつないで持つので、落とす項目だけが持つ文面で照合する。
+    """
+    sources = [record[key] for key in ("data", "db_record") if isinstance(record.get(key), dict)]
+    entries = [e for src in sources for e in src.get("AppearanceDetail") or [] if isinstance(e, dict)]
+
+    def gone(entry: dict) -> bool:
+        return bool(entry.get("Costume")) and dropped(str(entry["Costume"]))
+
+    if not any(gone(e) for e in entries):
+        return record
+    kept = set().union(*(_entry_texts(e) for e in entries if not gone(e)))
+    texts = sorted(set().union(*(_entry_texts(e) for e in entries if gone(e))) - kept, key=len, reverse=True)
+    alternatives = "|".join(re.escape(text) for text in texts)
+    listed = re.compile(rf"(?:^|[,:] )(?:{alternatives})(?:$|, |\))") if texts else None
+
+    def scrub(node: Any) -> Any:
+        if isinstance(node, dict):
+            # つないだ文（prompt_export 等）は部分的に削ると残骸が出るので空にする。
+            # generation_ai_hints() が ai_tags から組み直す。
+            return {key: "" if isinstance(value, str) and any(text in value for text in texts) else scrub(value)
+                    for key, value in node.items()}
+        if isinstance(node, list):
+            return [scrub(item) for item in node
+                    if not (listed and isinstance(item, str) and listed.search(item))]
+        return node
+
+    result = dict(record)
+    for key in ("data", "db_record"):
+        src = record.get(key)
+        if isinstance(src, dict):
+            src = dict(src)
+            if isinstance(src.get("AppearanceDetail"), list):
+                src["AppearanceDetail"] = [e for e in src["AppearanceDetail"]
+                                           if not (isinstance(e, dict) and gone(e))]
+            if src.get("AIHints"):
+                src["AIHints"] = scrub(src["AIHints"])
+            result[key] = src
+    if result.get("ai_hints"):
+        result["ai_hints"] = scrub(result["ai_hints"])
+    return result
+
+
+def _drop_excluded_images(node: Any) -> Any:
+    if isinstance(node, dict):
+        return {key: _drop_excluded_images(value) for key, value in node.items()
+                if not is_ai_excluded_image(value)}
+    if isinstance(node, list):
+        return [_drop_excluded_images(item) for item in node
+                if not is_ai_excluded_image(item.get("path") if isinstance(item, dict) else item)]
+    return node
+
+
+def _strip_ai_excluded(record: dict[str, Any], raw_line: str = "") -> dict[str, Any]:
+    """権利上 AI に渡さない衣装の記述と画像を、読み込んだレコードから外す。"""
+    work_key = record.get("work_key")
+    record = drop_costumes(record, lambda costume: (work_key, costume) in _AI_EXCLUDED_COSTUMES)
+    if any(stem in raw_line for stem in _AI_EXCLUDED_IMAGE_STEMS):
+        record = dict(record)
+        for key in ("images", "preferred_reference_images", "ai_hints"):
+            if record.get(key):
+                record[key] = _drop_excluded_images(record[key])
+    return record
+
+
 def _vocab_tail(token: Any) -> str:
     """'#BodyPart_Arm' → 'Arm'。語彙トークンの接頭辞を落として画像モデル向けの平文にする。"""
     return str(token).split("_", 1)[-1].lstrip("#") if token else ""
 
 
-def _format_appearance_detail_entry(entry: dict) -> str:
+def _format_appearance_detail_entry(entry: dict, drawn: tuple[str, ...] = ()) -> str:
+    """``drawn`` は名前で選んだ状態。空なら既定の状態（``_DEFAULT_STATES``）を描く。"""
     head = " / ".join(filter(None, (
         ", ".join(_vocab_tail(b) for b in entry.get("BodyPart") or []),
         _vocab_tail(entry.get("Laterality")),
@@ -71,9 +164,10 @@ def _format_appearance_detail_entry(entry: dict) -> str:
     note = entry.get("Note_EN") or entry.get("Note_JP")
     img = entry.get("img_PNGName")
     state = entry.get("Formation")
-    if state not in (None, *_PIPELINE_FORMS, *_DEFAULT_STATES):
+    if state not in (None, *_PIPELINE_FORMS, *(drawn or _DEFAULT_STATES)):
         # 設定画には別状態も描かれている。捨てると観察・検査が通常の姿の特徴と取り違える。
-        head = f"[別状態 {state} だけの特徴。シーンがこの状態を指定した場合だけ描く] {head}"
+        rule = "今回の絵には描かない" if drawn else "シーンがこの状態を指定した場合だけ描く"
+        head = f"[別状態 {state} だけの特徴。{rule}] {head}"
     return (f"- {head}: " + "; ".join(values)
             + (f" ({note})" if note else "")
             + (f" [部位図: {img}]" if img else ""))
@@ -84,7 +178,9 @@ def build_appearance_detail_block(record: dict, form: str) -> str:
     プロンプトを数千字薄めるため、部位/左右/要素/属性値/注記/部位図名だけに圧縮する。"""
     entries = appearance_details_for_form(record, form)
     if not entries:
-        return ""
+        return _state_block(record, form)
+    selected = (record.get("_selection") or {}).get("state")
+    drawn = (selected,) if selected else ()
     canon = ("AIHints を正典とし、以下は対象形態の部位・左右・形状・配色・番号の補助仕様。"
              if record.get("ai_hints") or _is_numbertales(record) else
              "AIHints を持たない作品のため、以下の部位・左右・形状・配色の仕様を外見の正典とする。")
@@ -92,7 +188,8 @@ def build_appearance_detail_block(record: dict, form: str) -> str:
         "[DB部位別仕様]\n"
         + canon +
         "部位図はその部位だけの拡大資料であり、全身や構図の見本ではない。\n"
-        + "\n".join(_format_appearance_detail_entry(e) for e in entries) + "\n\n"
+        + "\n".join(_format_appearance_detail_entry(e, drawn) for e in entries) + "\n\n"
+        + _state_block(record, form)
     )
 
 
@@ -1001,7 +1098,7 @@ def collect_reference_images(
     work_key = str(record.get("work_key") or "#Works_NumberTales")
 
     def _allow_path(path: str) -> bool:
-        if not _is_path_compatible_with_form(path, form):
+        if is_ai_excluded_image(path) or not _is_path_compatible_with_form(path, form):
             return False
         # 該当キャラクターのバッジ (旧命名では番号) を含まないパスは
         # 他キャラクターの装備・顔が混入するため捨てる。
@@ -1514,7 +1611,7 @@ def load_manifest(manifest_path: str | None = None) -> list[dict[str, Any]]:
             line = line.strip()
             if not line:
                 continue
-            records.append(json.loads(line))
+            records.append(_strip_ai_excluded(json.loads(line), line))
     return records
 
 
@@ -1688,6 +1785,89 @@ def record_badge(record: dict[str, Any]) -> str:
     return str(spec.get("separator", "-")).join(parts)
 
 
+# ── 状態と衣装の指定 ─────────────────────────────────────────────
+# パイプラインは同じキャラクターを各ステージで find_character() し直す。指定を引数で配り回す代わりに、
+# 実行のあいだだけ有効な指定をここに置き、find_character() が返すレコードへ付ける。
+_SELECTION: contextvars.ContextVar[dict] = contextvars.ContextVar("character_selection", default={})
+
+
+@contextlib.contextmanager
+def character_selection(selection: dict[tuple[str, Any], dict[str, str]]):
+    """この実行のあいだ、``{(作品キー, 番号): {"state": …, "costume": …}}`` の指定を有効にする。"""
+    token = _SELECTION.set({(work, str(num)): chosen for (work, num), chosen in selection.items()})
+    try:
+        yield
+    finally:
+        _SELECTION.reset(token)
+
+
+def _all_appearance_entries(record: dict) -> list[dict]:
+    return [e for key in ("data", "db_record") if isinstance(record.get(key), dict)
+            for e in record[key].get("AppearanceDetail") or [] if isinstance(e, dict)]
+
+
+def state_names(record: dict) -> list[str]:
+    """DB に項目があって名前で選べる状態（豹変系女子の afterChanged、獣爾騎兵の beasted など）。"""
+    return sorted({e["Formation"] for e in _all_appearance_entries(record)
+                   if e.get("Formation") and e["Formation"] not in _PIPELINE_FORMS})
+
+
+def costume_names(num: int | str, work_key: str = "#Works_NumberTales") -> list[str]:
+    """DB に項目があって名前で選べる衣装（通常衣装を含む。AI 向けに使えない衣装は読み込みの時点で落ちている）。"""
+    record = _find_character(num, work_key) or {}
+    return sorted({str(e["Costume"]) for e in _all_appearance_entries(record) if e.get("Costume")})
+
+
+def _apply_selection(record: dict, chosen: dict[str, str]) -> dict:
+    """指定の衣装の項目だけを残し、状態と衣装の指定を ``_selection`` として付けたレコードを返す。
+
+    DB にある名前はその項目を選ぶ。名前に当たらない文は、体型と衣装・着用物だけを変える自由な指定として残す。
+    """
+    state, costume = (" ".join(str(chosen.get(key) or "").split()) for key in ("state", "costume"))
+    if (record.get("work_key"), costume) in _AI_EXCLUDED_COSTUMES:
+        raise ValueError(f"衣装 '{costume}' は、AI 向けの利用から外しているため選べません。")
+    costumes = sorted({str(e["Costume"]) for e in _all_appearance_entries(record) if e.get("Costume")})
+    named_costume = costume if costume in costumes else ""
+    states = state_names(record)
+    record = drop_costumes(record, lambda value: value != (named_costume or _DEFAULT_COSTUME))
+    if not (state or costume):
+        return record
+    return dict(record, _selection={
+        "state": state if state in states else "", "state_note": "" if state in states else state,
+        "costume": named_costume, "costume_note": "" if named_costume else costume,
+    })
+
+
+def _state_block(record: dict, form: str) -> str:
+    """状態と衣装の指定を、生成・観察・検査に渡す文にする。指定が無ければ空。"""
+    chosen = record.get("_selection") or {}
+    lines: list[str] = []
+    if chosen.get("state"):
+        lines.append(f"- 状態: {chosen['state']}（設定資料にある状態）。上の部位別仕様は、この状態のもの。")
+    if chosen.get("costume"):
+        lines.append(f"- 衣装: {chosen['costume']}（設定資料にある衣装）。上の部位別仕様は、この衣装のもの。")
+    if chosen.get("state_note"):
+        lines.append(f"- 状態の指定: {chosen['state_note']}")
+    if chosen.get("costume_note"):
+        lines.append(f"- 衣装の指定: {chosen['costume_note']}")
+    if not lines:
+        return ""
+    if chosen.get("state_note") or chosen.get("costume_note"):
+        lines.append("- 上の指定で変えてよいのは、体型と衣装・着用物だけ。耳、尾の種類と本数、髪、瞳、番号や紋章は設定のまま保つ。")
+    if chosen.get("state_note"):
+        drawn = (chosen["state"],) if chosen.get("state") else _DEFAULT_STATES
+        items = [next((str(a.get("value_JP") or a.get("value_EN")) for a in e.get("Attrs") or []
+                       if isinstance(a, dict) and (a.get("value_JP") or a.get("value_EN"))), "")
+                 for e in appearance_details_for_form(record, form)
+                 if e.get("Detachable") and e.get("Formation") in (None, form, *drawn)]
+        items = [item for item in items if item]
+        lines.append(f"- 外してよい着用物は、着脱できる設定のもの（{' / '.join(items)}）だけ。ほかの衣装は着たままにする。"
+                     if items else "- 着脱できる設定の着用物は無い。衣装を脱がせる指定は反映しない。")
+    lines.append("- 公式の参照画像と観察は、通常の状態・通常衣装の姿を写している。体型と衣装がこの指定と食い違うときは、"
+                 "この指定を採る。この指定で変えた体型と衣装は、違反や欠落に数えない。")
+    return "[状態と衣装の指定]\n" + "\n".join(lines) + "\n\n"
+
+
 def resolve_target(
     badge: Any, form: str = "corefolder", work_key: str = "#Works_NumberTales"
 ) -> tuple[int | str, str, str]:
@@ -1705,6 +1885,24 @@ def resolve_target(
 
 
 def find_character(
+    num: int | str,
+    work_key: str = "#Works_NumberTales",
+    manifest_path: str | None = None,
+) -> dict[str, Any] | None:
+    """キャラクターを検索し、描く衣装の記述だけを残して返す。見つからない場合は None。
+
+    指定が無ければ通常衣装（``Costume`` が usual）だけを残す。:func:`character_selection` で状態か衣装が
+    指定されている実行では、その衣装の項目を残し、指定を ``_selection`` として付ける。
+    検索の手順は :func:`_find_character`。
+    """
+    record = _find_character(num, work_key, manifest_path)
+    if not record:
+        return record
+    chosen = _SELECTION.get().get((record.get("work_key") or work_key, str(num)), {})
+    return _apply_selection(record, chosen)
+
+
+def _find_character(
     num: int | str,
     work_key: str = "#Works_NumberTales",
     manifest_path: str | None = None,
@@ -2960,7 +3158,7 @@ def _match_field_override(override: str, candidates: list[dict[str, Any]]) -> di
 
 
 def _resolve_ambiguous_field(
-    record: dict[str, Any], field_name: str, scene: str = "", override: str = ""
+    record: dict[str, Any], field_name: str, scene: str = "", override: str = "", *, resolve_llm: bool = True
 ) -> dict[str, Any]:
     """曖昧フィールド (`_AMBIGUOUS_FIELD_SPECS` 対象) の値を解決する。
 
@@ -3010,6 +3208,8 @@ def _resolve_ambiguous_field(
 
     if len(candidates) == 1:
         return {"value": candidates[0].get("value"), "source": "single_candidate", "reasoning": "", "candidates": candidates}
+    if not resolve_llm:
+        return {"value": "", "source": "unresolved", "reasoning": "", "candidates": candidates}
 
     candidate_sig = tuple(
         (str(c.get("value")), str(c.get("about_JP") or ""), str(c.get("about_EN") or ""))
@@ -3026,6 +3226,8 @@ def describe_ambiguous_field_resolutions(
     form: str,
     scene: str = "",
     field_overrides: dict[str, str] | None = None,
+    *,
+    resolve_llm: bool = True,
 ) -> dict[str, dict[str, Any]]:
     """`form` に該当する曖昧フィールドの解決結果をまとめて返す（ログ/対話UI/プロンプト整形の共通入口）。
 
@@ -3041,7 +3243,8 @@ def describe_ambiguous_field_resolutions(
         if form not in spec.forms:
             continue
         info = _resolve_ambiguous_field(
-            record, spec.field_name, scene=scene, override=overrides.get(spec.field_name, "")
+            record, spec.field_name, scene=scene, override=overrides.get(spec.field_name, ""),
+            resolve_llm=resolve_llm,
         )
         if info["source"] in ("plain_value", "empty"):
             continue
@@ -3050,7 +3253,8 @@ def describe_ambiguous_field_resolutions(
 
 
 def _build_form_common_dataset_block(
-    form: str, record: dict[str, Any] | None = None, scene: str = "", field_overrides: dict[str, str] | None = None
+    form: str, record: dict[str, Any] | None = None, scene: str = "", field_overrides: dict[str, str] | None = None,
+    *, resolve_llm: bool = True,
 ) -> str:
     """共通形態データセットの要点をプロンプト用テキストとして返す。
 
@@ -3120,8 +3324,13 @@ def _build_form_common_dataset_block(
             if form not in spec.forms:
                 continue
             info = _resolve_ambiguous_field(
-                record, spec.field_name, scene=scene, override=_overrides.get(spec.field_name, "")
+                record, spec.field_name, scene=scene, override=_overrides.get(spec.field_name, ""),
+                resolve_llm=resolve_llm,
             )
+            if info["source"] == "unresolved":
+                options = " / ".join(str(c.get("value")) for c in info["candidates"])
+                db_lines.append(f"- DB原典/{spec.label_ja} (未選択候補): {options}")
+                continue
             if info["source"] == "empty":
                 continue
             rendered = spec.render(info.get("value"))
@@ -3373,6 +3582,7 @@ def build_gemini_prompt(
     background: str = "",
     revisions: list[str] | tuple[str, ...] | None = None,
     field_overrides: dict[str, str] | None = None,
+    resolve_llm: bool = True,
 ) -> dict[str, Any]:
     """Gemini / Imagen 用のプロンプトと参照画像 URL を返す。"""
     hints = generation_ai_hints(record)
@@ -3439,7 +3649,9 @@ def build_gemini_prompt(
             " Keep a compact spherical corefolder silhouette,"
             " with no humanoid torso and no human limbs."
         )
-    form_common_block = _build_form_common_dataset_block(form, record, scene=scene, field_overrides=field_overrides)
+    form_common_block = _build_form_common_dataset_block(
+        form, record, scene=scene, field_overrides=field_overrides, resolve_llm=resolve_llm,
+    )
 
     if form == "corefolder":
         form_lock = (

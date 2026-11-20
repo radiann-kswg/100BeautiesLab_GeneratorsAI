@@ -11,14 +11,21 @@
 
 | ツール名 | 対応する入口 | 概要 |
 |---|---|---|
-| `numbertales_generate_character` | `run_image_pipeline` | 単体キャラ生成（Stage 1〜5）。`costume` フィールドで衣装差分指定可。`field_overrides` で `RaceType` 等の曖昧フィールドを明示指定可（未指定時はシーン文脈から LLM が自動判定） |
-| `numbertales_generate_joint` | `run_combined_pipeline` | 複数キャラを 1 枚に合同生成。Stage 3 で単体ラフ + 全体構図ラフを同時生成。`field_overrides` は全キャラ共通の1値（`costume` と同じ扱い） |
+| `numbertales_generate_character` | `run_image_pipeline` | 単体キャラ生成（Stage 1〜5）。`costume` で衣装（DB の衣装名か衣装差分の文）、`state` で状態（DB の状態名か、体型と着用物を変える文）を指定可。`field_overrides` で `RaceType` 等の曖昧フィールドを明示指定可（未指定時はシーン文脈から LLM が自動判定） |
+| `numbertales_generate_joint` | `run_combined_pipeline` | 複数キャラを 1 枚に合同生成。Stage 3 で単体ラフ + 全体構図ラフを同時生成。`field_overrides` は全キャラ共通の1値（`costume` と同じ扱い）。`states` でキャラクターごとの状態を指定可 |
+| `numbertales_create_upload_slot` | `output_sink.create_upload_slot` | 入力画像 1 枚の受け取り口。署名付き PUT URL（15 分有効、10MB まで、PNG・JPEG・WebP）と `object_key` を返す。置き場は GCS の `<GCS_PREFIX>/uploads/<日付>/` で、バケットのライフサイクルで 7 日後に消す。受け取った画像を生成ツールへ渡す `images` は未実装（2026-11-20 時点） |
 | `numbertales_generate_from_natural` | `parse_generation_request` → 上記 | 自然文からディスパッチ |
-| `numbertales_iterate` | `run_image_pipeline(iterate_from=…)` | i2i 改稿。GCS URL を `iterate_from` に直接渡せる。`field_overrides` も指定可 |
-| `numbertales_job_status` | — | ジョブ進捗・完成画像リンク照会（読取専用） |
-| `numbertales_list_runs` | — | 直近ジョブ一覧（読取専用） |
+| `numbertales_iterate` | `run_image_pipeline(iterate_from=…)` / `run_quick_edit` | i2i 改稿。GCS URL を `iterate_from` に直接渡せる。`field_overrides` も指定可。`quick: true` で、起点の絵を 1 回だけ編集する軽い加筆。`images` に役割 `base` があれば `iterate_from` を、役割 `markup` があれば `revisions` を省ける |
+| `numbertales_job_status` | — | ジョブ進捗・完成画像リンク照会（読取専用）。結果の `run_id`（実行フォルダー名）は、`numbertales_iterate` の `iterate_from` に渡せる |
+| `numbertales_list_runs` | — | 直近ジョブ一覧（読取専用）。`stored_runs` に、GCS に残っている実行（新しい順に最大 20 件。`run_id`・状態・キャラクター・完成画像の枚数）も返す |
 | `numbertales_get_run_logs` | — | 各ステージの中間ログ・プロンプト・画像 URL 照会（読取専用） |
 | `numbertales_answer_reference_warning` | `JobManager.answer_reference` | Stage 2 の画像観察失敗について、利用者の続行/中止の回答を返す |
+
+### 入力画像と事前確認
+
+- 単体・合同・改稿の生成ツールは `images: [{object_key, role, provenance, note}]` を受け取る。先に `numbertales_create_upload_slot` で画像を上げ、返ってきた `object_key` を渡す。役割ごとの枚数と渡すステージ、受け付ける出所は [`usage-iterate.md`](usage-iterate.md) の「入力画像・事前確認・軽い加筆」。自然文のツールは対象外。
+- 同じツールに `dry_run: true` を渡すと、ジョブを登録せずに、実行される内容（プロンプトの土台・選べる状態と衣装・公式の参照画像・役割の付いた入力画像）を JSON で返す。課金は無い。検証に通らない入力は `{"status": "error", "message": …}` で返る。本番の前に呼び、結果を利用者に示して承認を得る。
+- 出所（`provenance`）は 1 枚ずつ利用者に確かめる。このパイプラインの生成結果には `own_generated` を付けてよい。推測では付けない。
 
 ### 非同期ジョブ方式
 
@@ -59,6 +66,10 @@ job_status(job_id) → {"status": "succeeded", "result": {"outputs": [ {url …}
 > **Drive 利用時の注意**: GCE のデフォルト SA は Drive ストレージ容量を持たないため
 > `storageQuotaExceeded (403)` が発生します。`DRIVE_REFRESH_TOKEN` を設定して
 > ユーザー OAuth 認証を使うことで解消します（詳細: [docs/setup.md](setup.md) §4）。
+
+### 改稿の起点を GCS に残す
+
+`OUTPUT_SINK` が `local` 以外で `GCS_BUCKET` があれば、完成画像が出た実行の `pipeline_summary.json`・完成画像・`stage1_prompt/prompt_base_gemini.txt` を、GCS の `<GCS_PREFIX>/runs/<実行フォルダー名>/` にも置く（`output_sink.store_run()`）。Cloud Run のインスタンスが止まって出力フォルダーが消えたあとも、`iterate_from` に `run_id` を渡せば、`output_sink.restore_run()` が出力フォルダーへ戻して改稿を続けられる。`runs/` には消す設定を入れていない。期間を決めてライフサイクルのルールを足すかどうかは、使ってみてから決める。
 
 ### Stage 別シンク分離
 

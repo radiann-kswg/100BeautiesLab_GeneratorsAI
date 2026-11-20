@@ -54,13 +54,16 @@ def _synthesize_with_gemini(
     synth_dir: Path,
     work_key: str,
     count: int = _FINAL_IMAGE_COUNT,
+    inputs: list[dict] | None = None,
 ) -> list[Path]:
     """Stage 4 全ラフをマルチ参照として Gemini で合成完成画像を生成する。
 
     rough_paths の全ファイルを extra_ref_locals として渡し、
     「全案俯瞰」の合成プロンプトで count 枚を順次生成する。
+    inputs は依頼者が渡した入力画像。合成に渡す役割（加筆の起点・参考画像）だけを、ラベルを付けて添付する。
     """
     from src.gemini.generate import generate_image
+    from src.pipeline import input_images
 
     synth_dir.mkdir(parents=True, exist_ok=True)
     # 2026-08-29: ラフは先頭 2 枚に制限する。全ラフ (最大 5 枚) を渡すと ref_limit=5 の
@@ -68,6 +71,12 @@ def _synthesize_with_gemini(
     # 見ないまま完成する (作風が原典から乖離する直接原因だった)。
     extra_locals = [str(p) for p in rough_paths if p.exists()][:2]
     synth_prompt = _build_synthesis_prompt(base_prompt, len(extra_locals))
+    base, _, trailing = input_images.split(inputs, 5)
+    input_block = input_images.prompt_block(inputs, 5, synthesis=True)
+    if input_block:
+        synth_prompt = input_block + "\n\n" + synth_prompt
+    if base:                              # 加筆の起点はラフ案の前に添付する
+        extra_locals = [str(base["path"])] + extra_locals
     inter_sleep = float(os.environ.get("GEMINI_IMAGE_SLEEP", "6"))
 
     results: list[Path] = []
@@ -85,6 +94,8 @@ def _synthesize_with_gemini(
                 count=1,
                 prompt_override=synth_prompt,
                 extra_ref_locals=extra_locals,
+                trailing_ref_locals=[str(image["path"]) for image in trailing] or None,
+                ref_label_overrides=input_images.labels([*([base] if base else []), *trailing]) or None,
             )
             results.extend(paths)
         except SystemExit as err:
@@ -145,6 +156,7 @@ def generate_final_images(
     skip_canva: bool = False,
     prompts: dict | None = None,
     count: int | None = None,
+    inputs: list[dict] | None = None,
 ) -> dict[str, list[Path]]:
     """Stage 4 修正済み画像を全枚俯瞰して合成し、Canva で仕上げた完成画像を生成する。
 
@@ -159,6 +171,7 @@ def generate_final_images(
     prompts:           Stage 1 プロンプト dict (base_gemini キーを合成プロンプトに使用)
     count:             合成枚数 (None なら既定 _FINAL_IMAGE_COUNT)。
                        時間制約環境で 1 枚ずつ呼び出す分割運用のために外部指定可能。
+    inputs:            依頼者が渡した入力画像 (src/pipeline/input_images.py)。合成に渡す役割だけを使う。
 
     Returns
     -------
@@ -203,6 +216,7 @@ def generate_final_images(
         synth_dir=synth_dir,
         work_key=work_key,
         count=n_final,
+        inputs=inputs,
     )
 
     if not synth_images:

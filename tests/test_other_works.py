@@ -81,6 +81,16 @@ def test_other_work_prompts_drop_numbertales_rules_and_keep_story_states():
     assert "別状態" not in izuna
 
 
+def test_default_states_are_drawn_as_ordinary_entries():
+    from src.utils.dataset import build_appearance_detail_block
+    block = build_appearance_detail_block({"data": {"AppearanceDetail": [
+        {"Formation": "normal", "BodyPart": ["#BodyPart_Tail"], "Attrs": [{"value_EN": "snake tail"}]},
+        {"Formation": "beasted", "BodyPart": ["#BodyPart_Arm"], "Attrs": [{"value_EN": "scaled arms"}]},
+    ]}}, "humanoid")
+    assert "- Tail: snake tail" in block                           # 獣化前は通常の項目
+    assert "- [別状態 beasted だけの特徴。" in block
+
+
 def test_stage2_uses_appearance_detail_as_canon_only_for_works_without_ai_hints(tmp_path, monkeypatch):
     prompts = []
 

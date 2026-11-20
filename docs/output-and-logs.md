@@ -194,9 +194,11 @@ Get-ChildItem -Recurse -Filter prompt.txt output | Where-Object { $_.Directory.N
 
 ```text
 output/{YYYYMMDD}/{ts}_pipeline_{form}_num{NNN}/      # ← 1 実行 = 1 フォルダ
+├── inputs/                # 依頼者が渡した入力画像 (--images があるときだけ。構図参考はグレースケール)
 ├── stage1_prompt/
 │   ├── prompt_openai.txt
-│   └── prompt_gemini.txt
+│   ├── prompt_gemini.txt
+│   └── prompt_base_gemini.txt   # ラフと合成に渡した土台 (軽い加筆 --quick が使い回す)
 ├── stage3_rough/          # ラフ5案 (Gemini) + Adobe 構図ガイド
 │   └── {ts}_gemini_{form}_num{NNN}/      # 子生成はフラット 1 段
 │       ├── num{NNN}_{form}_01.jpg
@@ -242,7 +244,8 @@ output/{YYYYMMDD}/{ts}_pipeline_{form}_nums{AAA}_{BBB}/
 | `stage3_paths`     | Stage 3 生成パス。単体は配列、合同は `char_{NNN}` キーごとの dict + `"all"` キー            |
 | `stage4_paths`     | Stage 4 補正パス。合同は `char_{NNN}` キーと `"best_per_char"` (Stage 5 参照用) を含む      |
 | `stage5_paths`     | `synth` / `canva` / `all` の3キー                                                           |
-| `stage1_prompts`   | シーン / キャラ名 / `iterate_from` + `revisions` (i2i 時)                                   |
+| `stage1_prompts`   | シーン / キャラ名 / `iterate_from` + `revisions` (i2i 時)。軽い加筆は `quick: true` と `prompt_source` |
+| `input_images`     | 依頼者が渡した入力画像の記録 (`role` / `note` / `provenance` / `source` / `bytes` / `width` / `height` / `sha256` / `stages` / `grayscale` / `file`) |
 | `status`           | `"ok"` / `"failed"` / `"partial"`                                                           |
 | `errors`           | 各 Stage のエラー要旨                                                                        |
 | `elapsed_seconds`  | パイプライン全体の所要秒数                                                                  |

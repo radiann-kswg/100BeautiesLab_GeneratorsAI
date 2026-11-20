@@ -58,10 +58,15 @@ python -m src.pipeline.image_pipeline --badge 57 --form corefolder --skip-canva
 | `--scene` | `""` | シーン説明。**省略時は Stage 1 でキャラクターに合ったシーンを自動生成** |
 | `--style` / `--composition` / `--background` | `""` | 作風・構図・背景ヒント |
 | `--skip-canva` | false | Stage 5 の Canva をスキップ |
-| `--costume TEXT` | `""` | 衣装差分の説明 (例: `"黒いワンピース姿の差分"`)。指定時は Stage 1 でデフォルト衣装を上書きしてプロンプト生成する。不変特徴（耳・尻尾・髪色・瞳色）は維持される |
+| `--costume TEXT` | `""` | 衣装の指定。DB にある衣装の名前 (例: `miko`) ならその衣装の項目を描き、それ以外の文 (例: `"黒いワンピース姿の差分"`) は Stage 1 でデフォルト衣装を上書きする衣装差分になる。不変特徴（耳・尻尾・髪色・瞳色）は維持される |
+| `--state TEXT` | `""` | 状態の指定。DB にある状態の名前 (例: `afterChanged`, `beasted`) ならその状態の項目を描き、それ以外の文は体型と着用物だけを変える指定になる（下の「状態と衣装の指定」） |
+| `--states A;B` | `""` | `--nums` の各キャラクターの状態（`--nums` と同じ順に `;` 区切り。空欄は既定） |
 | `--correction-mode` | `t2i` | Stage 4 重度違反時の対処モード。`t2i`: Stage 4 内で T2I 再生成 / `stage3`: Stage 3 に差し戻してラフを再生成 |
 | `--iterate-from PATH` | None | 前回生成画像を起点に Stage 3 を **i2i モード**で実行。Stage 4/5 は通常通り走る。詳細は [`usage-iterate.md`](usage-iterate.md) |
 | `--revisions TEXT` | None | 修正指示（`; `/改行区切り）。`--iterate-from` と組み合わせて使用 |
+| `--images JSON\|FILE` | None | 依頼者が渡す入力画像（加筆の起点・赤入れ・構図参考・参考画像）。役割・枚数・出所は [`usage-iterate.md`](usage-iterate.md) の「入力画像・事前確認・軽い加筆」 |
+| `--dry-run` | false | 生成せず、プロンプトの土台・選べる状態と衣装・役割の付いた画像の一覧を JSON で表示する（課金なし） |
+| `--quick` | false | 軽い加筆。起点の絵を 1 回だけ編集して完成画像 1 枚を保存する（単体だけ。Stage 1 の LLM 加工・Stage 2・Stage 4・Canva を省く） |
 | `--prefer-gemini-parse` | false | `--natural` / `--story` のパース時に Gemini を OpenAI より優先 |
 | `--field-override FIELD=VALUE` | None | `RaceType` 等の曖昧フィールド（複数候補から1つ選ぶ必要があるもの）を明示指定。繰り返し指定可能（例: `--field-override RaceType=最終的な設計目標 --field-override Height_cm=190`）。未指定時はシーン文脈から LLM が自動判定する |
 | `--non-interactive` | false | 実ターミナル (TTY) 実行時でも曖昧フィールドの対話確認プロンプトを出さない |
@@ -81,7 +86,7 @@ python -m src.pipeline.image_pipeline --badge 57 --form corefolder --skip-canva
 - 従来の指定（`Num` の `2-alt`、作品内の識別子 `Mouse`）もそのまま使える。
 - NumberTales 以外の作品はコアフォルダ形態を持たないため、`--form` の指定にかかわらず `humanoid` として扱う。プロンプトからコアフォルダ・私服の区別などの固定文言を外し、作品名も切り替える。
 - AIHints を持たない作品では、`AppearanceDetail` の文面を外見の正典として Stage 2 の観察へ進む（NumberTales は従来どおり AIHints が正典で、無ければ確認待ち）。バッチの `skip_no_hints` も同じ基準で判定する。
-- `Formation` が形態名でない項目（豹変系女子の `beforeChange` / `afterChanged`）は作品内の状態として扱う。`beforeChange` は通常の項目、それ以外は「別状態だけの特徴。シーンがこの状態を指定した場合だけ描く」と付けて `[DB部位別仕様]` に残す。
+- `Formation` が形態名でない項目（豹変系女子の `beforeChange` / `afterChanged`、獣爾騎兵の `normal` / `beasted`）は作品内の状態として扱う。`beforeChange` と `normal` は通常の項目、それ以外は「別状態だけの特徴。シーンがこの状態を指定した場合だけ描く」と付けて `[DB部位別仕様]` に残す。
 - 出力フォルダーは `…_{provider}_humanoid_num{識別子}`（例: `…_pipeline_humanoid_numMouse`）。作品キーは `run_meta.json` に残る。
 - 対象外: `--natural` / `--story` での他作品の名前解決、作品をまたぐ合同生成（`--nums` は 1 作品）、豹変後の姿を選ぶ専用オプション、SDXL（NumberTales 用 LoRA）。
 
@@ -512,6 +517,7 @@ python -m src.batch_generate --nums 15,22,49,57 --forms both --provider both --s
 | ---- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
 | 0    | **`[画像内テキスト規則]`**             | 資料の説明文・注釈・署名は禁止。公式番号・紋章・衣装文字は例外として字形と指定位置を再現し、汎用フォントへ置換しない | (固定文、`build_gemini_prompt` 先頭 + `gemini/generate.py` 末尾サフィックスで二重適用) |
 | 1    | 導入文                                                | 「このキャラクターを描いてください」「同じキャラクターを別ポーズで〜」                                        | (固定文)                                                                       |
+| 1.4  | `[入力画像の扱い]` (入力画像があるときのみ) | 依頼者が渡した画像の役割ごとの使い方。外見は公式の参照画像と設定資料を正とする。詳細は [`usage-iterate.md`](usage-iterate.md) | `--images` |
 | 1.5  | `[修正指示]` (i2i 時のみ)                             | iterate-from の修正項目を最優先で適用させる。詳細は [`usage-iterate.md`](usage-iterate.md)                    | `--revisions`                                                                  |
 | 2    | `[参照画像]` / `[参照画像URL]` / `[参照画像ローカル]` | URL とローカル添付の存在告知 (humanoid 形態は尾構造参考画像 `images.tails_unit` も含む)                       | `ai_hints.*.reference_images`, レコード `images`（`concept`/`corefolder`/`humanoid`/`arts`/`design_alt`/`catalog`/`tails_unit`）および `AppearanceDetail[].img_PNGName` |
 | 2.5  | `[参照N｜役割]` (API 送信時・各画像の直前)             | 添付画像ごとに「起点画像（前回生成）」「下絵・ラフ」「公式原典」の役割ラベルをテキストパートとして挟む。原典以外の配色・崩れ・蛇足を引き継がせないための明示。合同合成は「キャラクター単体レンダー」 | `gemini/generate.py` の `REF_LABEL_*` / `extra_ref_label` (プロンプト本文ではなく `contents` に差し込む) |
@@ -578,6 +584,23 @@ Stage 1 の要約や i2i の `prompt_override` でも、Gemini/OpenAI の送信�
 > `src/utils/dataset.py` の `_AMBIGUOUS_FIELD_SPECS` を参照。新しい対象フィールドを追加する場合は
 > レジストリに1行足すだけでよい（対象外: `Weight_kg` は「基本値+装備品加算」という別の意味構造のため
 > 対象外）。
+
+### 状態と衣装の指定（2026-11-20）
+
+`--state` / `--costume`（合同は `--states`。MCP は `state` / `costume` / `states`）で、描く状態と衣装を選ぶ。
+
+| 指定 | 扱い |
+|---|---|
+| DB にある状態の名前（`afterChanged`、`beasted` など） | その状態の項目を通常の項目として描き、ほかの状態の項目に「今回の絵には描かない」を付ける |
+| DB にある衣装の名前（`miko`、`otaku`、`jacketless` など） | その衣装の項目と AIHints の文面を残し、通常衣装のものを落とす。LLM へ衣装差分としては渡さない |
+| 名前に当たらない文 | 自由な指定。変えてよいのは体型と衣装・着用物だけで、耳・尾・髪・瞳・番号は設定のまま。状態の文で外せる着用物は、DB で `Detachable` の印が付いた品目だけ。状態の文はシーンにも足し、身長などの曖昧フィールドの選び方に効かせる |
+
+- 指定は `[DB部位別仕様]` の後ろの `[状態と衣装の指定]` ブロックとして、Stage 1 のベースプロンプト、Stage 2 の観察、Stage 3 の生成、Stage 4 の検査仕様に入る。ブロックには「公式の参照画像は通常の状態・通常衣装の姿。指定で変えた体型と衣装は違反や欠落に数えない」と書く。
+- 実装: `src/utils/dataset.py` の `character_selection()`（実行のあいだだけ有効な指定）と `find_character()`。`run_image_pipeline(state=…)` / `run_combined_pipeline(states=…)` が指定を有効にする。選べる名前は `state_names()` / `costume_names()`。
+- 第三者がデザインした衣装（NumberTales 61 の `idol`）は選べない（`ValueError`）。
+- 表情の切り替えは、これまでどおり `--scene` で指定する。衣装ごとの参照画像の選び分けは、上流の画像の区分（CreationsDB #63）が入ってから。
+
+> **2026-11-20 更新（衣装の絞り込みと AI に渡さない衣装）**: `find_character()` は、`AppearanceDetail` の `Costume` が `usual` 以外の項目と、AIHints に写されたその項目の文面を落として返す（`drop_costumes()`）。指定が無いときは通常衣装だけを描き、別衣装（35 の `miko`、60 の `otaku` など）の特徴を混ぜない。`Costume` を持たない項目は、これまでどおりどの衣装でも描く。あわせて、権利上 AI に渡さない衣装と画像（`_AI_EXCLUDED_COSTUMES` / `_AI_EXCLUDED_IMAGE_STEMS`。NumberTales 61 のアイドル衣装）を、`load_manifest()` の時点でレコードから外し、`collect_reference_images()` でも参照画像の候補から外す。上流で衣装・画像の単位の AI オプトアウトを指定できるようになるまでの下流側の除外（CreationsDB #62）。DB の値で衣装を選ぶ機能はまだ無い。
 
 ---
 

@@ -37,44 +37,117 @@ def _is_remote_url(value: str) -> bool:
     return value.startswith("gs://") or bool(_GCS_SIGNED_URL_RE.match(value))
 
 
+REMOTE_MAX_BYTES = 10 * 1024 * 1024
+_REMOTE_TIMEOUT_SEC = 30
+
+
+def _own_object(url: str) -> tuple[str, str]:
+    """URL を (バケット, オブジェクトキー) に分け、このサーバーの置き場のものか確かめる。
+
+    受け付けるのは ``GCS_BUCKET`` の ``GCS_PREFIX``（既定 numbertales）の下だけ。同じ形の URL でも、
+    ほかのバケットやほかの用途の接頭辞の画像は起点にしない。
+    """
+    import os
+
+    parsed = urllib.parse.urlparse(url)
+    path = urllib.parse.unquote(parsed.path).lstrip("/")
+    host = (parsed.netloc or "").lower()
+    if parsed.scheme == "gs":
+        bucket, key = parsed.netloc, path
+    elif host in ("storage.googleapis.com", "storage.cloud.google.com"):
+        bucket, _, key = path.partition("/")
+    else:                                           # https://<bucket>.storage.googleapis.com/<key>
+        bucket, key = host.removesuffix(".storage.googleapis.com"), path
+    own_bucket = os.environ.get("GCS_BUCKET", "").strip()
+    prefix = os.environ.get("GCS_PREFIX", "numbertales").strip("/") or "numbertales"
+    if not own_bucket:
+        raise RuntimeError("GCS_BUCKET が未設定のため、リモートの画像を起点にできません。")
+    if bucket != own_bucket or not key.startswith(f"{prefix}/") or ".." in key.split("/"):
+        raise RuntimeError(f"起点にできるのは、このサーバーのバケットの {prefix}/ の下の画像だけです。")
+    return bucket, key
+
+
 def _download_remote_image(url: str) -> Path:
     """GCS URL / 署名 URL を tempfile にダウンロードして Path を返す。
 
-    - ``gs://bucket/key`` は google-cloud-storage で取得
-    - ``https://...`` は urllib.request で取得
+    - 受け付けるのは、このサーバーの置き場（``_own_object``）の画像だけ
+    - ``gs://bucket/key`` は google-cloud-storage、``https://...`` は urllib で取得する
+    - ``_REMOTE_TIMEOUT_SEC`` 秒で打ち切り、``REMOTE_MAX_BYTES`` を超える画像は受け付けない
     失敗時は RuntimeError を送出する。
     """
-    # 拡張子を URL から推測して tempfile 名に使う
-    parsed_path = urllib.parse.urlparse(url).path.lower()
-    suffix = ".jpg"
-    for ext in _SUPPORTED_IMAGE_SUFFIXES:
-        if parsed_path.endswith(ext):
-            suffix = ext
-            break
-
-    tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
+    bucket_name, object_key = _own_object(url)
+    suffix = next((ext for ext in _SUPPORTED_IMAGE_SUFFIXES if object_key.lower().endswith(ext)), ".jpg")
     try:
         if url.startswith("gs://"):
             try:
                 from google.cloud import storage  # type: ignore
             except ImportError as e:
                 raise RuntimeError(f"google-cloud-storage が未インストールです: {e}") from e
-            # gs://bucket/object-key を分解
-            without_scheme = url[5:]  # "bucket/key"
-            bucket_name, _, object_key = without_scheme.partition("/")
-            client = storage.Client()
-            bucket = client.bucket(bucket_name)
-            blob = bucket.blob(object_key)
-            blob.download_to_filename(tmp.name)
+            blob = storage.Client().bucket(bucket_name).get_blob(object_key)
+            if blob is None:
+                raise RuntimeError("オブジェクトが見つかりません")
+            if int(blob.size or 0) > REMOTE_MAX_BYTES:
+                raise RuntimeError(f"画像が大きすぎます（上限 {REMOTE_MAX_BYTES // (1024 * 1024)}MB）")
+            data = blob.download_as_bytes(timeout=_REMOTE_TIMEOUT_SEC)
         else:
-            urllib.request.urlretrieve(url, tmp.name)  # noqa: S310
-    except Exception as e:
-        Path(tmp.name).unlink(missing_ok=True)
-        raise RuntimeError(f"リモート画像のダウンロードに失敗しました: {url} — {e}") from e
-    finally:
-        tmp.close()
-
+            with urllib.request.urlopen(url, timeout=_REMOTE_TIMEOUT_SEC) as response:  # noqa: S310 — 上で自分の置き場に限定済み
+                data = response.read(REMOTE_MAX_BYTES + 1)
+            if len(data) > REMOTE_MAX_BYTES:
+                raise RuntimeError(f"画像が大きすぎます（上限 {REMOTE_MAX_BYTES // (1024 * 1024)}MB）")
+    except RuntimeError as e:
+        raise RuntimeError(f"リモート画像のダウンロードに失敗しました: {url[:120]} — {e}") from e
+    except Exception as e:  # noqa: BLE001
+        raise RuntimeError(f"リモート画像のダウンロードに失敗しました: {url[:120]} — {e}") from e
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+        tmp.write(data)
     return Path(tmp.name)
+
+
+_RUN_NAME_RE = re.compile(r"^\d{8}_\d{6}_[\w-]+$")
+
+
+def _locate_run(value: str) -> Path | None:
+    """実行フォルダー名だけの指定を、出力フォルダーの中の実行フォルダーに解決する。
+
+    手元に無く、出力先が GCS か Drive の設定なら、GCS の ``<接頭辞>/runs/`` から戻す。見つからなければ None。
+    """
+    from src.utils.paths import default_output_base
+
+    if not _RUN_NAME_RE.match(value):
+        return None
+    local = default_output_base() / value[:8] / value
+    if local.is_dir():
+        return local
+    from src.mcp_server import output_sink
+
+    if output_sink.current_sink() == "local":
+        return None
+    restored = output_sink.restore_run(value, default_output_base())
+    if restored is not None:
+        print(f"[iterate] 実行 {value} を GCS から戻しました → {restored}")
+    return restored
+
+
+def _pipeline_final(run_dir: Path) -> Path | None:
+    """パイプラインの実行フォルダーの記録から、完成画像の先頭を返す（記録が無い・画像が無いなら None）。"""
+    import json
+
+    summary_file = run_dir / "pipeline_summary.json"
+    if not summary_file.is_file():
+        return None
+    from src.mcp_server import output_sink
+
+    try:
+        summary = json.loads(summary_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(summary, dict):
+        return None
+    for rel in output_sink.run_final_files(summary, run_dir.name):
+        candidate = run_dir.joinpath(*rel.parts)
+        if candidate.is_file() and candidate.suffix.lower() in _SUPPORTED_IMAGE_SUFFIXES:
+            return candidate
+    return None
 
 
 def resolve_iterate_source(value: str | Path) -> tuple[Path, Path | None]:
@@ -83,7 +156,10 @@ def resolve_iterate_source(value: str | Path) -> tuple[Path, Path | None]:
     - 値が GCS URL (``gs://`` / ``https://storage.googleapis.com/...``) なら
       一時ファイルにダウンロードして ``(tmp_path, None)`` を返す
     - 値がファイルなら ``(file, file.parent)`` を返す
-    - 値がディレクトリなら、配下の生成画像 (``num*_*``) を 1 つ選んで返す
+    - 値がパイプラインの実行フォルダー (``pipeline_summary.json`` がある) なら、記録にある完成画像の先頭を返す
+    - 値がそれ以外のディレクトリなら、配下の生成画像 (``num*_*``) を 1 つ選んで返す
+    - 値が実行フォルダー名 (``20261120_150049_pipeline_corefolder_num57`` など) だけなら、出力フォルダーから探し、
+      無ければ GCS の ``<接頭辞>/runs/`` から戻す (コネクタのサーバーが止まって出力フォルダーが消えたあと)
     - 解決できない場合は ``FileNotFoundError`` / ``RuntimeError`` を投げる
     """
     str_value = str(value)
@@ -97,7 +173,10 @@ def resolve_iterate_source(value: str | Path) -> tuple[Path, Path | None]:
 
     path = Path(value)
     if not path.exists():
-        raise FileNotFoundError(f"iterate-from のパスが存在しません: {value}")
+        located = _locate_run(str_value)
+        if located is None:
+            raise FileNotFoundError(f"iterate-from のパスが存在しません: {value}")
+        path = located
 
     if path.is_file():
         if path.suffix.lower() not in _SUPPORTED_IMAGE_SUFFIXES:
@@ -105,6 +184,11 @@ def resolve_iterate_source(value: str | Path) -> tuple[Path, Path | None]:
                 f"iterate-from は画像ファイル ({', '.join(_SUPPORTED_IMAGE_SUFFIXES)}) を指定してください: {value}"
             )
         return path, path.parent
+
+    # パイプラインの実行フォルダーなら、記録にある完成画像の先頭を起点にする。
+    final = _pipeline_final(path)
+    if final is not None:
+        return final, path
 
     # ディレクトリの場合: 配下の `num*_*.{png,jpg,...}` を新しいもの順で探す。
     candidates: list[Path] = []
