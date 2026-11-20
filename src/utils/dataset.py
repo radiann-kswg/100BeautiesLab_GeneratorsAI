@@ -44,6 +44,95 @@ def appearance_details_for_form(record: dict, form: str) -> list[dict]:
             and (e.get("Formation") in (None, form) or e.get("Formation") not in _PIPELINE_FORMS)]
 
 
+# 指定が無いときに描く衣装。別衣装の項目が混ざると、2 着分の特徴が 1 枚に出る。
+_DEFAULT_COSTUME = "usual"
+# 権利上 AI に渡さない衣装と、その衣装を描いた画像。上流で指定できるようになるまで
+# 下流で外す (CreationsDB #62)。NumberTales 61 のアイドル衣装はデザインが第三者のもの。
+_AI_EXCLUDED_COSTUMES = frozenset({("#Works_NumberTales", "idol")})
+_AI_EXCLUDED_IMAGE_STEMS = frozenset({
+    "chr-dsgn-alt_wipNTS-61-idol", "emstk_corefolderNTS-61-idol1", "emstk_corefolderNTS-61-idol2",
+})
+
+
+def is_ai_excluded_image(path: Any) -> bool:
+    """AI に渡さない画像か。パス・URL・拡張子なしの DB 記載名のどれでも受ける。"""
+    return isinstance(path, str) and Path(path.replace("\\", "/")).stem in _AI_EXCLUDED_IMAGE_STEMS
+
+
+def _entry_texts(entry: dict) -> set[str]:
+    return {value.strip() for attr in entry.get("Attrs") or [] if isinstance(attr, dict)
+            for value in (attr.get("value_EN"), attr.get("value_JP"))
+            if isinstance(value, str) and value.strip()}
+
+
+def drop_costumes(record: dict[str, Any], dropped: Callable[[str], bool]) -> dict[str, Any]:
+    """``dropped(衣装の値)`` が真になる衣装の記述を落としたレコードを返す（元のレコードは変えない）。
+
+    AppearanceDetail の項目に加え、AIHints に写されたその項目の文面も落とす。AIHints は項目の
+    文面をそのまま、または ", " でつないで持つので、落とす項目だけが持つ文面で照合する。
+    """
+    sources = [record[key] for key in ("data", "db_record") if isinstance(record.get(key), dict)]
+    entries = [e for src in sources for e in src.get("AppearanceDetail") or [] if isinstance(e, dict)]
+
+    def gone(entry: dict) -> bool:
+        return bool(entry.get("Costume")) and dropped(str(entry["Costume"]))
+
+    if not any(gone(e) for e in entries):
+        return record
+    kept = set().union(*(_entry_texts(e) for e in entries if not gone(e)))
+    texts = sorted(set().union(*(_entry_texts(e) for e in entries if gone(e))) - kept, key=len, reverse=True)
+    alternatives = "|".join(re.escape(text) for text in texts)
+    listed = re.compile(rf"(?:^|[,:] )(?:{alternatives})(?:$|, |\))") if texts else None
+
+    def scrub(node: Any) -> Any:
+        if isinstance(node, dict):
+            # つないだ文（prompt_export 等）は部分的に削ると残骸が出るので空にする。
+            # generation_ai_hints() が ai_tags から組み直す。
+            return {key: "" if isinstance(value, str) and any(text in value for text in texts) else scrub(value)
+                    for key, value in node.items()}
+        if isinstance(node, list):
+            return [scrub(item) for item in node
+                    if not (listed and isinstance(item, str) and listed.search(item))]
+        return node
+
+    result = dict(record)
+    for key in ("data", "db_record"):
+        src = record.get(key)
+        if isinstance(src, dict):
+            src = dict(src)
+            if isinstance(src.get("AppearanceDetail"), list):
+                src["AppearanceDetail"] = [e for e in src["AppearanceDetail"]
+                                           if not (isinstance(e, dict) and gone(e))]
+            if src.get("AIHints"):
+                src["AIHints"] = scrub(src["AIHints"])
+            result[key] = src
+    if result.get("ai_hints"):
+        result["ai_hints"] = scrub(result["ai_hints"])
+    return result
+
+
+def _drop_excluded_images(node: Any) -> Any:
+    if isinstance(node, dict):
+        return {key: _drop_excluded_images(value) for key, value in node.items()
+                if not is_ai_excluded_image(value)}
+    if isinstance(node, list):
+        return [_drop_excluded_images(item) for item in node
+                if not is_ai_excluded_image(item.get("path") if isinstance(item, dict) else item)]
+    return node
+
+
+def _strip_ai_excluded(record: dict[str, Any], raw_line: str = "") -> dict[str, Any]:
+    """権利上 AI に渡さない衣装の記述と画像を、読み込んだレコードから外す。"""
+    work_key = record.get("work_key")
+    record = drop_costumes(record, lambda costume: (work_key, costume) in _AI_EXCLUDED_COSTUMES)
+    if any(stem in raw_line for stem in _AI_EXCLUDED_IMAGE_STEMS):
+        record = dict(record)
+        for key in ("images", "preferred_reference_images", "ai_hints"):
+            if record.get(key):
+                record[key] = _drop_excluded_images(record[key])
+    return record
+
+
 def _vocab_tail(token: Any) -> str:
     """'#BodyPart_Arm' → 'Arm'。語彙トークンの接頭辞を落として画像モデル向けの平文にする。"""
     return str(token).split("_", 1)[-1].lstrip("#") if token else ""
@@ -1001,7 +1090,7 @@ def collect_reference_images(
     work_key = str(record.get("work_key") or "#Works_NumberTales")
 
     def _allow_path(path: str) -> bool:
-        if not _is_path_compatible_with_form(path, form):
+        if is_ai_excluded_image(path) or not _is_path_compatible_with_form(path, form):
             return False
         # 該当キャラクターのバッジ (旧命名では番号) を含まないパスは
         # 他キャラクターの装備・顔が混入するため捨てる。
@@ -1514,7 +1603,7 @@ def load_manifest(manifest_path: str | None = None) -> list[dict[str, Any]]:
             line = line.strip()
             if not line:
                 continue
-            records.append(json.loads(line))
+            records.append(_strip_ai_excluded(json.loads(line), line))
     return records
 
 
@@ -1705,6 +1794,19 @@ def resolve_target(
 
 
 def find_character(
+    num: int | str,
+    work_key: str = "#Works_NumberTales",
+    manifest_path: str | None = None,
+) -> dict[str, Any] | None:
+    """キャラクターを検索し、通常衣装の記述だけを残して返す。見つからない場合は None。
+
+    別衣装（``Costume`` が usual 以外）の項目は生成に混ぜない。検索の手順は :func:`_find_character`。
+    """
+    record = _find_character(num, work_key, manifest_path)
+    return record and drop_costumes(record, lambda costume: costume != _DEFAULT_COSTUME)
+
+
+def _find_character(
     num: int | str,
     work_key: str = "#Works_NumberTales",
     manifest_path: str | None = None,

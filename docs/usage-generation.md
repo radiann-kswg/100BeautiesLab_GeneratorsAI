@@ -579,6 +579,8 @@ Stage 1 の要約や i2i の `prompt_override` でも、Gemini/OpenAI の送信�
 > レジストリに1行足すだけでよい（対象外: `Weight_kg` は「基本値+装備品加算」という別の意味構造のため
 > 対象外）。
 
+> **2026-11-20 更新（衣装の絞り込みと AI に渡さない衣装）**: `find_character()` は、`AppearanceDetail` の `Costume` が `usual` 以外の項目と、AIHints に写されたその項目の文面を落として返す（`drop_costumes()`）。指定が無いときは通常衣装だけを描き、別衣装（35 の `miko`、60 の `otaku` など）の特徴を混ぜない。`Costume` を持たない項目は、これまでどおりどの衣装でも描く。あわせて、権利上 AI に渡さない衣装と画像（`_AI_EXCLUDED_COSTUMES` / `_AI_EXCLUDED_IMAGE_STEMS`。NumberTales 61 のアイドル衣装）を、`load_manifest()` の時点でレコードから外し、`collect_reference_images()` でも参照画像の候補から外す。上流で衣装・画像の単位の AI オプトアウトを指定できるようになるまでの下流側の除外（CreationsDB #62）。DB の値で衣装を選ぶ機能はまだ無い。
+
 ---
 
 ## 6. 失敗時の挙動
