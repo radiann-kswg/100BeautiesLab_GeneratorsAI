@@ -67,3 +67,11 @@ AGENTS.md                                          |   12 +
 - テスト結果: `tests/test_detail_references.py` の 15 件が失敗、ほかの 104 件は成功（Windows 実機、`PYTHONUTF8=1`、API キーは空）。
 - 上流へ依頼済み: 意図しない除外だった（2026-11-20 ラジアン確認）。`attr` 画像を AI オプトアウトの対象にしないよう、[CreationsAI #4](https://github.com/radiann-kswg/100BeautiesLab_CreationsAI/issues/4) を立てた。原因は、許可の一覧が `Images.*` と `TailsUnit` の宣言だけから作られ、`img_PNGName` が宣言に数えられていないこと。上流の修正と再生成のあとに同期し直す。それまで、下流で `creations-db` のパスを直接たどる回避はしない（索引は AI に渡してよい画像の正典）。テストも書き換えていない。
 - `state`・`Costume`・`Detachable` の追従（実装の順番の 2 番）は、ShapeChangerAI だけ済んだ。このリポジトリは未着手。
+
+### 再同期（2026-11-20 17:40、CreationsAI #4 の修正の取り込み）
+
+- 差分把握: `_creations-ai` `6f5b37d..64e951c`（creations-db は `f2d10b1` のまま）。`5177c6a` で `AppearanceDetail[].img_PNGName` が画像の宣言として許可の一覧に入り、`ai-dataset/image-index.json` は 481 件から 600 件、`attr/` 配下は 11 件から 130 件になった。manifest のレコード本文と許可件数（187 件）は変わらない。
+- 影響判定: このリポジトリのコード変更は要らない。`_collect_appearance_detail_images()` は索引に載った実名を通すので、再生成された索引だけで部位図が戻る。`collect_reference_images()` で、93 の `attr_numberMarkNTS-93.png` と 57・61 の番号図が参照の先頭 3 枚に入ることを確かめた。
+- 61 の扱い: 索引に戻った 61 の部位図は、通常衣装の項目が宣言する番号図・紋章と、尻尾ユニット。アイドル衣装の項目と画像 3 枚は、manifest にも索引にも無いまま。
+- テスト結果: `tests/` の 128 件がすべて成功（Windows 実機、`PYTHONUTF8=1`、API キーは空、`OUTPUT_SINK=local`）。上の「未解決の影響」に書いた `tests/test_detail_references.py` の 15 件の失敗は解消した。
+- 残ること: どのレコードも実名で宣言していない 10 件（`tailsUnit` の 7 件、28 の `earingBack`、SelfSecondary の `223-lot`・`753-lot`）は索引に載らない。使うには上流で宣言を足す（[CreationsAI #4](https://github.com/radiann-kswg/100BeautiesLab_CreationsAI/issues/4) のコメント）。
