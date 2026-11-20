@@ -32,9 +32,10 @@ def is_detail_reference(path: str) -> bool:
 
 
 _PIPELINE_FORMS = ("corefolder", "humanoid")
-# 形態名以外の Formation は作品内の状態 (豹変系女子の豹変前後)。既定で描くのは beforeChange。
-# shortcut: 既定の状態はこの 1 語だけ。他作品が状態別の外見を持ったらここへ足す。
-_DEFAULT_STATES = ("beforeChange",)
+# 形態名以外の Formation は作品内の状態。既定で描くのは、豹変系女子の beforeChange (豹変前) と
+# 獣爾騎兵の normal (獣化前)。
+# shortcut: 既定の状態は作品ごとの語を並べただけ。他作品が状態別の外見を持ったらここへ足す。
+_DEFAULT_STATES = ("beforeChange", "normal")
 
 
 def appearance_details_for_form(record: dict, form: str) -> list[dict]:

@@ -81,7 +81,7 @@ python -m src.pipeline.image_pipeline --badge 57 --form corefolder --skip-canva
 - 従来の指定（`Num` の `2-alt`、作品内の識別子 `Mouse`）もそのまま使える。
 - NumberTales 以外の作品はコアフォルダ形態を持たないため、`--form` の指定にかかわらず `humanoid` として扱う。プロンプトからコアフォルダ・私服の区別などの固定文言を外し、作品名も切り替える。
 - AIHints を持たない作品では、`AppearanceDetail` の文面を外見の正典として Stage 2 の観察へ進む（NumberTales は従来どおり AIHints が正典で、無ければ確認待ち）。バッチの `skip_no_hints` も同じ基準で判定する。
-- `Formation` が形態名でない項目（豹変系女子の `beforeChange` / `afterChanged`）は作品内の状態として扱う。`beforeChange` は通常の項目、それ以外は「別状態だけの特徴。シーンがこの状態を指定した場合だけ描く」と付けて `[DB部位別仕様]` に残す。
+- `Formation` が形態名でない項目（豹変系女子の `beforeChange` / `afterChanged`、獣爾騎兵の `normal` / `beasted`）は作品内の状態として扱う。`beforeChange` と `normal` は通常の項目、それ以外は「別状態だけの特徴。シーンがこの状態を指定した場合だけ描く」と付けて `[DB部位別仕様]` に残す。
 - 出力フォルダーは `…_{provider}_humanoid_num{識別子}`（例: `…_pipeline_humanoid_numMouse`）。作品キーは `run_meta.json` に残る。
 - 対象外: `--natural` / `--story` での他作品の名前解決、作品をまたぐ合同生成（`--nums` は 1 作品）、豹変後の姿を選ぶ専用オプション、SDXL（NumberTales 用 LoRA）。
 
