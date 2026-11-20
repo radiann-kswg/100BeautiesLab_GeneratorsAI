@@ -530,13 +530,13 @@ def _run_prefix(run_id: str) -> str:
 def run_relative(path: str, run_name: str) -> PurePosixPath | None:
     """記録に残ったパス（実行したサーバーでの絶対・相対パス）を、実行フォルダーからの相対パスにする。
 
-    実行フォルダーの外を指すパスと、``..`` を含むパスは None。
+    実行フォルダーの外を指すパスと、``..`` やドライブ名を含むパスは None。
     """
     parts = PurePosixPath(str(path).replace("\\", "/")).parts
     if run_name not in parts:
         return None
     tail = parts[len(parts) - 1 - parts[::-1].index(run_name) + 1:]
-    if not tail or ".." in tail:
+    if not tail or ".." in tail or any(":" in part for part in tail):      # 「C:」は Windows で別の場所を指す
         return None
     return PurePosixPath(*tail)
 

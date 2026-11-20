@@ -66,6 +66,7 @@ def test_recorded_paths_become_relative_to_the_run_folder():
     assert output_sink.run_relative("output/20261120/other_run/a.png", RUN) is None       # 実行フォルダーの外
     assert output_sink.run_relative(f"output/{RUN}/../secret.png", RUN) is None
     assert output_sink.run_relative(f"output/{RUN}", RUN) is None
+    assert output_sink.run_relative(f"output/{RUN}/C:/Windows/a.png", RUN) is None
 
 
 def test_run_is_stored_then_restored_as_an_iterate_source(tmp_path, monkeypatch):

@@ -147,17 +147,35 @@ class PipelineResult:
 _KEEP_SCENE = "起点の絵の場面・構図・ポーズをそのまま保つ"
 
 
-def _prepare_inputs(
+def _scene_or_default(scene: str, revisions: "str | list[str] | None", has_start: bool) -> str:
+    """場面が未指定のとき、修正指示 → 起点の場面を保つ、の順で補う。どちらも無ければ空（呼び出し側がランダムに決める）。
+
+    i2i は場面なしで修正指示だけを渡すことが多い。修正指示を場面の文脈として渡さないと、「完成形態で」のような
+    状態の指示が、RaceType / Height_cm などの曖昧フィールドの解決に届かない。
+    """
+    if scene:
+        return scene
+    text = ("; ".join(str(r) for r in revisions if str(r).strip())
+            if isinstance(revisions, (list, tuple)) else str(revisions or "")).strip()
+    if text:
+        print(f"[Stage1] シーン: revisions から補完 ({text[:60]})")
+        return text
+    if has_start:                   # 赤入れだけ、など。ランダムな場面で起点を描き変えない
+        print(f"[Stage1] シーン: {_KEEP_SCENE}")
+        return _KEEP_SCENE
+    return ""
+
+
+def _resolve_inputs(
     images: "list[dict] | str | None",
     iterate_from: str | None,
-    pipeline_dir: Path,
     out_dir: str | None,
     joint: bool = False,
-) -> "tuple[list[dict], list[dict], str | None]":
-    """依頼者が渡した入力画像を検証し、実行フォルダーの inputs/ へ書き出す。生成 API は呼ばない。
+) -> "tuple[list[dict], str | None]":
+    """依頼者が渡した入力画像を検証して返す。何も書き出さず、生成 API も呼ばない。
 
-    戻り値は (各ステージへ渡す入力画像, 記録用の要約, 起点の指定)。赤入れの縦横比を確かめるために
-    改稿の起点を取りに行った場合は、起点の指定を手元のパスに置き換えて返す（二度取りに行かない）。
+    戻り値は (各ステージへ渡す入力画像, 起点の指定)。赤入れの縦横比を確かめるために改稿の起点を
+    取りに行った場合は、起点の指定を手元のパスに置き換えて返す（二度取りに行かない）。
     合同生成で、赤入れだけがあり役割 base の画像が無いときは、改稿の起点を加筆の起点として合成に添える。
     検証に通らなければ ValueError。
     """
@@ -165,7 +183,7 @@ def _prepare_inputs(
 
     items = input_images.parse_spec(images)
     if not items:
-        return [], [], iterate_from
+        return [], iterate_from
     roles = {str(item.get("role") or "") for item in items}
     iterate_base: Path | None = None
     if iterate_from and "markup" in roles and "base" not in roles:
@@ -183,7 +201,23 @@ def _prepare_inputs(
             return iterate_base
         return input_images.locate_local(raw, out_dir)
 
-    inputs = input_images.resolve(items, locate=locate, iterate_base=iterate_base, joint=joint)
+    return input_images.resolve(items, locate=locate, iterate_base=iterate_base, joint=joint), iterate_from
+
+
+def _prepare_inputs(
+    images: "list[dict] | str | None",
+    iterate_from: str | None,
+    pipeline_dir: Path,
+    out_dir: str | None,
+    joint: bool = False,
+) -> "tuple[list[dict], list[dict], str | None]":
+    """入力画像を検証（:func:`_resolve_inputs`）し、実行フォルダーの inputs/ へ書き出す。
+
+    戻り値は (各ステージへ渡す入力画像, 記録用の要約, 起点の指定)。
+    """
+    from src.pipeline import input_images
+
+    inputs, iterate_from = _resolve_inputs(images, iterate_from, out_dir, joint)
     records = input_images.materialize(inputs, pipeline_dir)
     for record in records:
         print(f"[Pipeline] 入力画像: {record['file']} / 役割 {record['role']} / 出所 {record['provenance']}"
@@ -218,7 +252,7 @@ def plan_pipeline(
     from src.utils.dataset import (
         build_gemini_prompt, character_selection, collect_reference_images, costume_names, state_names,
     )
-    from src.utils.iterate import parse_revisions, resolve_iterate_source
+    from src.utils.iterate import parse_revisions
 
     joint = len(nums) > 1
     chosen_forms = list(forms or [])
@@ -231,21 +265,9 @@ def plan_pipeline(
         targets.append((num, form, chosen_states[index]))
     revision_items = parse_revisions(revisions) if isinstance(revisions, str) else list(revisions or [])
 
-    items = input_images.parse_spec(images)
-    roles = {str(item.get("role") or "") for item in items}
-    iterate_base = None
-    if iterate_from and "markup" in roles and "base" not in roles:
-        try:
-            iterate_base, _ = resolve_iterate_source(iterate_from)
-        except (FileNotFoundError, RuntimeError) as err:
-            raise ValueError(f"改稿の起点を読めません: {err}") from err
-    inputs = input_images.resolve(
-        items, locate=lambda raw: input_images.locate_local(raw, out_dir), iterate_base=iterate_base, joint=joint)
-    has_start = bool(iterate_from) or "base" in roles
-    if not scene and revision_items:
-        scene = "; ".join(revision_items)
-    elif not scene and has_start:
-        scene = _KEEP_SCENE
+    inputs, _ = _resolve_inputs(images, iterate_from, out_dir, joint)      # 本番と同じ検証を通す
+    roles = {image["kind"] for image in inputs}
+    scene = _scene_or_default(scene, revision_items, bool(iterate_from) or "base" in roles)
 
     characters = []
     selection = {(work_key, num): {"state": state, "costume": costume} for num, _, state in targets}
@@ -416,7 +438,8 @@ def run_image_pipeline(*args: Any, state: str = "", **kwargs: Any) -> "PipelineR
     bound = inspect.signature(_run_image_pipeline).bind(*args, **kwargs)
     bound.apply_defaults()
     params = bound.arguments
-    num, work_key = params["num"], params["work_key"]
+    # 指定は、本体が検索に使うのと同じ（作品コード付きのバッジを解決した）番号と作品キーに結び付ける
+    num, _, work_key = resolve_target(params["num"], params["form"], params["work_key"])
     with character_selection({(work_key, num): {"state": state, "costume": params["costume"]}}):
         if params["costume"] in costume_names(num, work_key):
             params["costume"] = ""      # DB にある衣装は部位別仕様で描く。自由な衣装差分として LLM へ渡さない
@@ -537,25 +560,8 @@ def _run_image_pipeline(
         return result
     has_start = bool(iterate_from) or any(image["kind"] == "base" for image in inputs)
 
-    # シーン未指定 → まず revisions (i2i 修正指示) をシーン文脈の代わりに使う。
-    # i2i (--iterate-from) はシーン未指定で revisions のみ指定されることが多く、
-    # revisions に「完成形態で」等の状態変化指示が書かれていても、シーン未指定のままだと
-    # RaceType/Height_cm 等の曖昧フィールド解決に届かないため。
-    if not scene and revisions:
-        _revisions_text = (
-            "; ".join(str(r) for r in revisions if str(r).strip())
-            if isinstance(revisions, (list, tuple)) else str(revisions)
-        ).strip()
-        if _revisions_text:
-            scene = _revisions_text
-            print(f"[Stage1] シーン: revisions から補完 ({scene[:60]})")
-
-    # 起点の絵があるのに場面も修正指示も無い (赤入れだけ等) → 起点の場面を保つ
-    if not scene and has_start:
-        scene = _KEEP_SCENE
-        print(f"[Stage1] シーン: {scene}")
-
-    # それでも未指定 → ランダム生成
+    # シーン未指定 → 修正指示、起点の場面を保つ、の順で補い、それでも未指定ならランダム生成
+    scene = _scene_or_default(scene, revisions, has_start)
     if not scene:
         scene = generate_random_scene(_pre_record, form) or ""
         if scene:
@@ -897,7 +903,9 @@ def run_combined_pipeline(*args: Any, states: "list[str] | None" = None, **kwarg
     bound = inspect.signature(_run_combined_pipeline).bind(*args, **kwargs)
     bound.apply_defaults()
     params = bound.arguments
-    nums, work_key = list(params["nums"]), params["work_key"]
+    # 指定は、本体と同じ規則（先頭のバッジが作品を決める）で解決した番号と作品キーに結び付ける
+    _, form, work_key = resolve_target(params["nums"][0], params["form"], params["work_key"])
+    nums = [resolve_target(n, form, work_key)[0] for n in params["nums"]]
     chosen = list(states or [])
     if len(chosen) > len(nums):
         raise ValueError("states の件数が nums のキャラクター数より多くなっています。")
@@ -1050,17 +1058,7 @@ def _run_combined_pipeline(
 
     # ── Stage 1: シーン補完 + キャラクターごとのプロンプト生成 ──
     print("\n[=] Stage 1: シーン補完 + キャラクターごとのプロンプト生成")
-    if not scene and revisions:
-        _revisions_text = (
-            "; ".join(str(r) for r in revisions if str(r).strip())
-            if isinstance(revisions, (list, tuple)) else str(revisions)
-        ).strip()
-        if _revisions_text:
-            scene = _revisions_text
-            print(f"[Stage1] シーン: revisions から補完 ({scene[:60]})")
-    if not scene and has_start:
-        scene = _KEEP_SCENE
-        print(f"[Stage1] シーン: {scene}")
+    scene = _scene_or_default(scene, revisions, has_start)
     if not scene:
         scene = generate_random_scene(records[0], forms_map[nums[0]]) or ""
         if scene:

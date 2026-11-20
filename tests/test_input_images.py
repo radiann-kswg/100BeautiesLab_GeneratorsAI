@@ -222,6 +222,9 @@ def test_joint_uses_inputs_only_in_the_final_composition(tmp_path, painter):
         ("base", [5], "own_generated"), ("markup", [5], "own_work")]
     assert iterate_from == str(previous)
     assert input_images.for_stage(inputs, 3) == [] and input_images.for_stage(inputs, 4) == []
+    plan = image_pipeline.plan_pipeline([25, 57], iterate_from=str(previous), out_dir=str(tmp_path),
+                                        images=[{"role": "markup", "path": str(upload), **OWN}])
+    assert [i["role"] for i in plan["input_images"]] == ["base", "markup"]      # 事前確認にも、本番と同じ一覧が出る
 
     render = tmp_path / "render.png"
     render.write_bytes(_image())

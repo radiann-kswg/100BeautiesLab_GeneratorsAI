@@ -868,8 +868,8 @@ async def numbertales_list_runs(params: ListRunsInput) -> str:
     Returns:
         str: JSON 文字列 {"count": int, "jobs": [ {job_id, kind, status, created_at, finished_at} ],
              "stored_runs": [ {run_id, status, nums, forms, scene_used, final_count} ]}
-             stored_runs は GCS に残っている実行（サーバーが止まったあとも、run_id を numbertales_iterate の
-             iterate_from に渡せる）。出力先が手元の設定では空。
+             stored_runs は GCS に残っている実行（新しい順に最大 20 件。サーバーが止まったあとも、run_id を
+             numbertales_iterate の iterate_from に渡せる）。出力先が手元の設定では空。
     """
     jobs = MANAGER.list_recent(params.limit)
     rows = [
@@ -882,7 +882,8 @@ async def numbertales_list_runs(params: ListRunsInput) -> str:
         }
         for j in jobs
     ]
-    stored = (await asyncio.to_thread(output_sink.list_stored_runs, params.limit)
+    # GCS の一覧は 1 件ごとに記録を読むので、件数を抑える
+    stored = (await asyncio.to_thread(output_sink.list_stored_runs, min(params.limit, 20))
               if output_sink.current_sink() != "local" else [])
     return json.dumps({"count": len(rows), "jobs": rows, "stored_runs": stored}, ensure_ascii=False, indent=2)
 

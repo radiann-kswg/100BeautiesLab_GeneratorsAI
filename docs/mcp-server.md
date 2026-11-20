@@ -17,7 +17,7 @@
 | `numbertales_generate_from_natural` | `parse_generation_request` → 上記 | 自然文からディスパッチ |
 | `numbertales_iterate` | `run_image_pipeline(iterate_from=…)` / `run_quick_edit` | i2i 改稿。GCS URL を `iterate_from` に直接渡せる。`field_overrides` も指定可。`quick: true` で、起点の絵を 1 回だけ編集する軽い加筆。`images` に役割 `base` があれば `iterate_from` を、役割 `markup` があれば `revisions` を省ける |
 | `numbertales_job_status` | — | ジョブ進捗・完成画像リンク照会（読取専用）。結果の `run_id`（実行フォルダー名）は、`numbertales_iterate` の `iterate_from` に渡せる |
-| `numbertales_list_runs` | — | 直近ジョブ一覧（読取専用）。`stored_runs` に、GCS に残っている実行（`run_id`・状態・キャラクター・完成画像の枚数）も返す |
+| `numbertales_list_runs` | — | 直近ジョブ一覧（読取専用）。`stored_runs` に、GCS に残っている実行（新しい順に最大 20 件。`run_id`・状態・キャラクター・完成画像の枚数）も返す |
 | `numbertales_get_run_logs` | — | 各ステージの中間ログ・プロンプト・画像 URL 照会（読取専用） |
 | `numbertales_answer_reference_warning` | `JobManager.answer_reference` | Stage 2 の画像観察失敗について、利用者の続行/中止の回答を返す |
 

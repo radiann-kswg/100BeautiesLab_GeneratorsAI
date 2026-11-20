@@ -78,3 +78,31 @@ def test_pipeline_entry_points_scope_the_choice_to_one_run(monkeypatch):
     assert seen["states"] == [None, "跳ねている"]
     with pytest.raises(ValueError, match="states"):
         image_pipeline.run_combined_pipeline(nums=[25, 57], states=["a", "b", "c"])
+
+
+def test_choice_reaches_characters_named_by_a_work_coded_badge(monkeypatch):
+    """作品コード付きのバッジ（SAR-EZ6、NTS-35）は、本体が番号と作品キーへ解決してから検索する。指定も同じ鍵に結び付ける。"""
+    seen = {}
+
+    def single(num, form="corefolder", work_key=NTS, out_dir=None, scene="", style="", composition="",
+               background="", costume="", **rest):
+        resolved, _, work = resolve_target(num, form, work_key)
+        seen.update(selection=find_character(resolved, work).get("_selection"), costume=costume)
+
+    monkeypatch.setattr(image_pipeline, "_run_image_pipeline", single)
+    image_pipeline.run_image_pipeline(num="SAR-EZ6", form="humanoid", state="beasted")
+    assert seen["selection"]["state"] == "beasted"
+    image_pipeline.run_image_pipeline(num="NTS-35", form="humanoid", costume="miko")
+    assert seen["selection"]["costume"] == "miko" and seen["costume"] == ""      # DB の衣装として選ばれる
+    image_pipeline.run_image_pipeline(num="2B", form="humanoid", state="寝起き")
+    assert seen["selection"]["state_note"] == "寝起き"
+
+    def combined(nums, form="corefolder", forms=None, work_key=NTS, out_dir=None, scene="", style="",
+                 composition="", background="", costume="", **rest):
+        _, form, work = resolve_target(nums[0], form, work_key)
+        seen.update(states=[(find_character(resolve_target(n, form, work)[0], work).get("_selection") or {}).get("state")
+                            for n in nums])
+
+    monkeypatch.setattr(image_pipeline, "_run_combined_pipeline", combined)
+    image_pipeline.run_combined_pipeline(nums=["SAR-EZ6", "SAR-EZ1"], states=["beasted", ""])
+    assert seen["states"] == ["beasted", None]
