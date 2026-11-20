@@ -56,6 +56,9 @@ PROJECT_ROOT=<repo> PYTHONPATH=<repo> python -m src.pipeline.image_pipeline --ba
 | `--correction-mode` | `t2i` | Stage 4 重度違反時の対処。`t2i`:Stage4内でT2I再生成 / `stage3`:ラフから再生成 |
 | `--iterate-from PATH` | None | 前回生成画像を起点に Stage 3 を i2i モードで実行 |
 | `--revisions TEXT` | None | 修正指示（`;`/改行区切り）。`--iterate-from` と併用 |
+| `--images JSON\|FILE` | None | 入力画像（`base`・`markup`・`composition`・`reference`）。`[{"role", "path", "provenance", "note"}]` の JSON か、それを書いたファイル |
+| `--dry-run` | false | 生成せず、プロンプトの土台・選べる状態と衣装・役割の付いた画像の一覧を JSON で表示（課金なし。`--badge`・`--nums` で使う） |
+| `--quick` | false | 軽い加筆。起点の絵を 1 回だけ編集して完成画像 1 枚を保存（単体だけ。Stage 2・Stage 4・Canva を省く） |
 | `--prefer-gemini-parse` | false | `--natural`/`--story` のパースで Gemini を OpenAI より優先 |
 | `--work` | `#Works_NumberTales` | 作品キー |
 | `--out` | env `OUTPUT_BASE_DIR` | 出力ベースディレクトリ |

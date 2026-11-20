@@ -38,7 +38,9 @@
 ### `--iterate-from` の解決ルール (`src/utils/iterate.py`)
 
 - 値が **ファイル** ならそのまま起点として採用。
-- 値が **ディレクトリ** なら配下の `num*.{png,jpg,jpeg,webp}` を mtime 降順で 1 件選ぶ。
+- 値が **パイプラインの実行フォルダー**（`pipeline_summary.json` がある）なら、記録にある完成画像（`stage5_paths.all`）の先頭を起点にする。
+- 値が **実行フォルダー名だけ**（例: `20261120_150049_pipeline_corefolder_num57`）なら、出力フォルダーの `{YYYYMMDD}/` から探す。手元に無く、`OUTPUT_SINK` が `local` 以外なら、GCS の `<GCS_PREFIX>/runs/<実行フォルダー名>/` から記録・完成画像・Stage 1 の土台を戻す（コネクタのサーバーが止まって出力フォルダーが消えたあとも、改稿の起点にできる）。
+- 値が **それ以外のディレクトリ** なら配下の `num*.{png,jpg,jpeg,webp}` を mtime 降順で 1 件選ぶ。
   - 見つからない場合は `*.{png,jpg,jpeg,webp}` まで広げてフォールバック。
   - それでも 0 件なら `FileNotFoundError` で異常終了する。
 - 値が **GCS URL** (`gs://` または `https://storage.googleapis.com/...`) なら

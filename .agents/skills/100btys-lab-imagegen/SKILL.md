@@ -70,6 +70,9 @@ license: CC BY-NC 4.0 (Copyright RadianN_kswg). 商用利用の誘導は禁止�
    （`get_characters()` が `data/References/` の参照資料を型で除外する。
    `has_ai_hints` では絞らない — AIHints 未収録の SemiPrimary / SelfSecondary が漏れるため）。
 6. 反社会的・性的表現は扱わない。
+7. **課金の前に中身を見せる。** `--badge`・`--nums`・改稿は、本番と同じ引数に `--dry-run`（コネクタは生成ツールに `dry_run: true`）を付けて実行し、
+   場面、選べる状態と衣装、公式の参照画像、入力画像の役割の一覧を先輩に示す。先輩がその内容を承認してから、`--dry-run` を外して実行する。
+   `--natural`・`--story` は `natural_parser` の抽出結果で同じ確認をする。
 
 ---
 
@@ -125,6 +128,11 @@ NT_MODULE=src.pipeline.natural_parser ./bin/ntimg.sh "コアフォルダ姿の25
 
 - 直したい点だけを `--revisions`（`;` か改行区切り）に簡潔に書く。
 - 「尻尾は元のまま」のように **不変特徴を保持する指示を必ず添える**と崩れにくい。
+- 起点は、実行フォルダーのパス、完成画像のパス、実行フォルダー名のどれでも渡せる。コネクタでは、結果の `run_id`（実行フォルダー名）を
+  `numbertales_iterate` の `iterate_from` に渡す。サーバーが止まったあとの実行は `numbertales_list_runs` の `stored_runs` から選ぶ。
+- 表情や小物のような小さな直しは `--quick`（コネクタは `quick: true`）にする。起点の絵を 1 回だけ編集し、完成画像 1 枚を返す。
+  検査（Stage 4）を通らないので、形態・番号・耳・尾に関わる直しは `--quick` を付けずに 5 ステージで行う。
+- 場所で伝えたほうが早い直しは、先輩が完成画像に赤で描き込んだ画像を赤入れとして渡す（G）。赤入れがあれば `--revisions` は省ける。
 
 ### D. 合同キャラ（複数人を1枚に）
 
@@ -165,6 +173,38 @@ NT_MODULE=src.batch_generate ./bin/ntimg.sh --nums 15,22,49,57 --forms both --pr
 ```bash
 ./bin/ntimg.sh --story "_ideas/my_scene.txt"
 ```
+
+### G. 画像を添えた依頼（加筆の起点・赤入れ・構図参考・参考画像）
+
+先輩が画像を添えて依頼してきたら、次の順で進める。対象は `--badge`・`--nums`・改稿（`--natural`・`--story` は画像を受け取らない）。
+
+1. **画像ごとに役割を 1 つ決める。** 描き直しの起点は `base`、起点に赤で指示を描き込んだものは `markup`、ポーズや配置だけを借りるものは
+   `composition`、それ以外の参考は `reference`（何の参考にするかを `note` に書く）。枚数の上限と、役割ごとに渡るステージは
+   `docs/usage-iterate.md` の「入力画像・事前確認・軽い加筆」にある。
+
+   完了: 渡す画像のすべてに、役割が 1 つずつ決まっている。
+
+2. **出所（`provenance`）を 1 枚ずつ確かめる。** このパイプラインの生成結果（実行フォルダーの中の画像、生成ツールが返した画像）は
+   `own_generated`。チャットに貼られた画像と PC の画像は、先輩に「自分の作品か、自分で撮った写真か」を聞き、答えのとおりに
+   `own_work`／`own_photo` を付ける。先輩以外の作品だと分かった画像は渡さず、言葉での指定（`--scene`・`--style`・`--composition`）に置き換える提案をする。
+
+   完了: 渡す画像のすべてに、先輩が答えた出所か、生成結果である根拠が付いている。
+
+3. **画像を置く。** CLI は、`references/`（リポジトリ直下）か `output/` の中のファイルを `--images` の `path` に書く。
+   コネクタは、`numbertales_create_upload_slot` で受け取り口を作り、返ってきた `upload_command` のとおりに上げて、`object_key` を `images` に入れる。
+
+   ```bash
+   ./bin/ntimg.sh --badge 57 --form corefolder --skip-canva \
+       --iterate-from "20261120_150049_pipeline_corefolder_num57" \
+       --images '[{"role": "markup", "path": "references/57_markup.png", "provenance": "own_work"}]' --dry-run
+   ```
+
+4. **事前確認を見せて、承認を得てから実行する**（前提 7）。`input_images` に、決めた役割と出所が画像の数だけ並んでいることを確かめる。
+   エラーが返ったら、その理由（縦横比の違う赤入れ、起点の無い赤入れ、枚数の超過、形式）を先輩に伝え、画像か役割を直してやり直す。
+
+   完了: 先輩が一覧を見て、生成を承認した。
+
+5. **結果を確かめる。** 赤入れを渡した実行では、完成画像を開き、印の場所が直っているかと、赤い印が絵に残っていないかを見て、先輩に報告する。
 
 ---
 

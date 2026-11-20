@@ -243,7 +243,7 @@ class IterateInput(_Base):
         ...,
         description="キャラクター番号 (1-100 の整数)、特殊ID ('2-alt' 等)、またはキャラ名",
     )
-    iterate_from: str = Field(default="", description="前回生成画像のパス・run-dir・GCS URL (例: 'output/20260609/20260609_15/..._num057')。images に役割 base の画像を渡すときは省ける", max_length=600)
+    iterate_from: str = Field(default="", description="起点。前回の結果の run_id (実行フォルダー名。例: '20261120_150049_pipeline_corefolder_num57'。サーバーが止まったあとも GCS から戻せる)、画像のパス・run-dir、GCS URL のいずれか。images に役割 base の画像を渡すときは省ける", max_length=600)
     revisions: str = Field(default="", description="修正指示（';' または改行区切り。例: '尻尾は元のまま; 表情だけ笑顔にして'）。images に役割 markup の赤入れを渡すときは省ける", max_length=1000)
     form: Form = Field(default=Form.COREFOLDER, description="形態 (corefolder / humanoid)")
     costume: str = Field(default="", description="衣装の指定（起点の絵と同じ指定を渡す）。DB にある衣装の名前か、衣装差分の説明", max_length=400)
@@ -397,8 +397,14 @@ def _run_and_publish(result: Any) -> dict[str, Any]:
 
     image_count = len(stage5_all) or len(stage4_all) or len(stage3_all)
 
+    # 出力先が手元でなければ、改稿の起点にできるよう、記録と完成画像を GCS にも置く。
+    stored_run = (output_sink.store_run(run_dir)
+                  if run_dir and stage5_all and output_sink.current_sink() != "local" else None)
+
     return {
         "status": rd.get("status", "unknown"),
+        "run_id": run_label,
+        "stored_run": stored_run,
         "pipeline_dir": run_dir,
         "scene_used": rd.get("scene_used", ""),
         "errors": rd.get("errors", []),
@@ -860,7 +866,10 @@ async def numbertales_list_runs(params: ListRunsInput) -> str:
         params (ListRunsInput): limit (int, 1-100)
 
     Returns:
-        str: JSON 文字列 {"count": int, "jobs": [ {job_id, kind, status, created_at, finished_at} ]}
+        str: JSON 文字列 {"count": int, "jobs": [ {job_id, kind, status, created_at, finished_at} ],
+             "stored_runs": [ {run_id, status, nums, forms, scene_used, final_count} ]}
+             stored_runs は GCS に残っている実行（サーバーが止まったあとも、run_id を numbertales_iterate の
+             iterate_from に渡せる）。出力先が手元の設定では空。
     """
     jobs = MANAGER.list_recent(params.limit)
     rows = [
@@ -873,7 +882,9 @@ async def numbertales_list_runs(params: ListRunsInput) -> str:
         }
         for j in jobs
     ]
-    return json.dumps({"count": len(rows), "jobs": rows}, ensure_ascii=False, indent=2)
+    stored = (await asyncio.to_thread(output_sink.list_stored_runs, params.limit)
+              if output_sink.current_sink() != "local" else [])
+    return json.dumps({"count": len(rows), "jobs": rows, "stored_runs": stored}, ensure_ascii=False, indent=2)
 
 
 # ── ツール: ステージ別中間ログ照会 ────────────────────────────────

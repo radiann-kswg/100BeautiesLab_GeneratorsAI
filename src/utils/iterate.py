@@ -103,13 +103,63 @@ def _download_remote_image(url: str) -> Path:
     return Path(tmp.name)
 
 
+_RUN_NAME_RE = re.compile(r"^\d{8}_\d{6}_[\w-]+$")
+
+
+def _locate_run(value: str) -> Path | None:
+    """実行フォルダー名だけの指定を、出力フォルダーの中の実行フォルダーに解決する。
+
+    手元に無く、出力先が GCS か Drive の設定なら、GCS の ``<接頭辞>/runs/`` から戻す。見つからなければ None。
+    """
+    from src.utils.paths import default_output_base
+
+    if not _RUN_NAME_RE.match(value):
+        return None
+    local = default_output_base() / value[:8] / value
+    if local.is_dir():
+        return local
+    from src.mcp_server import output_sink
+
+    if output_sink.current_sink() == "local":
+        return None
+    restored = output_sink.restore_run(value, default_output_base())
+    if restored is not None:
+        print(f"[iterate] 実行 {value} を GCS から戻しました → {restored}")
+    return restored
+
+
+def _pipeline_final(run_dir: Path) -> Path | None:
+    """パイプラインの実行フォルダーの記録から、完成画像の先頭を返す（記録が無い・画像が無いなら None）。"""
+    import json
+
+    summary_file = run_dir / "pipeline_summary.json"
+    if not summary_file.is_file():
+        return None
+    from src.mcp_server import output_sink
+
+    try:
+        summary = json.loads(summary_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(summary, dict):
+        return None
+    for rel in output_sink.run_final_files(summary, run_dir.name):
+        candidate = run_dir.joinpath(*rel.parts)
+        if candidate.is_file() and candidate.suffix.lower() in _SUPPORTED_IMAGE_SUFFIXES:
+            return candidate
+    return None
+
+
 def resolve_iterate_source(value: str | Path) -> tuple[Path, Path | None]:
     """``--iterate-from`` の値を ``(画像パス, 起点 run ディレクトリ or None)`` に解決する。
 
     - 値が GCS URL (``gs://`` / ``https://storage.googleapis.com/...``) なら
       一時ファイルにダウンロードして ``(tmp_path, None)`` を返す
     - 値がファイルなら ``(file, file.parent)`` を返す
-    - 値がディレクトリなら、配下の生成画像 (``num*_*``) を 1 つ選んで返す
+    - 値がパイプラインの実行フォルダー (``pipeline_summary.json`` がある) なら、記録にある完成画像の先頭を返す
+    - 値がそれ以外のディレクトリなら、配下の生成画像 (``num*_*``) を 1 つ選んで返す
+    - 値が実行フォルダー名 (``20261120_150049_pipeline_corefolder_num57`` など) だけなら、出力フォルダーから探し、
+      無ければ GCS の ``<接頭辞>/runs/`` から戻す (コネクタのサーバーが止まって出力フォルダーが消えたあと)
     - 解決できない場合は ``FileNotFoundError`` / ``RuntimeError`` を投げる
     """
     str_value = str(value)
@@ -123,7 +173,10 @@ def resolve_iterate_source(value: str | Path) -> tuple[Path, Path | None]:
 
     path = Path(value)
     if not path.exists():
-        raise FileNotFoundError(f"iterate-from のパスが存在しません: {value}")
+        located = _locate_run(str_value)
+        if located is None:
+            raise FileNotFoundError(f"iterate-from のパスが存在しません: {value}")
+        path = located
 
     if path.is_file():
         if path.suffix.lower() not in _SUPPORTED_IMAGE_SUFFIXES:
@@ -131,6 +184,11 @@ def resolve_iterate_source(value: str | Path) -> tuple[Path, Path | None]:
                 f"iterate-from は画像ファイル ({', '.join(_SUPPORTED_IMAGE_SUFFIXES)}) を指定してください: {value}"
             )
         return path, path.parent
+
+    # パイプラインの実行フォルダーなら、記録にある完成画像の先頭を起点にする。
+    final = _pipeline_final(path)
+    if final is not None:
+        return final, path
 
     # ディレクトリの場合: 配下の `num*_*.{png,jpg,...}` を新しいもの順で探す。
     candidates: list[Path] = []

@@ -10,6 +10,13 @@ Stage 別シンクの挙動:
   - Stage3/4 (中間画像): ``publish_intermediate()`` → GCS のみ（Drive には上げない）
   - Stage5 (完成画像):   ``publish()`` → 設定シンクへ通常アップロード
 
+GCS の接頭辞の下は、用途で分ける:
+  - ``<接頭辞>/…``                       Stage3/4 の中間画像（従来どおり）
+  - ``<接頭辞>/uploads/<日付>/…``        依頼者の入力画像。``create_upload_slot()`` の署名付き URL で受け取り、
+                                         ``read_object()`` で読む（バケットのライフサイクルで 7 日後に消す）
+  - ``<接頭辞>/runs/<実行フォルダー名>/…`` 改稿の起点を残すための ``pipeline_summary.json``・完成画像・Stage 1 の土台。
+                                         ``store_run()`` で置き、``restore_run()`` で出力フォルダーへ戻す
+
 いずれのシンクも「使う時だけ」依存ライブラリを遅延 import する。
 依存やクレデンシャルが欠けている場合は例外で落とさず、local にフォールバックして
 ``note`` に理由を記録する（サーバ全体が止まらないようにするため）。
@@ -17,8 +24,9 @@ Stage 別シンクの挙動:
 
 from __future__ import annotations
 
+import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 # ── 環境変数キー ───────────────────────────────────────────────
@@ -508,6 +516,119 @@ def create_upload_slot(content_type: str) -> dict[str, Any]:
 
 
 # ── 共通ヘルパ ──────────────────────────────────────────────────
+# ── 実行の記録の保存と復元（改稿の起点） ────────────────────────
+_RUN_FILE_MAX_BYTES = 40 * 1024 * 1024
+_RUN_SUMMARY = "pipeline_summary.json"
+#: 軽い加筆 (quick) が使い回す、Stage 1 の土台
+_RUN_EXTRA_FILES = ("stage1_prompt/prompt_base_gemini.txt",)
+
+
+def _run_prefix(run_id: str) -> str:
+    return f"{_gcs_prefix()}/runs/{Path(run_id).name}/"
+
+
+def run_relative(path: str, run_name: str) -> PurePosixPath | None:
+    """記録に残ったパス（実行したサーバーでの絶対・相対パス）を、実行フォルダーからの相対パスにする。
+
+    実行フォルダーの外を指すパスと、``..`` を含むパスは None。
+    """
+    parts = PurePosixPath(str(path).replace("\\", "/")).parts
+    if run_name not in parts:
+        return None
+    tail = parts[len(parts) - 1 - parts[::-1].index(run_name) + 1:]
+    if not tail or ".." in tail:
+        return None
+    return PurePosixPath(*tail)
+
+
+def run_final_files(summary: dict[str, Any], run_name: str) -> list[PurePosixPath]:
+    """``pipeline_summary.json`` の完成画像（``stage5_paths.all``）を、実行フォルダーからの相対パスで返す。"""
+    finals = (summary.get("stage5_paths") or {}).get("all") or []
+    relatives = (run_relative(str(path), run_name) for path in finals)
+    return list(dict.fromkeys(rel for rel in relatives if rel is not None))
+
+
+def store_run(run_dir: str) -> dict[str, Any]:
+    """実行の ``pipeline_summary.json``・完成画像・Stage 1 の土台を GCS に置く。
+
+    サーバーが止まって出力フォルダーが消えたあとも、実行フォルダー名で改稿の起点にできるようにする。
+    Returns ``{"stored": [object_key, ...], "note": 置けなかった理由}``。
+    """
+    root = Path(run_dir)
+    out: dict[str, Any] = {"stored": [], "note": ""}
+    summary_file = root / _RUN_SUMMARY
+    if not summary_file.is_file():
+        out["note"] = f"{_RUN_SUMMARY} がありません"
+        return out
+    try:
+        bucket = _bucket()
+        summary = json.loads(summary_file.read_text(encoding="utf-8"))
+        files = [*run_final_files(summary, root.name), *(PurePosixPath(rel) for rel in _RUN_EXTRA_FILES)]
+        for rel in [*files, PurePosixPath(_RUN_SUMMARY)]:      # 記録は、画像がそろってから置く
+            local = root.joinpath(*rel.parts)
+            if local.is_file():
+                key = _run_prefix(root.name) + rel.as_posix()
+                bucket.blob(key).upload_from_filename(str(local))
+                out["stored"].append(key)
+    except ValueError as e:
+        out["note"] = str(e)
+    except Exception as e:  # noqa: BLE001
+        out["note"] = f"GCS への保存に失敗 ({_err_detail(e)})"
+    return out
+
+
+def restore_run(run_id: str, output_base: Path | str) -> Path | None:
+    """手元に無い実行の記録と完成画像を、GCS から出力フォルダーへ戻す。戻せたら実行フォルダーのパス。
+
+    戻す先は、生成時と同じ ``<出力フォルダー>/<YYYYMMDD>/<実行フォルダー名>/``。
+    """
+    name = Path(run_id).name
+    try:
+        raw = read_object(_run_prefix(name) + _RUN_SUMMARY, _RUN_FILE_MAX_BYTES)
+        summary = json.loads(raw)
+    except ValueError:                       # 無い・読めない・JSON でない
+        return None
+    if not isinstance(summary, dict):
+        return None
+    date = name[:8]
+    run_dir = (Path(output_base) / date / name) if date.isdigit() else (Path(output_base) / name)
+    for rel in [*run_final_files(summary, name), *(PurePosixPath(rel) for rel in _RUN_EXTRA_FILES)]:
+        try:
+            data = read_object(_run_prefix(name) + rel.as_posix(), _RUN_FILE_MAX_BYTES)
+        except ValueError:
+            continue
+        target = run_dir.joinpath(*rel.parts)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / _RUN_SUMMARY).write_bytes(raw)     # 最後に置く（途中で止まった復元を「実行あり」と見せない）
+    return run_dir
+
+
+def list_stored_runs(limit: int = 20) -> list[dict[str, Any]]:
+    """GCS に残っている実行を、新しい順に ``limit`` 件まで返す。使えなければ空。"""
+    try:
+        names = sorted((blob.name for blob in _bucket().list_blobs(prefix=f"{_gcs_prefix()}/runs/")
+                        if blob.name.endswith(f"/{_RUN_SUMMARY}")), reverse=True)
+    except Exception:  # noqa: BLE001 — 一覧は補助。取れなければ、いま動いているジョブだけを見せる
+        return []
+    rows: list[dict[str, Any]] = []
+    for name in names[:limit]:
+        try:
+            summary = json.loads(read_object(name, _RUN_FILE_MAX_BYTES))
+        except ValueError:
+            continue
+        run_id = PurePosixPath(name).parent.name
+        rows.append({
+            "run_id": run_id, "status": summary.get("status"),
+            "nums": summary.get("nums") or [summary.get("num")],
+            "forms": summary.get("forms") or [summary.get("form")],
+            "scene_used": summary.get("scene_used", ""),
+            "final_count": len(run_final_files(summary, run_id)),
+        })
+    return rows
+
+
 def _remote_name(path: Path, run_label: str) -> str:
     """リモート格納名を組み立てる（run ラベルでの衝突回避用プレフィックス付き）。
 
