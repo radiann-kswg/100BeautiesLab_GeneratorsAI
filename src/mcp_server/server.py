@@ -22,13 +22,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sys
 import uuid
 from contextlib import asynccontextmanager, redirect_stdout
 from enum import Enum
-from typing import Any, Optional, Union
+from typing import Any, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
 
@@ -261,6 +262,12 @@ class ListGcsLogsInput(_Base):
         description="この日数以内に作成されたログを対象（既定 49 日 = 7 週間）",
         ge=1, le=3650,
     )
+
+
+class UploadSlotInput(_Base):
+    """入力画像の受け取り口の入力。"""
+
+    content_type: Literal["image/png", "image/jpeg", "image/webp"] = Field(..., description="上げる画像の形式")
 
 
 class GetGcsImageInput(_Base):
@@ -920,6 +927,40 @@ async def numbertales_list_gcs_logs(params: ListGcsLogsInput) -> str:
     """
     data = output_sink.list_gcs_logs(limit=params.limit, since_days=params.since_days)
     return json.dumps(data, ensure_ascii=False, indent=2)
+
+
+# ── ツール: 入力画像の受け取り口 ────────────────────────────────
+@mcp.tool(
+    name="numbertales_create_upload_slot",
+    annotations={
+        "title": "ナンバーテールズ 入力画像の受け取り口を作る",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": True,
+    },
+)
+async def numbertales_create_upload_slot(params: UploadSlotInput) -> str:
+    """入力画像 1 枚ぶんの署名付き PUT URL（15 分有効）と object_key を返す。1 枚 10MB まで、PNG・JPEG・WebP。
+
+    返ってきた upload_command のとおりに画像を上げる。上げてよいのは、このパイプラインの生成結果と
+    利用者自身の作品だけ。出所は 1 枚ずつ利用者に確かめる。画像は GCS の <接頭辞>/uploads/ に置かれる。
+
+    Returns:
+        str: JSON 文字列。{"status", "object_key", "upload_url", "method", "headers",
+             "expires_in_seconds", "max_bytes", "upload_command", "message"}
+    """
+    slot = await asyncio.to_thread(output_sink.create_upload_slot, params.content_type)
+    if slot["note"]:
+        return json.dumps({"status": "error", "message": slot["note"]}, ensure_ascii=False, indent=2)
+    slot.pop("note")
+    headers = " ".join(f'-H "{name}: {value}"' for name, value in slot["headers"].items())
+    return json.dumps({
+        "status": "ok", **slot,
+        "upload_command": f'curl -sS -X PUT {headers} --upload-file <画像ファイル> "<upload_url>"',
+        "message": "upload_url へ headers を付けて PUT してください。受け付けるのは、このパイプラインの生成結果と"
+                   "利用者自身の作品だけです。",
+    }, ensure_ascii=False, indent=2)
 
 
 # ── ツール: GCS 画像バイト取得（インライン表示用） ──────────────

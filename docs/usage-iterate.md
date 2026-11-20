@@ -45,6 +45,8 @@
   一時ファイルに自動ダウンロードして起点として採用する。
   - `gs://` スキーム → `google-cloud-storage` ライブラリで取得
   - `https://` 署名 URL → `urllib.request` で取得
+  - 受け付けるのは、`GCS_BUCKET` の `GCS_PREFIX`（既定 `numbertales`）の下の画像だけ。ほかのバケットやほかの接頭辞の URL は起点にしない（`GCS_BUCKET` が未設定なら、リモートの画像は起点にできない）
+  - 30 秒で打ち切り、10MB を超える画像は受け付けない
   - MCP スキルの `numbertales_get_run_logs` が返す `intermediate` URL をそのまま渡せる。
 - サポート拡張子: `.png` / `.jpg` / `.jpeg` / `.webp`。
 

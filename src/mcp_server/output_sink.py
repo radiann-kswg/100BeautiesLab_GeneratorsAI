@@ -202,33 +202,31 @@ def _publish_drive(files: list[str], run_label: str) -> list[dict[str, Any]]:
 
 
 # ── Google Cloud Storage ────────────────────────────────────────
-def _signed_url(blob: Any, bucket_name: str, object_key: str, ttl: int) -> str:
-    """blob の v4 署名 URL を返す（ADC/IAM 署名フォールバック付き）。失敗時は gs://。"""
+def _sign(blob: Any, ttl: int, **options: Any) -> str:
+    """blob の v4 署名 URL を返す（ADC/IAM 署名フォールバック付き）。署名できなければ例外。"""
     from datetime import timedelta
+    options = {"version": "v4", "expiration": timedelta(seconds=ttl), "method": "GET", **options}
     try:
-        return blob.generate_signed_url(
-            version="v4", expiration=timedelta(seconds=ttl), method="GET"
-        )
+        return blob.generate_signed_url(**options)
     except Exception:  # noqa: BLE001
         # Cloud Run / GCE の ADC は鍵ファイル無しでも IAM Credentials 経由で署名できる
-        try:
-            import google.auth  # type: ignore
-            from google.auth.transport import requests as _greq  # type: ignore
+        import google.auth  # type: ignore
+        from google.auth.transport import requests as _greq  # type: ignore
 
-            _creds, _ = google.auth.default()
-            _creds.refresh(_greq.Request())
-            _sa_email = getattr(_creds, "service_account_email", None)
-            _token = getattr(_creds, "token", None)
-            if _sa_email and _token:
-                return blob.generate_signed_url(
-                    version="v4",
-                    expiration=timedelta(seconds=ttl),
-                    method="GET",
-                    service_account_email=_sa_email,
-                    access_token=_token,
-                )
-        except Exception:  # noqa: BLE001
-            pass
+        _creds, _ = google.auth.default()
+        _creds.refresh(_greq.Request())
+        _sa_email = getattr(_creds, "service_account_email", None)
+        _token = getattr(_creds, "token", None)
+        if not (_sa_email and _token):
+            raise
+        return blob.generate_signed_url(**options, service_account_email=_sa_email, access_token=_token)
+
+
+def _signed_url(blob: Any, bucket_name: str, object_key: str, ttl: int) -> str:
+    """blob の読み取り用の署名 URL を返す。失敗時は gs://。"""
+    try:
+        return _sign(blob, ttl)
+    except Exception:  # noqa: BLE001
         return f"gs://{bucket_name}/{object_key}"
 
 
@@ -418,6 +416,94 @@ def fetch_gcs_image_b64(object_key: str) -> dict[str, Any]:
     out["mime_type"] = mime
     out["size"] = len(data)
     out["content"] = base64.b64encode(data).decode("ascii")
+    return out
+
+
+# ── 入力画像の受け取りと、自分の接頭辞の下の読み取り ─────────────
+# 依頼者の入力画像は <接頭辞>/uploads/<日付>/ に、署名付き PUT URL で受け取る（バケットのライフサイクルで 7 日後に消す）。
+UPLOAD_TYPES = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp"}
+UPLOAD_MAX_BYTES = 10 * 1024 * 1024
+UPLOAD_TTL_SEC = 15 * 60
+
+
+def _gcs_prefix() -> str:
+    return os.getenv(ENV_GCS_PREFIX, "numbertales").strip("/") or "numbertales"
+
+
+def _bucket() -> Any:
+    """設定されたバケットを返す。使えない理由は ValueError で返す。"""
+    bucket_name = os.getenv(ENV_GCS_BUCKET, "").strip()
+    if not bucket_name:
+        raise ValueError(f"{ENV_GCS_BUCKET} 未設定")
+    try:
+        from google.cloud import storage  # type: ignore
+    except ImportError as e:
+        raise ValueError("google-cloud-storage 未インストール") from e
+    try:
+        return storage.Client().bucket(bucket_name)
+    except Exception as e:  # noqa: BLE001
+        raise ValueError(f"GCS クライアント初期化失敗 ({_err_detail(e)})") from e
+
+
+def read_object(object_key: str, max_bytes: int = UPLOAD_MAX_BYTES) -> bytes:
+    """自分の接頭辞の下のオブジェクト 1 件を読む（同じバケットの、ほかの用途の物は読まない）。
+
+    読めない理由は ValueError で返す。
+    """
+    prefix = _gcs_prefix()
+    key = (object_key or "").strip().lstrip("/")
+    if not key.startswith(f"{prefix}/") or ".." in key.split("/"):
+        raise ValueError(f"扱えるのは {prefix}/ の下だけです: {object_key}")
+    try:
+        blob = _bucket().get_blob(key)
+    except ValueError:
+        raise
+    except Exception as e:  # noqa: BLE001
+        raise ValueError(f"GCS からの取得に失敗 ({_err_detail(e)})") from e
+    if blob is None:
+        raise ValueError(f"GCS に見つかりません（アップロードが済んでいないか、保存期間を過ぎています）: {key}")
+    if int(getattr(blob, "size", 0) or 0) > max_bytes:
+        raise ValueError(f"大きすぎます（上限 {max_bytes // (1024 * 1024)}MB）: {key}")
+    try:
+        return blob.download_as_bytes()
+    except Exception as e:  # noqa: BLE001
+        raise ValueError(f"GCS からの取得に失敗 ({_err_detail(e)})") from e
+
+
+def create_upload_slot(content_type: str) -> dict[str, Any]:
+    """入力画像 1 枚ぶんの置き場（署名付き PUT URL と object_key）を作る。
+
+    URL は ``UPLOAD_TTL_SEC`` 秒だけ有効で、宣言した形式と ``UPLOAD_MAX_BYTES`` までの大きさしか
+    受け付けない。中身の形式と大きさは、使う時にも確かめる。
+
+    Returns
+    -------
+    dict::
+        {
+          "object_key": str, "upload_url": str, "method": "PUT",
+          "headers": {...},          # アップロード時に必ず付けるヘッダー
+          "expires_in_seconds": int, "max_bytes": int,
+          "note": str,               # 作れなかった理由（作れたときは空）
+        }
+    """
+    import secrets
+    from datetime import datetime, timezone
+
+    out: dict[str, Any] = {"object_key": "", "upload_url": "", "method": "PUT", "headers": {},
+                           "expires_in_seconds": UPLOAD_TTL_SEC, "max_bytes": UPLOAD_MAX_BYTES, "note": ""}
+    content_type = (content_type or "").strip().lower()
+    suffix = UPLOAD_TYPES.get(content_type)
+    if not suffix:
+        out["note"] = f"content_type は {' / '.join(UPLOAD_TYPES)} のいずれかを指定してください"
+        return out
+    key = f"{_gcs_prefix()}/uploads/{datetime.now(timezone.utc):%Y%m%d}/{secrets.token_hex(16)}{suffix}"
+    size_range = {"x-goog-content-length-range": f"0,{UPLOAD_MAX_BYTES}"}
+    try:
+        url = _sign(_bucket().blob(key), UPLOAD_TTL_SEC, method="PUT", content_type=content_type, headers=size_range)
+    except Exception as e:  # noqa: BLE001
+        out["note"] = f"アップロード用の URL を作れません ({_err_detail(e)})"
+        return out
+    out.update(object_key=key, upload_url=url, headers={"Content-Type": content_type, **size_range})
     return out
 
 
