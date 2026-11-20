@@ -38,16 +38,25 @@ def _generate_gemini_rough(
     extra_ref_paths: list[str] | None = None,
     iterate_from: str | None = None,
     revisions: "str | list[str] | None" = None,
+    inputs: list[dict] | None = None,
 ) -> list[Path]:
     """Gemini Imagen でラフ画像を生成する。
 
     iterate_from: 前回生成画像のパス。指定時は i2i モードになり、source が参照先頭に差し込まれる。
     revisions:    修正指示（";"/改行区切り文字列 or list）。iterate_from と組み合わせて使用。
+    inputs:       依頼者が渡した入力画像 (input_images.materialize 済み)。役割 base は起点画像になり、
+                  赤入れ・構図参考は公式参照の前、参考画像は後ろに、役割のラベルを付けて添付する。
     extra_ref_paths: アタリ(SDXL)/Adobe 構図ガイドを Gemini の追加参照
                      (extra_ref_locals) として前方に添付する。個体正確性は
                      プロンプト本文と DB 公式参照画像が担い、アタリは構図/作風の下敷き。
     """
     from src.gemini.generate import generate_image
+    from src.pipeline import input_images
+
+    base, leading, trailing = input_images.split(inputs, 3)
+    has_iterate_source = bool(iterate_from) and base is None
+    if base:                              # 役割 base の画像があれば、改稿の起点よりそちらを起点にする
+        iterate_from = str(base["path"])
 
     # iterate_from がある場合、revision block を Stage 1 プロンプト先頭に差し込む。
     # generate_image() の prompt_override は build_gemini_prompt() の revision 処理を迂回するため、
@@ -74,6 +83,11 @@ def _generate_gemini_rough(
         )
         final_prompt = guide_header + final_prompt
 
+    input_block = input_images.prompt_block(
+        inputs, 3, has_revisions=bool(revisions), has_iterate_source=has_iterate_source)
+    if input_block and final_prompt:
+        final_prompt = input_block + "\n\n" + final_prompt
+
     try:
         paths = generate_image(
             num=record_num(record),
@@ -83,7 +97,9 @@ def _generate_gemini_rough(
             count=count,
             prompt_override=final_prompt,
             iterate_from=iterate_from,
-            extra_ref_locals=extra_ref_paths or None,
+            extra_ref_locals=[str(image["path"]) for image in leading] + list(extra_ref_paths or []) or None,
+            trailing_ref_locals=[str(image["path"]) for image in trailing] or None,
+            ref_label_overrides=input_images.labels([*([base] if base else []), *leading, *trailing]) or None,
         )
         return paths
     except SystemExit as err:
@@ -199,6 +215,7 @@ def generate_rough_images(
     iterate_from: str | None = None,
     revisions: "str | list[str] | None" = None,
     rough_provider: str = "gemini",
+    inputs: list[dict] | None = None,
 ) -> dict[str, list[Path]]:
     """Adobe 構図ガイド + Gemini Imagen でラフ画像を生成する。
 
@@ -220,6 +237,7 @@ def generate_rough_images(
                     Gemini ラフの追加参照(extra_ref_locals)として渡す。個体正確性は Gemini+DB が担う。
                     GCE VM 起動を伴う (課金注意・docs/usage-generation.md 参照)。
                     SDXL は i2i 非対応のため、iterate_from 指定時も Gemini 側のみ i2i になる。
+    inputs:       依頼者が渡した入力画像 (src/pipeline/input_images.py)。Stage 3 に渡す役割だけを使う。
 
     Returns
     -------
@@ -271,10 +289,12 @@ def generate_rough_images(
     guide_refs = [str(p) for p in sdxl_guide_paths][:1]
     gemini_paths: list[Path] = []
     if use_gemini:
-        mode_label = "i2i" if iterate_from else "T2I"
+        from src.pipeline import input_images
+        staged_inputs = input_images.for_stage(inputs, 3)
+        mode_label = "i2i" if iterate_from or any(image["kind"] == "base" for image in staged_inputs) else "T2I"
         print(
             f"[Stage3-Gemini] Imagen でラフ生成中 "
-            f"(count={count}, mode={mode_label}, guide_refs={len(guide_refs)})..."
+            f"(count={count}, mode={mode_label}, guide_refs={len(guide_refs)}, 入力画像={len(staged_inputs)})..."
         )
         gemini_paths = _generate_gemini_rough(
             record, form,
@@ -285,6 +305,7 @@ def generate_rough_images(
             iterate_from=iterate_from,
             revisions=revisions,
             extra_ref_paths=guide_refs,
+            inputs=inputs,
         )
 
     all_paths = list(adobe_guide_paths) + list(sdxl_guide_paths) + list(gemini_paths)

@@ -277,6 +277,8 @@ def generate_image(
     skip_db_refs: bool = False,
     skip_ref_urls: bool = False,
     extra_ref_label: str = REF_LABEL_EXTRA,
+    trailing_ref_locals: list[str] | None = None,
+    ref_label_overrides: dict[str, str] | None = None,
 ) -> list[Path]:
     """Imagen 3 でキャラクター画像を生成して保存する。
 
@@ -291,6 +293,9 @@ def generate_image(
               out_dir を明示した場合 (パイプラインの各ステージ配下) は日付フォルダを
               作らず ``{out_dir}/{YYYYMMDD_HHMMSS}_gemini_{form}_num{NNN}/`` をフラットに切る。
     count:    生成枚数 (1–4)
+    trailing_ref_locals: 公式 DB 参照の後ろに添付する追加参照 (依頼者が渡した参考画像など)。
+    ref_label_overrides: {パス: ラベル}。起点画像・追加参照の役割ラベルを、パスごとに差し替える
+                         (依頼者が渡した入力画像の役割。src/pipeline/input_images.py)。
 
     Returns
     -------
@@ -412,6 +417,13 @@ def generate_image(
             if not is_detail_reference(ep_str):
                 ref_labels[ep_str] = extra_ref_label
         ref_limit = 5
+
+    # 公式 DB 参照の後ろに添付する追加参照 (依頼者の参考画像)。枠は下の non_detail_count が確保する。
+    for tp in trailing_ref_locals or []:
+        if str(tp) not in ref_locals:
+            ref_locals.append(str(tp))
+            ref_labels[str(tp)] = extra_ref_label
+    ref_labels.update(ref_label_overrides or {})
 
     # 非部位参照 (キャラクター単体レンダー等) は全員分を必ず収める。合同生成で
     # extra_ref_locals に 6 キャラ分のレンダーが渡されるケースのように、既定の

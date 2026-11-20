@@ -23,6 +23,8 @@ venv/
 
 # Output / Generated
 output/
+# 手元の入力素材 (--images の path に渡す、自分の作品や写真)
+references/
 generated/
 *.log
 

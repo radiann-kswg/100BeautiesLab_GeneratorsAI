@@ -274,3 +274,64 @@ i2i は「直前の結果を見ながら 1 件ずつ調整する」用途のた�
 | 改稿後の画像が前回とまったく別物になる | プロバイダが i2i を効かせていない可能性。`gpt-image-1` 利用中か、Gemini 側で参照画像が空でないかを `run_meta.json` の `reference_local_paths` で確認 |
 | 修正指示が反映されない                 | `--revisions` の `;` 区切りが正しく分割されているか `prompt.txt` 先頭で確認。複数行 here-string は PowerShell 構文に注意                             |
 | `iter` ラベルが毎回 `iter1` のまま     | 起点ファイル名・親ディレクトリ名のどちらにも `iterN` パターンが無い。生成済みフォルダ名を直接渡す (例: `output/.../..._num057_iter1`)                |
+
+---
+
+## 11. 入力画像・事前確認・軽い加筆（パイプライン）
+
+`src.pipeline.image_pipeline` とコネクタ（`numbertales_*`）は、文字の指示に加えて画像を受け取れる。対象は単体（`--badge`）、合同（`--nums`）、改稿（`--iterate-from`）。`--natural` / `--story` は対象外。
+
+### 入力画像（`--images`、コネクタの `images`）
+
+役割ごとに、枚数と渡すステージが決まっている（実装: `src/pipeline/input_images.py`）。
+
+| 役割 | 意味 | 枚数 | Stage 3 ラフ | Stage 4 検査 | Stage 5 合成 |
+| --- | --- | --- | --- | --- | --- |
+| `base` | 加筆の起点。`--iterate-from` より優先する | 1 | ○（先頭） | × | ○ |
+| `markup` | 起点に赤で描き込んだ赤入れ。起点（`base` か `--iterate-from`）が必須 | 1 | ○ | ○ | × |
+| `composition` | 構図参考。ポーズ・配置・画角だけを借りる。グレースケールにして渡す | 1 | ○ | × | × |
+| `reference` | 生成画像と関係のない参考。`note`（何の参考にするか）が必須 | 3 | ○ | × | ○ |
+
+- 添付の順は、起点 → 赤入れ → 構図参考 → 公式の参照画像 → 参考画像。画像ごとに役割のラベルを付け、プロンプトの先頭に `[入力画像の扱い]` を添える。キャラクターの外見は、公式の参照画像と設定資料が正しいものとして扱う。
+- 合同生成では、キャラクターごとのラフと検査には渡さず、全員を 1 枚にまとめる Stage 5 でだけ使う。赤入れだけを渡した場合は、改稿の起点を加筆の起点として合成に添える。
+- 赤入れは、起点の絵にそのまま描き込んだ画像を渡す。縦横比が起点と 2% 以上違うと受け付けない。Stage 4 は、指示した場所が直っていない場合と、赤い印や指示の文字が絵に残っている場合を `composition_issues` に数える。`--revisions` は任意で、あれば両方使う。
+- 起点があって場面も修正指示も無いとき（赤入れだけ、など）は、ランダムな場面を作らず、起点の場面を保つ。
+- 1 枚 10MB まで、PNG・JPEG・WebP（拡張子ではなく中身で判定）。`provenance`（出所）は毎回必須で、受け付けるのは `own_generated`（このパイプラインの生成結果）・`own_work`（依頼者自身の作品）・`own_photo`（依頼者自身が撮った写真）だけ。第三者の素材は渡せない。
+- 置き場: CLI の `path` は、出力フォルダー（`output/`）かリポジトリ直下の `references/`（Git の追跡対象外）の中のファイル。コネクタの `object_key` は、`numbertales_create_upload_slot` で上げた、このサーバーの置き場の画像。base64、Drive のファイル ID、任意の URL は受け付けない。
+- 検証は課金の前に行う。通らなければ `status: failed` で止まり、理由が `errors` に入る。通った画像は実行フォルダーの `inputs/` に書き出し、`pipeline_summary.json` の `input_images` に役割・出所・大きさ・SHA-256・渡したステージを残す。
+
+```powershell
+# 赤入れで加筆する（--revisions は任意）
+python -m src.pipeline.image_pipeline --badge 57 --form corefolder --skip-canva `
+    --iterate-from "output/20261120/20261120_150049_pipeline_corefolder_num57" `
+    --images '[{"role": "markup", "path": "references/57_markup.png", "provenance": "own_work"}]'
+
+# 構図参考と参考画像を添えて新しく描く（JSON を書いたファイルも渡せる）
+python -m src.pipeline.image_pipeline --badge 57 --form corefolder --scene "窓辺で振り返る" --images references/images.json
+```
+
+### 事前確認（`--dry-run`、コネクタの `dry_run`）
+
+生成せずに、プロンプトの土台、選べる状態と衣装の名前、公式の参照画像、役割の付いた入力画像の一覧を JSON で返す。課金のある API は呼ばず、出力フォルダーにも何も書かない（入力画像は検証のために読む）。
+
+- Stage 1 は本番で LLM がプロンプトを加工するので、返すのは加工前の土台（`base_prompt`）。場面が空のときは、本番でランダムに決まる。
+- 権利のゲートが拒否するキャラクター、選べない衣装、検証に通らない入力画像は、ここでエラーになる。
+- 課金を伴う本番の前に実行し、結果を依頼者に示して承認を得る。
+
+```powershell
+python -m src.pipeline.image_pipeline --badge 35 --form humanoid --costume miko --dry-run
+```
+
+### 軽い加筆（`--quick`、コネクタの `numbertales_iterate` の `quick`）
+
+起点（`--iterate-from` か、役割 `base` の画像）の絵を 1 回だけ編集し、完成画像 1 枚を新しい実行フォルダー（`…_pipeline_{form}_num{N}_iterN/`）に保存する。単体だけ。
+
+- 残すもの: 権利のゲート、状態と衣装の指定、プロンプト。起点が以前のパイプライン実行の中の画像なら、その `stage1_prompt/prompt_base_gemini.txt` を使い回す。無ければ土台を組み直す。
+- 省くもの: Stage 1 の LLM 加工、Stage 2 の観察、Stage 4 の検査、Canva。
+- 入力画像は、役割のラベルを付けて、この 1 回の編集にすべて渡す。
+
+```powershell
+python -m src.pipeline.image_pipeline --badge 57 --form corefolder --quick `
+    --iterate-from "output/20261120/20261120_150049_pipeline_corefolder_num57/stage5_final/synth/…/num057_corefolder_01.png" `
+    --revisions "表情だけ笑顔にして"
+```

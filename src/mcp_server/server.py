@@ -31,7 +31,7 @@ from contextlib import asynccontextmanager, redirect_stdout
 from enum import Enum
 from typing import Any, Literal, Optional, Union
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, model_validator
 
 from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions
 from mcp.server.fastmcp import FastMCP
@@ -107,6 +107,38 @@ class _Base(BaseModel):
 
 
 # ── 入力モデル ──────────────────────────────────────────────────
+class InputImage(_Base):
+    """依頼者が渡す入力画像 1 枚。先に numbertales_create_upload_slot で上げ、その object_key を渡す。"""
+
+    object_key: str = Field(..., description="numbertales_create_upload_slot が返した object_key（このサーバーの置き場の画像だけ）", min_length=1, max_length=1024)
+    role: Literal["base", "markup", "composition", "reference"] = Field(
+        ...,
+        description=(
+            "役割。base=加筆の起点（1 枚）/ markup=起点に赤で描き込んだ赤入れ（1 枚。起点が必要で、縦横比は起点と同じ）/ "
+            "composition=構図参考（1 枚。ポーズ・配置・画角だけを借り、グレースケールにして渡す）/ "
+            "reference=生成画像と関係のない参考（3 枚まで。note が必須）"
+        ),
+    )
+    provenance: Literal["own_generated", "own_work", "own_photo"] = Field(
+        ...,
+        description=(
+            "画像の出所。own_generated=このパイプラインの生成結果 / own_work=利用者自身の作品 / own_photo=利用者自身が撮った写真。"
+            "チャットに貼られた画像や PC の画像は、上げる前に 1 枚ずつ利用者に確かめる。推測で付けない"
+        ),
+    )
+    note: str = Field(default="", description="reference のとき必須: 何の参考にするか（例: '床のタイルの質感'）", max_length=200)
+
+
+_IMAGES_DESCRIPTION = (
+    "入力画像（任意）。役割ごとに渡すステージが決まっている: base はラフと合成、markup はラフと検査、"
+    "composition はラフだけ、reference はラフと合成。合同生成では、全員を 1 枚にまとめる合成でだけ使う"
+)
+_DRY_RUN_DESCRIPTION = (
+    "True で、生成せずに内容（プロンプトの土台・選べる状態と衣装・公式の参照画像・役割の付いた入力画像）を返す（課金なし）。"
+    "本番の前に呼び、結果を利用者に示して承認を得る"
+)
+
+
 class GenerateCharacterInput(_Base):
     """単体キャラ生成の入力。"""
 
@@ -148,6 +180,8 @@ class GenerateCharacterInput(_Base):
         ),
     )
     work_key: str = Field(default=DEFAULT_WORK_KEY, description="作品キー", max_length=100)
+    images: list[InputImage] = Field(default_factory=list, max_length=6, description=_IMAGES_DESCRIPTION)
+    dry_run: bool = Field(default=False, description=_DRY_RUN_DESCRIPTION)
 
 
 class GenerateJointInput(_Base):
@@ -180,6 +214,8 @@ class GenerateJointInput(_Base):
     skip_canva: bool = Field(default=False, description="True で Stage 5 をスキップ")
     correction_mode: CorrectionMode = Field(default=CorrectionMode.T2I, description="重度違反時の対処モード")
     work_key: str = Field(default=DEFAULT_WORK_KEY, description="作品キー", max_length=100)
+    images: list[InputImage] = Field(default_factory=list, max_length=6, description=_IMAGES_DESCRIPTION)
+    dry_run: bool = Field(default=False, description=_DRY_RUN_DESCRIPTION)
 
     @field_validator("nums")
     @classmethod
@@ -207,8 +243,8 @@ class IterateInput(_Base):
         ...,
         description="キャラクター番号 (1-100 の整数)、特殊ID ('2-alt' 等)、またはキャラ名",
     )
-    iterate_from: str = Field(..., description="前回生成画像のパスまたは run-dir (例: 'output/20260609/20260609_15/..._num057')", min_length=1, max_length=600)
-    revisions: str = Field(..., description="修正指示（';' または改行区切り。例: '尻尾は元のまま; 表情だけ笑顔にして'）", min_length=1, max_length=1000)
+    iterate_from: str = Field(default="", description="前回生成画像のパス・run-dir・GCS URL (例: 'output/20260609/20260609_15/..._num057')。images に役割 base の画像を渡すときは省ける", max_length=600)
+    revisions: str = Field(default="", description="修正指示（';' または改行区切り。例: '尻尾は元のまま; 表情だけ笑顔にして'）。images に役割 markup の赤入れを渡すときは省ける", max_length=1000)
     form: Form = Field(default=Form.COREFOLDER, description="形態 (corefolder / humanoid)")
     costume: str = Field(default="", description="衣装の指定（起点の絵と同じ指定を渡す）。DB にある衣装の名前か、衣装差分の説明", max_length=400)
     state: str = Field(default="", description="状態の指定。DB にある状態の名前 (例: afterChanged, beasted) ならその状態を、それ以外の文は体型と着用物だけを変える指定として描く。空なら既定の状態", max_length=400)
@@ -219,6 +255,15 @@ class IterateInput(_Base):
     skip_canva: bool = Field(default=False, description="True で Stage 5 をスキップ")
     correction_mode: CorrectionMode = Field(default=CorrectionMode.T2I, description="重度違反時の対処モード")
     work_key: str = Field(default=DEFAULT_WORK_KEY, description="作品キー", max_length=100)
+    images: list[InputImage] = Field(default_factory=list, max_length=6, description=_IMAGES_DESCRIPTION)
+    quick: bool = Field(
+        default=False,
+        description=(
+            "True で軽い加筆。起点の絵を 1 回だけ編集し、完成画像 1 枚を返す。"
+            "Stage 1 の LLM 加工・Stage 2 の観察・Stage 4 の検査・Canva を省く（権利のゲートは残る）"
+        ),
+    )
+    dry_run: bool = Field(default=False, description=_DRY_RUN_DESCRIPTION)
 
     @field_validator("num")
     @classmethod
@@ -226,6 +271,15 @@ class IterateInput(_Base):
         if isinstance(v, int) and not (1 <= v <= 100):
             raise ValueError(f"整数 num は 1-100 の範囲で指定してください: {v}")
         return v
+
+    @model_validator(mode="after")
+    def _needs_a_start_and_an_instruction(self) -> "IterateInput":
+        roles = {image.role for image in self.images}
+        if not self.iterate_from and "base" not in roles:
+            raise ValueError("iterate_from か、images の役割 base の画像のどちらかを指定してください。")
+        if not self.revisions and "markup" not in roles:
+            raise ValueError("revisions か、images の役割 markup の赤入れのどちらかを指定してください。")
+        return self
 
 
 class JobStatusInput(_Base):
@@ -377,6 +431,22 @@ def _run_and_publish(result: Any) -> dict[str, Any]:
     }
 
 
+def _images(params: Any) -> list[dict[str, Any]]:
+    """入力モデルの images を、パイプラインへ渡す辞書のリストにする。"""
+    return [image.model_dump() for image in params.images]
+
+
+async def _dry_run(**options: Any) -> str:
+    """生成せずに、実行される内容を JSON で返す（課金なし。検証に通らない入力は status=error）。"""
+    from src.pipeline.image_pipeline import plan_pipeline
+
+    try:
+        plan = await asyncio.to_thread(lambda: plan_pipeline(**options))
+    except ValueError as err:
+        plan = {"status": "error", "message": str(err)}
+    return json.dumps(plan, ensure_ascii=False, indent=2)
+
+
 # ── ステージコールバックファクトリ ─────────────────────────────
 def _make_stage_callback(job_id: str):
     """Stage3/4 完了時に GCS 中間アップロード + partial_result 更新を行うコールバックを生成する。
@@ -473,6 +543,11 @@ async def numbertales_generate_character(params: GenerateCharacterInput) -> str:
             }
     """
     p = params
+    if p.dry_run:
+        return await _dry_run(
+            nums=[p.num], forms=[p.form.value], work_key=p.work_key, scene=p.scene, style=p.style,
+            composition=p.composition, background=p.background, costume=p.costume, states=[p.state],
+            images=_images(p))
     _job_id = uuid.uuid4().hex[:12]
 
     def _job() -> dict[str, Any]:
@@ -494,6 +569,7 @@ async def numbertales_generate_character(params: GenerateCharacterInput) -> str:
             rough_provider=p.rough_provider.value,
             stage_callback=_make_stage_callback(_job_id),
             reference_confirmation=lambda warning: MANAGER.confirm_reference(_job_id, warning),
+            images=_images(p),
         )
         return _run_and_publish(result)
 
@@ -530,6 +606,11 @@ async def numbertales_generate_joint(params: GenerateJointInput) -> str:
         str: JSON 文字列 {"job_id", "status": "pending", "kind", "message"}
     """
     p = params
+    if p.dry_run:
+        return await _dry_run(
+            nums=list(p.nums), forms=[f.lower() for f in p.forms] if p.forms else [p.form.value] * len(p.nums),
+            work_key=p.work_key, scene=p.scene, style=p.style, composition=p.composition,
+            background=p.background, costume=p.costume, states=list(p.states), images=_images(p))
     _job_id = uuid.uuid4().hex[:12]
 
     def _job() -> dict[str, Any]:
@@ -552,6 +633,7 @@ async def numbertales_generate_joint(params: GenerateJointInput) -> str:
             correction_mode=p.correction_mode.value,
             stage_callback=_make_stage_callback(_job_id),
             reference_confirmation=lambda warning: MANAGER.confirm_reference(_job_id, warning),
+            images=_images(p),
         )
         return _run_and_publish(result)
 
@@ -672,24 +754,38 @@ async def numbertales_iterate(params: IterateInput) -> str:
         str: JSON 文字列 {"job_id", "status": "pending", "kind", "message"}
     """
     p = params
+    if p.dry_run:
+        plan = json.loads(await _dry_run(
+            nums=[p.num], forms=[p.form.value], work_key=p.work_key, costume=p.costume, states=[p.state],
+            iterate_from=p.iterate_from or None, revisions=p.revisions, images=_images(p)))
+        if p.quick and plan.get("status") == "dry_run":
+            plan["pipeline"] = "quick"
+            plan["notes"] = ["軽い加筆 (quick): 起点の絵を 1 回だけ編集します。画像生成は 1 回。"
+                             "入力画像は、役割のラベルを付けてこの 1 回にすべて渡します。"]
+        return json.dumps(plan, ensure_ascii=False, indent=2)
     _job_id = uuid.uuid4().hex[:12]
 
     def _job() -> dict[str, Any]:
-        from src.pipeline.image_pipeline import run_image_pipeline
+        from src.pipeline.image_pipeline import run_image_pipeline, run_quick_edit
 
+        if p.quick:
+            return _run_and_publish(run_quick_edit(
+                num=p.num, form=p.form.value, work_key=p.work_key, iterate_from=p.iterate_from or None,
+                revisions=p.revisions, images=_images(p), costume=p.costume, state=p.state))
         result = run_image_pipeline(
             num=p.num,
             form=p.form.value,
             work_key=p.work_key,
             skip_canva=p.skip_canva,
             correction_mode=p.correction_mode.value,
-            iterate_from=p.iterate_from,
-            revisions=p.revisions,
+            iterate_from=p.iterate_from or None,
+            revisions=p.revisions or None,
             costume=p.costume,
             state=p.state,
             field_overrides=p.field_overrides,
             stage_callback=_make_stage_callback(_job_id),
             reference_confirmation=lambda warning: MANAGER.confirm_reference(_job_id, warning),
+            images=_images(p),
         )
         return _run_and_publish(result)
 

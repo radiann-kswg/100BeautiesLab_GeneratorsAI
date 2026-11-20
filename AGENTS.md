@@ -174,6 +174,9 @@ python -m src.pipeline.image_pipeline --badge SAR-EZ6 --state beasted --skip-can
 python -m src.pipeline.image_pipeline --badge 57 --form corefolder --skip-canva \
     --iterate-from "output/20260609/20260609_15/20260609_150049_gemini_corefolder_num057" \
     --revisions "尻尾は元のまま; 表情だけ笑顔にして"
+# 入力画像 (加筆の起点・赤入れ・構図参考・参考画像) は --images で渡す。出所は 1 枚ずつ依頼者に確かめる
+# 課金の前に --dry-run で内容を確認する。--quick は起点の絵を 1 回だけ編集する軽い加筆
+python -m src.pipeline.image_pipeline --badge 57 --form corefolder --images references/images.json --dry-run
 
 # ── 単体プロバイダ生成 ─────────────────────────────────────────────
 python -m src.gemini.generate --badge 57 --form corefolder
