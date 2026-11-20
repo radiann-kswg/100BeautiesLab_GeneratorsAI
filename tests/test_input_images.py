@@ -283,6 +283,12 @@ def test_dry_run_plans_without_writing_or_calling_apis(tmp_path, monkeypatch, pa
     assert joint["pipeline"] == "joint-five-stage" and [i["stages"] for i in joint["input_images"]] == [[5], [5]]
     assert joint["joint_input_block"].startswith("[入力画像の扱い]")
     assert not joint["characters"][0]["base_prompt"].startswith("[入力画像の扱い]")
+    quick = image_pipeline.plan_pipeline(
+        [57], images=images[1:], quick=True, field_overrides={"RaceType": "explicit"},
+    )
+    assert quick["pipeline"] == "quick" and quick["generation_count"] == 1
+    assert quick["start_image"]["role"] == "base"
+    assert "RaceType: explicit" in quick["quick_prompt"]
     # 検証に通らない入力と、選べない衣装は、生成の前に断る
     with pytest.raises(ValueError, match="加筆の起点"):
         image_pipeline.plan_pipeline([57], images=[{"object_key": "numbertales/uploads/20261120/base.png",
@@ -327,10 +333,52 @@ def test_quick_edit_makes_one_call_and_reuses_the_previous_prompt(tmp_path, monk
     loose = tmp_path / "loose.png"
     loose.write_bytes(_image())
     fresh = image_pipeline.run_quick_edit(
-        num=57, out_dir=str(tmp_path), revisions="表情を笑顔に", images=[{"role": "base", "path": str(loose), **OWN}])
+        num=57, out_dir=str(tmp_path), revisions="表情を笑顔に",
+        images=[{"role": "base", "path": str(loose), **OWN}],
+        field_overrides={"RaceType": "explicit"})
     assert fresh.status == "ok" and fresh.stage1_prompts["prompt_source"] == "base_prompt"
     assert _names([painter.calls[-1]["iterate_from"]]) == ["base_01.png"]
     assert "PREVIOUS STAGE1 PROMPT" not in painter.calls[-1]["prompt_override"]
+    assert "RaceType: explicit" in painter.calls[-1]["prompt_override"]
+    assert fresh.stage1_prompts["field_overrides"] == {"RaceType": "explicit"}
+
+
+def test_quick_prompt_includes_explicit_field_overrides():
+    prompt = image_pipeline._quick_edit_prompt(
+        {"data": {"Num": 57}}, "humanoid", [], [], {"RaceType": "explicit"},
+        "PREVIOUS PROMPT", resolve_llm=False,
+    )
+    assert prompt.startswith("[明示されたフィールド指定]")
+    assert "RaceType: explicit" in prompt and prompt.endswith("PREVIOUS PROMPT")
+
+
+def test_dry_run_resolves_ambiguous_fields_without_llm(monkeypatch):
+    from src.utils import dataset
+
+    record = {
+        "data": {
+            "RaceType": [{"value": "A"}, {"value": "B"}],
+            "Height_cm": [{"value": 150}, {"value": 180}],
+        },
+    }
+    monkeypatch.setattr(dataset, "_llm_pick_candidate_value",
+                        lambda *args, **kwargs: pytest.fail("dry-run called an LLM"))
+    plan = dataset.build_gemini_prompt(record, "humanoid", resolve_llm=False)["prompt"]
+    assert "種別 (未選択候補): A / B" in plan
+    assert "身長 (未選択候補): 150 / 180" in plan
+    resolutions = dataset.describe_ambiguous_field_resolutions(record, "humanoid", resolve_llm=False)
+    assert resolutions["RaceType"]["source"] == "unresolved"
+    selected = dataset.build_gemini_prompt(
+        record, "humanoid", field_overrides={"RaceType": "A"}, resolve_llm=False,
+    )["prompt"]
+    assert "DB原典/種別: A" in selected
+    assert "種別 (未選択候補)" not in selected
+
+
+def test_joint_stage5_prompt_includes_revision_text():
+    prompt = image_pipeline._append_revision_instructions("COMPOSITION", "表情を笑顔に; 尻尾は元のまま")
+    assert prompt.startswith("COMPOSITION\n\n[修正指示 (")
+    assert "- 修正: 表情を笑顔に" in prompt and "- 修正: 尻尾は元のまま" in prompt
 
 
 def test_connector_takes_images_dry_run_and_quick():

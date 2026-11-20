@@ -590,16 +590,26 @@ def restore_run(run_id: str, output_base: Path | str) -> Path | None:
         return None
     if not isinstance(summary, dict):
         return None
+    finals = run_final_files(summary, name)
+    if not finals:
+        return None
     date = name[:8]
     run_dir = (Path(output_base) / date / name) if date.isdigit() else (Path(output_base) / name)
-    for rel in [*run_final_files(summary, name), *(PurePosixPath(rel) for rel in _RUN_EXTRA_FILES)]:
+    restored_start = False
+    for rel in [*finals, *(PurePosixPath(rel) for rel in _RUN_EXTRA_FILES)]:
         try:
             data = read_object(_run_prefix(name) + rel.as_posix(), _RUN_FILE_MAX_BYTES)
         except ValueError:
+            if rel == finals[0]:
+                return None
             continue
         target = run_dir.joinpath(*rel.parts)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(data)
+        if rel == finals[0]:
+            restored_start = True
+    if not restored_start:
+        return None
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / _RUN_SUMMARY).write_bytes(raw)     # 最後に置く（途中で止まった復元を「実行あり」と見せない）
     return run_dir

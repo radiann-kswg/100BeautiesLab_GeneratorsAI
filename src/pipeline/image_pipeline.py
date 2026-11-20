@@ -240,6 +240,8 @@ def plan_pipeline(
     revisions: "str | list[str] | None" = None,
     images: "list[dict] | str | None" = None,
     out_dir: str | None = None,
+    quick: bool = False,
+    field_overrides: dict[str, str] | None = None,
 ) -> dict:
     """生成せずに、実行される内容（プロンプトの土台と、役割の付いた画像の一覧）を返す。dry_run が使う。
 
@@ -250,7 +252,8 @@ def plan_pipeline(
     from src.pipeline import input_images
     from src.utils import apply_generation_gate, find_character
     from src.utils.dataset import (
-        build_gemini_prompt, character_selection, collect_reference_images, costume_names, state_names,
+        build_gemini_prompt, character_selection, collect_reference_images, costume_names,
+        describe_ambiguous_field_resolutions, state_names,
     )
     from src.utils.iterate import parse_revisions
 
@@ -269,6 +272,62 @@ def plan_pipeline(
     roles = {image["kind"] for image in inputs}
     scene = _scene_or_default(scene, revision_items, bool(iterate_from) or "base" in roles)
 
+    if quick:
+        if joint:
+            raise ValueError("軽い加筆 (quick) は単体キャラクターだけで使えます。")
+        if not iterate_from and "base" not in roles:
+            raise ValueError("軽い加筆 (quick) には、起点（iterate_from か、役割 base の画像）が必要です。")
+        source: Path | None = None
+        if iterate_from and "base" not in roles:
+            from src.utils.iterate import resolve_iterate_source
+
+            try:
+                source, _ = resolve_iterate_source(iterate_from)
+            except (FileNotFoundError, RuntimeError) as err:
+                raise ValueError(f"改稿の起点を読めません: {err}") from err
+            iterate_from = str(source)
+        base, _, _ = input_images.split(inputs, 3)
+        with character_selection({(work_key, targets[0][0]): {
+            "state": targets[0][2], "costume": costume,
+        }}):
+            num, form, state = targets[0]
+            record = find_character(num, work_key)
+            if record is None:
+                raise ValueError(f"キャラクター #{num} ({work_key}) が見つかりません。")
+            proceed, gate = apply_generation_gate(record, usage="image", num=num)
+            if not proceed:
+                raise ValueError(f"#{_fmt_num(num)} は生成できません（ai_training opt-out: {gate['reason']}）。")
+            overrides = field_overrides or {}
+            prompt = _quick_edit_prompt(
+                record, form, inputs, revision_items, overrides,
+                _previous_base_prompt(source) if source else "", resolve_llm=False,
+            )
+            references = collect_reference_images(record, form)
+            fields = describe_ambiguous_field_resolutions(
+                record, form, scene=_KEEP_SCENE, field_overrides=overrides, resolve_llm=False,
+            )
+            character = {
+                "num": num, "form": form, "name": extract_char_name(record, fallback=f"#{_fmt_num(num)}"),
+                "ai_training_gate": gate, "state": state, "state_names": state_names(record),
+                "costume": costume, "costume_names": costume_names(num, work_key),
+                "free_costume_note": "" if costume in costume_names(num, work_key) else costume,
+                "base_prompt": prompt, "field_overrides": overrides,
+                "field_resolutions": fields,
+                "official_references": [Path(p).name for p in references.get("local_paths") or []],
+            }
+        return {
+            "status": "dry_run",
+            "message": "生成していません。内容を利用者に示し、承認を得てから dry_run なしで呼んでください。",
+            "pipeline": "quick", "work_key": work_key, "scene": _KEEP_SCENE,
+            "iterate_from": str(base["path"]) if base and base.get("path") else (str(source) if source else ""),
+            "revisions": revision_items,
+            "characters": [character], "input_images": [input_images.describe(image) for image in inputs],
+            "start_image": input_images.describe(base) if base else {"path": iterate_from},
+            "quick_prompt": prompt, "generation_count": 1,
+            "notes": ["軽い加筆 (quick): 表示した起点とプロンプトを使い、画像生成を 1 回だけ実行します。",
+                      "未指定の曖昧フィールドは候補を表示しています。選択が必要な場合は field_overrides で明示してください。"],
+        }
+
     characters = []
     selection = {(work_key, num): {"state": state, "costume": costume} for num, _, state in targets}
     with character_selection(selection):
@@ -282,7 +341,8 @@ def plan_pipeline(
             free_costume = "" if costume in costume_names(num, work_key) else costume
             prompt = build_gemini_prompt(
                 record, form, scene="" if joint else scene, style=style, composition=composition,
-                background=background, revisions=None if joint else revision_items or None)["prompt"]
+                background=background, revisions=None if joint else revision_items or None,
+                field_overrides=field_overrides, resolve_llm=False)["prompt"]
             block = "" if joint else input_images.prompt_block(
                 inputs, 3, has_revisions=bool(revision_items), has_iterate_source=bool(iterate_from) and "base" not in roles)
             references = collect_reference_images(record, form)
@@ -293,6 +353,10 @@ def plan_pipeline(
                 "costume": costume, "costume_names": costume_names(num, work_key),
                 "free_costume_note": free_costume,
                 "base_prompt": (block + "\n\n" if block else "") + prompt,
+                "field_overrides": field_overrides or {},
+                "field_resolutions": describe_ambiguous_field_resolutions(
+                    record, form, scene=scene, field_overrides=field_overrides, resolve_llm=False,
+                ),
                 "official_references": [Path(p).name for p in references.get("local_paths") or []],
             })
     joint_block = input_images.prompt_block(inputs, 5, has_revisions=bool(revision_items)) if joint else ""
@@ -309,6 +373,7 @@ def plan_pipeline(
         "joint_input_block": joint_block,
         "notes": [
             "base_prompt は Stage 1 の LLM が加工する前の土台です。本番のプロンプトは実行フォルダーの stage1_prompt/ に残ります。",
+            "未指定の曖昧フィールドは候補を表示しています。選択が必要な場合は field_overrides で明示してください。",
             "画像生成の回数の目安: 単体はラフ 5・修正 最大 5・合成 3。合同は 1 体につきラフ 3・修正 最大 3、構図ラフ 2、合成 3。",
         ],
     }
@@ -325,6 +390,40 @@ def _previous_base_prompt(source: Path) -> str:
     return ""
 
 
+def _quick_edit_prompt(
+    record: dict,
+    form: str,
+    inputs: list[dict],
+    revisions: list[str],
+    field_overrides: dict[str, str],
+    previous_prompt: str,
+    *,
+    resolve_llm: bool,
+) -> str:
+    from src.pipeline import input_images
+    from src.utils.dataset import _build_revision_block, build_gemini_prompt
+
+    prompt = previous_prompt or build_gemini_prompt(
+        record, form, scene=_KEEP_SCENE, field_overrides=field_overrides,
+        resolve_llm=resolve_llm,
+    )["prompt"]
+    field_block = ""
+    if field_overrides:
+        field_block = "[明示されたフィールド指定]\n" + "\n".join(
+            f"- {name}: {value}" for name, value in field_overrides.items()
+        ) + "\n- 上記の値を必ず反映する。"
+    blocks = [
+        input_images.prompt_block(
+            inputs, 3, has_revisions=bool(revisions),
+            has_iterate_source=not any(image["kind"] == "base" for image in inputs),
+        ),
+        _build_revision_block(revisions),
+        field_block,
+        prompt,
+    ]
+    return "\n\n".join(block for block in blocks if block)
+
+
 def run_quick_edit(
     num: int | str,
     form: str = "corefolder",
@@ -335,6 +434,7 @@ def run_quick_edit(
     images: "list[dict] | str | None" = None,
     costume: str = "",
     state: str = "",
+    field_overrides: dict[str, str] | None = None,
 ) -> "PipelineResult":
     """軽い加筆: 起点の絵を 1 回だけ編集し、完成画像 1 枚を新しい実行フォルダー (``_iterN``) に保存する。
 
@@ -345,7 +445,7 @@ def run_quick_edit(
     from src.gemini.generate import generate_image
     from src.pipeline import input_images
     from src.utils import apply_generation_gate, find_character
-    from src.utils.dataset import _build_revision_block, build_gemini_prompt, character_selection
+    from src.utils.dataset import build_gemini_prompt, character_selection
     from src.utils.iterate import is_remote_url, next_iteration_label, parse_revisions, resolve_iterate_source
 
     start_time = datetime.now()
@@ -390,17 +490,17 @@ def run_quick_edit(
             iterate_from = str(base["path"])
         revision_items = parse_revisions(revisions) if isinstance(revisions, str) else list(revisions or [])
         reused = _previous_base_prompt(source) if source else ""
-        prompt = reused or build_gemini_prompt(record, form, scene=_KEEP_SCENE)["prompt"]
-        blocks = [
-            input_images.prompt_block(inputs, 3, has_revisions=bool(revision_items), has_iterate_source=base is None),
-            _build_revision_block(revision_items),
-            prompt,
-        ]
-        final_prompt = "\n\n".join(block for block in blocks if block)
+        overrides = field_overrides or {}
+        prompt = reused or build_gemini_prompt(
+            record, form, scene=_KEEP_SCENE, field_overrides=overrides,
+        )["prompt"]
+        final_prompt = _quick_edit_prompt(
+            record, form, inputs, revision_items, overrides, prompt, resolve_llm=True,
+        )
         result.scene_used = _KEEP_SCENE
         result.stage1_prompts = {
             "quick": True, "prompt_source": "previous_run" if reused else "base_prompt",
-            "iterate_from": iterate_from, "revisions": revision_items,
+            "iterate_from": iterate_from, "revisions": revision_items, "field_overrides": overrides,
         }
         stage1_dir = pipeline_dir / "stage1_prompt"
         stage1_dir.mkdir(parents=True, exist_ok=True)
@@ -893,6 +993,17 @@ def _compose_multi_char(
     return results
 
 
+def _append_revision_instructions(prompt: str, revisions: "str | list[str] | None") -> str:
+    if not revisions:
+        return prompt
+    from src.utils.dataset import _build_revision_block
+    from src.utils.iterate import parse_revisions
+
+    items = parse_revisions(revisions) if isinstance(revisions, str) else list(revisions)
+    block = _build_revision_block(items)
+    return f"{prompt}\n\n{block}" if block else prompt
+
+
 def run_combined_pipeline(*args: Any, states: "list[str] | None" = None, **kwargs: Any) -> "MultiCharPipelineResult":
     """状態と衣装の指定を有効にして、合同のパイプライン（:func:`_run_combined_pipeline`）を実行する。
 
@@ -1268,6 +1379,7 @@ def _run_combined_pipeline(
     composition_prompt += "\n".join(
         design_reference_block(char_data_map[n]["spec"]["design_reference"]) for n in nums
     )
+    composition_prompt = _append_revision_instructions(composition_prompt, revisions)
     stage5_dir = pipeline_dir / "stage5_final"
     synth_images = _compose_multi_char(
         records[0], primary_form,
@@ -1760,6 +1872,7 @@ def main() -> None:
                 background=first.get("background", args.background), costume=first.get("costume", args.costume),
                 states=[cp.get("state", args.state) for cp in char_params],
                 iterate_from=args.iterate_from, revisions=args.revisions, images=args.images, out_dir=args.out,
+                quick=args.quick, field_overrides=first.get("field_overrides") or field_override,
             )
         except ValueError as err:
             print(f"[ERROR] {err}")
@@ -1778,6 +1891,7 @@ def main() -> None:
             num=cp["num"], form=cp.get("form", "corefolder"), work_key=cp.get("work_key", args.work),
             out_dir=args.out, iterate_from=args.iterate_from, revisions=args.revisions, images=args.images,
             costume=cp.get("costume", args.costume), state=cp.get("state", args.state),
+            field_overrides=cp.get("field_overrides") or field_override,
         )
         print(f"\n[完了] ステータス: {result.status}")
         for err in result.errors:

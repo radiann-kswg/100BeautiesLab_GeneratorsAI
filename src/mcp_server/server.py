@@ -553,7 +553,7 @@ async def numbertales_generate_character(params: GenerateCharacterInput) -> str:
         return await _dry_run(
             nums=[p.num], forms=[p.form.value], work_key=p.work_key, scene=p.scene, style=p.style,
             composition=p.composition, background=p.background, costume=p.costume, states=[p.state],
-            images=_images(p))
+            field_overrides=p.field_overrides, images=_images(p))
     _job_id = uuid.uuid4().hex[:12]
 
     def _job() -> dict[str, Any]:
@@ -616,7 +616,8 @@ async def numbertales_generate_joint(params: GenerateJointInput) -> str:
         return await _dry_run(
             nums=list(p.nums), forms=[f.lower() for f in p.forms] if p.forms else [p.form.value] * len(p.nums),
             work_key=p.work_key, scene=p.scene, style=p.style, composition=p.composition,
-            background=p.background, costume=p.costume, states=list(p.states), images=_images(p))
+            background=p.background, costume=p.costume, states=list(p.states),
+            field_overrides=p.field_overrides, images=_images(p))
     _job_id = uuid.uuid4().hex[:12]
 
     def _job() -> dict[str, Any]:
@@ -763,11 +764,8 @@ async def numbertales_iterate(params: IterateInput) -> str:
     if p.dry_run:
         plan = json.loads(await _dry_run(
             nums=[p.num], forms=[p.form.value], work_key=p.work_key, costume=p.costume, states=[p.state],
-            iterate_from=p.iterate_from or None, revisions=p.revisions, images=_images(p)))
-        if p.quick and plan.get("status") == "dry_run":
-            plan["pipeline"] = "quick"
-            plan["notes"] = ["軽い加筆 (quick): 起点の絵を 1 回だけ編集します。画像生成は 1 回。"
-                             "入力画像は、役割のラベルを付けてこの 1 回にすべて渡します。"]
+            iterate_from=p.iterate_from or None, revisions=p.revisions, images=_images(p),
+            quick=p.quick, field_overrides=p.field_overrides))
         return json.dumps(plan, ensure_ascii=False, indent=2)
     _job_id = uuid.uuid4().hex[:12]
 
@@ -777,7 +775,8 @@ async def numbertales_iterate(params: IterateInput) -> str:
         if p.quick:
             return _run_and_publish(run_quick_edit(
                 num=p.num, form=p.form.value, work_key=p.work_key, iterate_from=p.iterate_from or None,
-                revisions=p.revisions, images=_images(p), costume=p.costume, state=p.state))
+                revisions=p.revisions, images=_images(p), costume=p.costume, state=p.state,
+                field_overrides=p.field_overrides))
         result = run_image_pipeline(
             num=p.num,
             form=p.form.value,

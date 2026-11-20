@@ -3158,7 +3158,7 @@ def _match_field_override(override: str, candidates: list[dict[str, Any]]) -> di
 
 
 def _resolve_ambiguous_field(
-    record: dict[str, Any], field_name: str, scene: str = "", override: str = ""
+    record: dict[str, Any], field_name: str, scene: str = "", override: str = "", *, resolve_llm: bool = True
 ) -> dict[str, Any]:
     """曖昧フィールド (`_AMBIGUOUS_FIELD_SPECS` 対象) の値を解決する。
 
@@ -3208,6 +3208,8 @@ def _resolve_ambiguous_field(
 
     if len(candidates) == 1:
         return {"value": candidates[0].get("value"), "source": "single_candidate", "reasoning": "", "candidates": candidates}
+    if not resolve_llm:
+        return {"value": "", "source": "unresolved", "reasoning": "", "candidates": candidates}
 
     candidate_sig = tuple(
         (str(c.get("value")), str(c.get("about_JP") or ""), str(c.get("about_EN") or ""))
@@ -3224,6 +3226,8 @@ def describe_ambiguous_field_resolutions(
     form: str,
     scene: str = "",
     field_overrides: dict[str, str] | None = None,
+    *,
+    resolve_llm: bool = True,
 ) -> dict[str, dict[str, Any]]:
     """`form` に該当する曖昧フィールドの解決結果をまとめて返す（ログ/対話UI/プロンプト整形の共通入口）。
 
@@ -3239,7 +3243,8 @@ def describe_ambiguous_field_resolutions(
         if form not in spec.forms:
             continue
         info = _resolve_ambiguous_field(
-            record, spec.field_name, scene=scene, override=overrides.get(spec.field_name, "")
+            record, spec.field_name, scene=scene, override=overrides.get(spec.field_name, ""),
+            resolve_llm=resolve_llm,
         )
         if info["source"] in ("plain_value", "empty"):
             continue
@@ -3248,7 +3253,8 @@ def describe_ambiguous_field_resolutions(
 
 
 def _build_form_common_dataset_block(
-    form: str, record: dict[str, Any] | None = None, scene: str = "", field_overrides: dict[str, str] | None = None
+    form: str, record: dict[str, Any] | None = None, scene: str = "", field_overrides: dict[str, str] | None = None,
+    *, resolve_llm: bool = True,
 ) -> str:
     """共通形態データセットの要点をプロンプト用テキストとして返す。
 
@@ -3318,8 +3324,13 @@ def _build_form_common_dataset_block(
             if form not in spec.forms:
                 continue
             info = _resolve_ambiguous_field(
-                record, spec.field_name, scene=scene, override=_overrides.get(spec.field_name, "")
+                record, spec.field_name, scene=scene, override=_overrides.get(spec.field_name, ""),
+                resolve_llm=resolve_llm,
             )
+            if info["source"] == "unresolved":
+                options = " / ".join(str(c.get("value")) for c in info["candidates"])
+                db_lines.append(f"- DB原典/{spec.label_ja} (未選択候補): {options}")
+                continue
             if info["source"] == "empty":
                 continue
             rendered = spec.render(info.get("value"))
@@ -3571,6 +3582,7 @@ def build_gemini_prompt(
     background: str = "",
     revisions: list[str] | tuple[str, ...] | None = None,
     field_overrides: dict[str, str] | None = None,
+    resolve_llm: bool = True,
 ) -> dict[str, Any]:
     """Gemini / Imagen 用のプロンプトと参照画像 URL を返す。"""
     hints = generation_ai_hints(record)
@@ -3637,7 +3649,9 @@ def build_gemini_prompt(
             " Keep a compact spherical corefolder silhouette,"
             " with no humanoid torso and no human limbs."
         )
-    form_common_block = _build_form_common_dataset_block(form, record, scene=scene, field_overrides=field_overrides)
+    form_common_block = _build_form_common_dataset_block(
+        form, record, scene=scene, field_overrides=field_overrides, resolve_llm=resolve_llm,
+    )
 
     if form == "corefolder":
         form_lock = (

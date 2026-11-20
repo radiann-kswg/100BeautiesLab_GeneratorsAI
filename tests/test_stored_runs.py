@@ -120,3 +120,22 @@ def test_unknown_run_ids_and_other_prefixes_are_not_restored(tmp_path, monkeypat
         with pytest.raises(FileNotFoundError):
             iterate.resolve_iterate_source(value)
     assert list(tmp_path.iterdir()) == []
+
+
+def test_restore_requires_the_first_final_image_but_not_optional_prompt(tmp_path, monkeypatch):
+    bucket = _Bucket()
+    prefix = f"numbertales/runs/{RUN}/"
+    first = "stage5_final/synth/a/num057_corefolder_01.png"
+    summary = {"stage5_paths": {"all": [f"output/{RUN}/{first}"]}}
+    bucket.store[prefix + "pipeline_summary.json"] = json.dumps(summary).encode()
+    monkeypatch.setattr(output_sink, "_bucket", lambda: bucket)
+
+    assert output_sink.restore_run(RUN, tmp_path) is None
+    assert list(tmp_path.iterdir()) == []
+
+    bucket.store[prefix + first] = PNG
+    restored = output_sink.restore_run(RUN, tmp_path)
+    assert restored == tmp_path / RUN[:8] / RUN
+    assert (restored / first).read_bytes() == PNG
+    assert (restored / "pipeline_summary.json").is_file()
+    assert not (restored / "stage1_prompt" / "prompt_base_gemini.txt").exists()
