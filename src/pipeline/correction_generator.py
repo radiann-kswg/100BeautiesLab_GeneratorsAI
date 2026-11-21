@@ -366,7 +366,7 @@ def _apply_correction_gemini(
     else:
         # i2i 専用: 最小限の修正指示のみ。ソース画像の作風・構図を最大限維持させる。
         identity_tags = _identity_tags(record, form)
-        num_val = (record.get("data") or {}).get("Num", "?")
+        num_val = record_num(record)
         palette_summary = _record_palette_summary(record, form)
         palette_line = f"- 配色 (DB実測値): {palette_summary}\n" if palette_summary else ""
 
@@ -445,7 +445,7 @@ def _apply_correction_openai(
     violations = analysis.get("violations") or []
     comp_issues = analysis.get("composition_issues") or []
     identity_tags = _identity_tags(record, form)
-    num_val = (record.get("data") or {}).get("Num", "?")
+    num_val = record_num(record)
     palette_summary = _record_palette_summary(record, form)
     palette_line = f"Color palette (from DB, keep): {palette_summary}\n" if palette_summary else ""
 

@@ -102,7 +102,12 @@ def test_stage2_uses_appearance_detail_as_canon_only_for_works_without_ai_hints(
     data = db_collector.collect_character_data("Mouse", "humanoid", tmp_path / "sar", _SAR)
     assert data["spec"]["char_num"] == "Mouse" and data["spec"]["work_title"] == "獣爾騎兵"
     assert data["spec"]["design_reference"]["observations"] == ["丸い耳"]
-    assert "[DB部位別仕様] が正典" in prompts[0] and "#Mouse" not in prompts[0]
+    mouse = find_character("Mouse", _SAR)        # 上流が AIHints を足すと、正典の書き方が変わる
+    if mouse.get("ai_hints"):
+        assert "AIHints 文面が正典" in prompts[0] and "[DB部位別仕様] が正典" not in prompts[0]
+    else:
+        assert "[DB部位別仕様] が正典" in prompts[0]
+    assert "#Mouse" not in prompts[0]
     summary = json.loads((tmp_path / "sar" / "stage2_db" / "db_summary.json").read_text(encoding="utf-8"))
     assert summary["num"] == "Mouse" and summary["reference_local_count"] >= 1
     # NumberTales は AIHints が正典のまま。無ければ観察へ進まず確認待ちになる

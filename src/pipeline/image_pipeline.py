@@ -840,7 +840,7 @@ def _build_multi_char_composition_prompt(
     """
     def _char_label(r: dict) -> str:
         d = r.get("data") or {}
-        raw_num = d.get("Num")
+        raw_num = record_num(r)
         return extract_char_name(r, fallback=f"#{_fmt_num(raw_num)}")
 
     def _joint_art_style_line() -> str:
@@ -854,8 +854,7 @@ def _build_multi_char_composition_prompt(
         return ", ".join(keywords)
 
     def _get_num_key(r: dict) -> int | str:
-        d = r.get("data") or {}
-        raw = d.get("Num")
+        raw = record_num(r)
         if isinstance(raw, float):
             return int(raw)
         return raw
