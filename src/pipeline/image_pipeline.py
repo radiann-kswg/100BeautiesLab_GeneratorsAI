@@ -998,7 +998,7 @@ def _comp_rough_variant_note(index: int, composition: str = "") -> str:
             "- 場面の指定 (誰が何をしているか、キャラクターどうしの関係) と、識別要素の持ち主は変えない。")
 
 
-def _checked_guides(comp_rough_paths: list[Path], joint_cast: list[tuple[dict, str]],
+def _checked_guides(comp_rough_paths: list[Path | tuple[Path, int]], joint_cast: list[tuple[dict, str]],
                     renders: list[Path], redraw=None) -> list[Path]:
     """構図ラフのうち、体数と識別要素の持ち主が合っているものを、合成のガイドとして返す。
 
@@ -1007,7 +1007,11 @@ def _checked_guides(comp_rough_paths: list[Path], joint_cast: list[tuple[dict, s
     1 回だけ描き直し、描き直した絵が検査を通ればガイドにする。検査できなかった構図ラフは描き直さない。
     """
     guides: list[Path] = []
-    for index, candidate in enumerate(comp_rough_paths):
+    for index, entry in enumerate(comp_rough_paths):
+        if isinstance(entry, tuple):
+            candidate, variant = entry
+        else:
+            candidate, variant = entry, index
         mixing = check_joint_identity_mixing(candidate, joint_cast, renders=renders)
         found = mixing["mixed"]
         if not mixing["skipped"] and not found:
@@ -1018,7 +1022,7 @@ def _checked_guides(comp_rough_paths: list[Path], joint_cast: list[tuple[dict, s
         if mixing["skipped"] or not found or redraw is None:
             continue
         try:
-            redrawn = redraw(index, found)
+            redrawn = redraw(variant, found)
         except Exception as err:
             print(f"  [WARN] Stage5: 構図ラフ {Path(candidate).name} の描き直しに失敗: {type(err).__name__}: {err}")
             continue
@@ -1398,6 +1402,7 @@ def _run_combined_pipeline(
     # 単体ラフとは別に全員が同じシーンに収まる構図を先行確認するためのラフ。
     # Stage 5 最終合成の前段として i2i の起点にも使える。
     # 全員の単体ラフが 1 枚以上揃っている場合のみ実行する。
+    comp_rough_entries: list[tuple[Path, int]] = []
     comp_rough_paths: list[Path] = []
     all_have_rough = all(bool(per_char_roughs.get(n)) for n in nums)
     if all_have_rough:
@@ -1411,7 +1416,7 @@ def _run_combined_pipeline(
             for variant in range(_STAGE3_COMP_ROUGH_COUNT):     # 1 枚ずつ、別の構図の指示を足して描く
                 if variant:
                     time.sleep(float(os.environ.get("GEMINI_IMAGE_SLEEP", "6")))   # レートリミット対策
-                comp_rough_paths += _compose_multi_char(
+                generated = _compose_multi_char(
                     records[0], primary_form,
                     char_renders=comp_ref_images,
                     composition_prompt=comp_rough_prompt + _comp_rough_variant_note(variant, composition),
@@ -1423,7 +1428,9 @@ def _run_combined_pipeline(
                         records, comp_ref_images,
                         [char_data_map[n]["spec"].get("detail_reference_paths", []) for n in nums]),
                 )
-            print(f"  [Stage3-CompRough] {len(comp_rough_paths)} 枚生成完了")
+                comp_rough_entries.extend((path, variant) for path in generated)
+                comp_rough_paths.extend(generated)
+            print(f"  [Stage3-CompRough] {len(comp_rough_entries)} 枚生成完了")
         except Exception as err:
             print(f"  [WARN] Stage3-CompRough: {type(err).__name__}: {err}")
     else:
@@ -1516,7 +1523,7 @@ def _run_combined_pipeline(
         result.stage3_paths["composition_rough"] += [str(p) for p in redrawn]
         return redrawn
 
-    guides = _checked_guides(comp_rough_paths, joint_cast, per_char_inspected, redraw=_redraw_comp_rough)
+    guides = _checked_guides(comp_rough_entries, joint_cast, per_char_inspected, redraw=_redraw_comp_rough)
     plans = _synth_plans(guides)
     result.stage3_paths["composition_guide"] = [str(guide) for guide, _ in plans if guide]
     _comp_note = f" + 構図ラフ参照 {len(guides)} 枚" if guides else "（構図ラフ参照なし）"

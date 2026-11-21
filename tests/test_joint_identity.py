@@ -241,6 +241,26 @@ def test_rejected_composition_rough_is_redrawn_once(tmp_path, monkeypatch):
     assert [path.name for path in image_pipeline._checked_guides(roughs, [], [], redraw=failing)] == ["comp_1.png"]
 
 
+def test_empty_first_composition_rough_keeps_second_variant(tmp_path, monkeypatch):
+    # 先頭の生成が空配列でも、残った 2 番目の構図ラフは variant=1 として再描画する
+    second = _png(tmp_path / "comp_1.png")
+    verdicts = {
+        "comp_1.png": {"mixed": ["斜め上からの寄りではなく正面引きになっている"], "skipped": False},
+        "redo_1.png": {"mixed": [], "skipped": False},
+    }
+    monkeypatch.setattr(image_pipeline, "check_joint_identity_mixing",
+                        lambda image, cast, renders=None: verdicts[Path(image).name])
+    asked: list[tuple[int, list[str]]] = []
+
+    def redraw(variant, found):
+        asked.append((variant, found))
+        return [_png(tmp_path / f"redo_{variant}.png")]
+
+    guides = image_pipeline._checked_guides([(second, 1)], [], [], redraw=redraw)
+    assert asked == [(1, ["斜め上からの寄りではなく正面引きになっている"])]
+    assert [path.name for path in guides] == ["redo_1.png"]
+
+
 def test_stage4_compares_accessory_colours_with_the_official_image(tmp_path, monkeypatch):
     # 20 のコアフォルダの首輪は橙 (公式画像)。2026-11-21 の 2 回目の合同では、暗い首輪のラフが Stage 4 を通った
     seen: dict = {}
