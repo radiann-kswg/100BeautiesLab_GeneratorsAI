@@ -377,7 +377,7 @@ def plan_pipeline(
         "notes": [
             "base_prompt は Stage 1 の LLM が加工する前の土台です。本番のプロンプトは実行フォルダーの stage1_prompt/ に残ります。",
             "未指定の曖昧フィールドは候補を表示しています。選択が必要な場合は field_overrides で明示してください。",
-            "画像生成の回数の目安: 単体はラフ 5・修正 最大 5・合成 3。合同は 1 体につきラフ 3・修正 最大 3、構図ラフ 2、合成 最大 2（検査を通った構図ラフ 1 枚につき 1）。",
+            "画像生成の回数の目安: 単体はラフ 5・修正 最大 5・合成 3。合同は 1 体につきラフ 3・修正 最大 3、構図ラフ 2（検査に落ちた分は 1 回ずつ描き直すので最大 4）、合成 最大 2（検査を通った構図ラフ 1 枚につき 1）。",
         ],
     }
 
@@ -999,13 +999,15 @@ def _comp_rough_variant_note(index: int, composition: str = "") -> str:
 
 
 def _checked_guides(comp_rough_paths: list[Path], joint_cast: list[tuple[dict, str]],
-                    renders: "list[Path | None]") -> list[Path]:
+                    renders: list[Path], redraw=None) -> list[Path]:
     """構図ラフのうち、体数と識別要素の持ち主が合っているものを、合成のガイドとして返す。
 
     2026-11-20 の合同では、顔が 3 つある構図ラフや、札の付け先を取り違えた構図ラフがあった。
+    ``redraw`` (構図ラフの番号と指摘を受け、描き直した画像を返す関数) を渡すと、指摘のあった構図ラフを
+    1 回だけ描き直し、描き直した絵が検査を通ればガイドにする。検査できなかった構図ラフは描き直さない。
     """
     guides: list[Path] = []
-    for candidate in comp_rough_paths:
+    for index, candidate in enumerate(comp_rough_paths):
         mixing = check_joint_identity_mixing(candidate, joint_cast, renders=renders)
         found = mixing["mixed"]
         if not mixing["skipped"] and not found:
@@ -1013,6 +1015,21 @@ def _checked_guides(comp_rough_paths: list[Path], joint_cast: list[tuple[dict, s
             continue
         reason = "検査がスキップされました" if mixing["skipped"] else (' / '.join(found) or "検査失敗")
         print(f"  [Stage5] 構図ラフ {Path(candidate).name} はガイドに使いません: {reason}")
+        if mixing["skipped"] or not found or redraw is None:
+            continue
+        try:
+            redrawn = redraw(index, found)
+        except Exception as err:
+            print(f"  [WARN] Stage5: 構図ラフ {Path(candidate).name} の描き直しに失敗: {type(err).__name__}: {err}")
+            continue
+        for retry in redrawn:
+            again = check_joint_identity_mixing(retry, joint_cast, renders=renders)
+            if not again["skipped"] and not again["mixed"]:
+                guides.append(Path(retry))
+                print(f"  [Stage5] 描き直した構図ラフ {Path(retry).name} をガイドに使います")
+            else:
+                print(f"  [Stage5] 描き直した構図ラフ {Path(retry).name} もガイドに使いません: "
+                      f"{' / '.join(again['mixed']) or '検査がスキップされました'}")
     return guides
 
 
@@ -1477,7 +1494,29 @@ def _run_combined_pipeline(
     # ── Stage 5: ベストレンダーを Gemini マルチ参照で 1 枚に合成 ──
     # 検査を通った構図ラフを先頭参照として差し込み、構図ガイドとして Gemini に渡す。完成はガイド 1 枚につき 1 枚。
     joint_cast = [(rec, forms_map[n]) for rec, n in zip(records, nums)]
-    guides = _checked_guides(comp_rough_paths, joint_cast, per_char_inspected)
+
+    def _redraw_comp_rough(variant: int, found: list[str]) -> list[Path]:
+        # 検査に落ちた構図ラフを、同じ構図の指示のまま、指摘を添えて 1 回だけ描き直す。
+        # 2026-11-21 の確認で、構図ラフ 2 枚のうち 1 枚が落ち、完成が 1 枚だけになった
+        time.sleep(float(os.environ.get("GEMINI_IMAGE_SLEEP", "6")))   # レートリミット対策
+        details = [char_data_map[n]["spec"].get("detail_reference_paths", []) for n in nums]
+        redrawn = _compose_multi_char(
+            records[0], primary_form,
+            char_renders=per_char_best,
+            composition_prompt=(
+                _build_multi_char_composition_prompt(records, forms_map, scene)
+                + _comp_rough_variant_note(variant, composition)
+                + "\n\n[前回の構図ラフで見つかった問題 (解消して描き直す)]\n" + "\n".join(f"- {item}" for item in found)),
+            synth_dir=pipeline_dir / "stage3_comp_rough",
+            work_key=work_key,
+            count=1,
+            detail_refs=[p for group in details for p in group],
+            ref_labels=_joint_ref_labels(records, per_char_best, details),
+        )
+        result.stage3_paths["composition_rough"] += [str(p) for p in redrawn]
+        return redrawn
+
+    guides = _checked_guides(comp_rough_paths, joint_cast, per_char_inspected, redraw=_redraw_comp_rough)
     plans = _synth_plans(guides)
     result.stage3_paths["composition_guide"] = [str(guide) for guide, _ in plans if guide]
     _comp_note = f" + 構図ラフ参照 {len(guides)} 枚" if guides else "（構図ラフ参照なし）"
