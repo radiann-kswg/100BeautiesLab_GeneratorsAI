@@ -588,7 +588,9 @@ async def numbertales_generate_character(params: GenerateCharacterInput) -> str:
         )
         return _run_and_publish(result)
 
-    job = MANAGER.submit("generate_character", p.model_dump(mode="json"), _job, job_id=_job_id)
+    job = await asyncio.to_thread(
+        MANAGER.submit, "generate_character", p.model_dump(mode="json"), _job, job_id=_job_id
+    )
     return _submit_response(job)
 
 
@@ -653,7 +655,9 @@ async def numbertales_generate_joint(params: GenerateJointInput) -> str:
         )
         return _run_and_publish(result)
 
-    job = MANAGER.submit("generate_joint", p.model_dump(mode="json"), _job, job_id=_job_id)
+    job = await asyncio.to_thread(
+        MANAGER.submit, "generate_joint", p.model_dump(mode="json"), _job, job_id=_job_id
+    )
     return _submit_response(job)
 
 
@@ -738,7 +742,9 @@ async def numbertales_generate_from_natural(params: GenerateFromNaturalInput) ->
         summary["parsed"] = char_params
         return summary
 
-    job = MANAGER.submit("generate_from_natural", p.model_dump(mode="json"), _job, job_id=_job_id)
+    job = await asyncio.to_thread(
+        MANAGER.submit, "generate_from_natural", p.model_dump(mode="json"), _job, job_id=_job_id
+    )
     return _submit_response(job)
 
 
@@ -803,7 +809,9 @@ async def numbertales_iterate(params: IterateInput) -> str:
         )
         return _run_and_publish(result)
 
-    job = MANAGER.submit("iterate", p.model_dump(mode="json"), _job, job_id=_job_id)
+    job = await asyncio.to_thread(
+        MANAGER.submit, "iterate", p.model_dump(mode="json"), _job, job_id=_job_id
+    )
     return _submit_response(job)
 
 
@@ -849,7 +857,7 @@ async def numbertales_job_status(params: JobStatusInput) -> str:
               "error": str               # status == failed のとき
             }
     """
-    job = MANAGER.get(params.job_id)
+    job = await asyncio.to_thread(MANAGER.get, params.job_id)
     if job is None:
         return json.dumps(
             {"error": f"job_id '{params.job_id}' が見つかりません。numbertales_list_runs で確認してください。"},
@@ -940,7 +948,7 @@ async def numbertales_get_run_logs(params: GetRunLogsInput) -> str:
               "error": str
             }
     """
-    job = MANAGER.get(params.job_id)
+    job = await asyncio.to_thread(MANAGER.get, params.job_id)
     if job is None:
         return json.dumps(
             {"error": f"job_id '{params.job_id}' が見つかりません。numbertales_list_runs で確認してください。"},
