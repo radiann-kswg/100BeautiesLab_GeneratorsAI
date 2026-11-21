@@ -389,8 +389,9 @@ src/**  /  requirements*.txt  /  Dockerfile
     `numbertales_job_status` / `numbertales_get_run_logs` で読める。
 - 入れ替わると失われるもの: 動いている途中のジョブ (処理は引き継がれない。照会すると `interrupted`)、
   合言葉の確認画面を開いている途中の手続き、インスタンスの中の `output/`。
-- 期限の切れた記録は、読もうとしたときに消す。読まれない記録は残り続けるので、気になる場合は、バケットの
-  ライフサイクルで `<GCS_PREFIX>/state/` の古いオブジェクト (たとえば 35 日より前) を消す設定を足す。
+- 期限切れのトークンは、保存先から読もうとしたときに消す。読まれないトークンを整理する場合は、
+  `<GCS_PREFIX>/state/oauth-access/` と `<GCS_PREFIX>/state/oauth-refresh/` に限定して、35 日より前のオブジェクトを消すライフサイクルを設定する。
+  `<GCS_PREFIX>/state/oauth-client/` は登録後に更新されないため、経過日数による削除対象に含めない（利用中でもサインインを復元できなくなる）。ジョブ記録の保持期間は別途定める。
 - 進捗は粗い（pending / running / succeeded / failed / interrupted）。ステージ単位の細かい進捗は未実装。
 - `OUTPUT_SINK=drive|gcs` は依存ライブラリ・クレデンシャルが無い場合、エラーで落とさず
   `local` にフォールバックし結果の `note` に理由を残す。
