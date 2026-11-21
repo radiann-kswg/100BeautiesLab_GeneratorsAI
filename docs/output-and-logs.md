@@ -241,9 +241,10 @@ output/{YYYYMMDD}/{ts}_pipeline_{form}_nums{AAA}_{BBB}/
 | ------------------ | ------------------------------------------------------------------------------------------- |
 | `nums`             | 対象キャラ番号リスト                                                                        |
 | `form`             | 形態 (`corefolder` / `humanoid`)                                                            |
-| `stage3_paths`     | Stage 3 生成パス。単体は配列、合同は `char_{NNN}` キーごとの dict + `"all"` キー            |
+| `stage3_paths`     | Stage 3 生成パス。単体は配列、合同は `char_{NNN}` キーごとの dict + `"all"` キー。合同の `composition_rough` は全体構図ラフ、`composition_guide` はそのうち合成のガイドに使った 1 枚 (体数と識別要素の検査を通ったもの。無ければ空) |
 | `stage4_paths`     | Stage 4 補正パス。合同は `char_{NNN}` キーと `"best_per_char"` (Stage 5 参照用) を含む      |
 | `stage5_paths`     | `synth` / `canva` / `all` の3キー                                                           |
+| `stage5_checks`    | 合同のみ。完成画像のファイル名ごとの、体数の誤りと、識別要素 (番号・ラベル・タグなど) が持ち主以外のキャラクターに描かれていた指摘。問題が無ければ空。直しは行わない |
 | `stage1_prompts`   | シーン / キャラ名 / `iterate_from` + `revisions` (i2i 時)。軽い加筆は `quick: true` と `prompt_source` |
 | `input_images`     | 依頼者が渡した入力画像の記録 (`role` / `note` / `provenance` / `source` / `bytes` / `width` / `height` / `sha256` / `stages` / `grayscale` / `file`) |
 | `status`           | `"ok"` / `"failed"` / `"partial"`                                                           |

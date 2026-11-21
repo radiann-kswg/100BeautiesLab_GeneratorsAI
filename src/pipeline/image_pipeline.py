@@ -80,7 +80,7 @@ from src.utils.dataset import (  # noqa: E402
 )
 from src.pipeline.design_reference import add_design_reference  # noqa: E402
 from src.pipeline.rough_generator import generate_rough_images, retry_rough_images  # noqa: E402
-from src.pipeline.correction_generator import correct_rough_images  # noqa: E402
+from src.pipeline.correction_generator import check_joint_identity_mixing, correct_rough_images  # noqa: E402
 from src.pipeline.final_generator import generate_final_images  # noqa: E402
 
 _ROUGH_COUNT = 5               # Stage 3 (単体): ラフ生成枚数
@@ -119,6 +119,7 @@ class MultiCharPipelineResult:
     stage3_paths: dict[str, list[str]] = field(default_factory=dict)
     stage4_paths: dict[str, list[str]] = field(default_factory=dict)
     stage5_paths: dict[str, list[str]] = field(default_factory=dict)
+    stage5_checks: dict[str, list[str]] = field(default_factory=dict)   # 完成画像ごとの、識別要素の取り違えの指摘
     input_images: list[dict] = field(default_factory=list)   # 依頼者が渡した入力画像の記録 (役割・出所・渡したステージ)
     status: str = "pending"
     errors: list[str] = field(default_factory=list)
@@ -345,6 +346,8 @@ def plan_pipeline(
                 field_overrides=field_overrides, resolve_llm=False)["prompt"]
             block = "" if joint else input_images.prompt_block(
                 inputs, 3, has_revisions=bool(revision_items), has_iterate_source=bool(iterate_from) and "base" not in roles)
+            if joint:       # 本番でキャラ別のラフに添える「1 体だけ」の指定 (_run_combined_pipeline と同じ)
+                prompt = _solo_rough_note(extract_char_name(record, fallback=f"#{_fmt_num(num)}")) + "\n\n" + prompt
             references = collect_reference_images(record, form)
             characters.append({
                 "num": num, "form": form, "name": extract_char_name(record, fallback=f"#{_fmt_num(num)}"),
@@ -874,8 +877,8 @@ def _build_multi_char_composition_prompt(
     # 入力画像を前に添付するときは、作風の基準を完成イラストに限る（入力画像の画風は写さない）
     style_refs = "キャラクターの完成イラスト" if ref_offset else "全参照画像"
     guide_no, first_char_no = 1 + ref_offset, (2 if has_comp_rough else 1) + ref_offset
-    design_refs = (f"参照{first_char_no}〜{first_char_no + len(records) - 1}" if ref_offset
-                   else f"参照{first_char_no}以降")
+    # 範囲は必ず明示する。「以降」と書くと、後ろに添付する部位図まで全員のデザインとして読まれる
+    design_refs = f"参照{first_char_no}〜{first_char_no + len(records) - 1}"
     if has_comp_rough:
         # 参照1=構図ガイド、参照2以降=各キャラデザイン という役割分担を明示
         char_list = "\n".join(
@@ -921,6 +924,11 @@ def _build_multi_char_composition_prompt(
         "[キャラクター別形態ルール]",
         *form_rules,
         "",
+        "[識別要素の持ち主]",
+        "- 番号・名前の表記・ラベル・タグ・首輪・紋章・髪飾りなどの識別要素は、持ち主のキャラクターにだけ描く。"
+        "ほかのキャラクターへ写さず、数も増やさない。",
+        "- 公式部位図は、ラベルに名前のあるキャラクターだけの部位。そのキャラクターの指定位置にだけ描く。",
+        "",
         "[共通作風]",
         _joint_art_style_line(),
         "",
@@ -934,6 +942,43 @@ def _build_multi_char_composition_prompt(
     return "\n".join(lines)
 
 
+def _solo_rough_note(name: str) -> str:
+    """合同生成の、キャラクターごとのラフに添える指定。"""
+    return (
+        "[このラフに描く人数]\n"
+        f"- {name} 1 体だけを描く。場面にほかのキャラクターが出てきても、このラフには描かない"
+        "（全員を 1 枚に描くのは、あとの合成で行う）。同じキャラクターを 2 体描かない。\n"
+        f"- {name} の番号・ラベル・タグは、設定の位置に 1 つずつ描く。同じものを 2 か所以上に描かない。"
+    )
+
+
+def _joint_ref_labels(
+    records: list[dict],
+    renders: "list[Path | str]",
+    detail_refs: "list[list[str]]",
+    guide: "Path | str | None" = None,
+) -> dict[str, str]:
+    """合同の合成に添付する参照のラベル ({パス: ラベル})。どの参照がどのキャラクターのものかを名前で示す。
+
+    records・renders・detail_refs は同じ順。持ち主の書かれていないレンダーや部位図からは、番号・ラベル・タグが
+    別のキャラクターへ写る (2026-11-20 の合同で、バイナの「試用」ラベルがハツカにも付いた)。
+    """
+    labels: dict[str, str] = {}
+    if guide:
+        labels[str(guide)] = "構図ガイド: 全員の配置・サイズ比・ポーズの下書き。キャラクターの外見の基準にはしない。"
+    owners: dict[str, list[str]] = {}
+    for record, render, details in zip(records, renders, detail_refs):
+        name = extract_char_name(record, fallback=f"#{_fmt_num(record_num(record))}")
+        labels[str(render)] = f"{name} の単体レンダー: {name} だけの姿・作風・配色・識別要素の正典。"
+        for path in details:
+            owners.setdefault(str(path), []).append(name)
+    for path, names in owners.items():
+        who = "・".join(dict.fromkeys(names))
+        labels[path] = (f"{who} の公式部位図: {Path(path).name} — {who} だけの部位の字形・形状の拡大資料。"
+                        "ほかのキャラクターには描かない。全身・構図は単体レンダーを参照。")
+    return labels
+
+
 def _compose_multi_char(
     base_record: dict,
     form: str,
@@ -945,12 +990,14 @@ def _compose_multi_char(
     detail_refs: list[str] | None = None,
     inputs: list[dict] | None = None,
     has_revisions: bool = False,
+    ref_labels: dict[str, str] | None = None,
 ) -> list[Path]:
     """Stage 5: 各キャラクターの単体完成レンダーを Gemini マルチ参照で 1 枚に合成する。
 
     全体の姿・構図は char_renders、部位の字形・形状は各キャラの公式 detail_refs を参照する。
     inputs は依頼者が渡した入力画像。合同生成ではここでだけ使う（加筆の起点・赤入れ・構図参考は
     レンダーの前、参考画像は後ろに、役割のラベルを付けて添付する）。
+    ref_labels は :func:`_joint_ref_labels` が作る、レンダーと部位図の持ち主を書いたラベル。
     """
     from src.gemini.generate import generate_image
     from src.pipeline import input_images
@@ -982,7 +1029,7 @@ def _compose_multi_char(
                 extra_ref_locals=reference_paths,
                 extra_ref_label="キャラクター単体レンダー: このキャラの姿・作風・配色の正典。",
                 trailing_ref_locals=[str(image["path"]) for image in trailing] or None,
-                ref_label_overrides=input_images.labels([*front, *trailing]) or None,
+                ref_label_overrides={**(ref_labels or {}), **input_images.labels([*front, *trailing])} or None,
                 skip_db_refs=True,  # 先頭キャラだけの DB 全体図は混ぜず、各キャラの部位図を明示添付
             )
             results.extend(paths)
@@ -1183,7 +1230,14 @@ def _run_combined_pipeline(
             composition=composition, background=background,
             costume=costume, field_overrides=field_overrides,
         )
-        per_char_prompts[n] = add_design_reference(prompts, char_data_map[n]["spec"])
+        prompts = add_design_reference(prompts, char_data_map[n]["spec"])
+        # 場面は全員で共有する (「寄り添って寝る」など)。1 体ずつのラフにそのまま渡すと、ラフに 2 体描かれて
+        # 番号やラベルが取り違えられる。ラフと、その修正・描き直しには「1 体だけ」を明示する。
+        solo = _solo_rough_note(extract_char_name(rec, fallback=f"#{_fmt_num(n)}"))
+        for key in ("base_gemini", "gemini"):
+            if prompts.get(key):
+                prompts[key] = solo + "\n\n" + prompts[key]
+        per_char_prompts[n] = prompts
 
     result.scene_used = scene
     result.stage1_prompts = {
@@ -1298,6 +1352,9 @@ def _run_combined_pipeline(
                 work_key=work_key,
                 count=_STAGE3_COMP_ROUGH_COUNT,
                 detail_refs=[p for n in nums for p in char_data_map[n]["spec"].get("detail_reference_paths", [])],
+                ref_labels=_joint_ref_labels(
+                    records, comp_ref_images,
+                    [char_data_map[n]["spec"].get("detail_reference_paths", []) for n in nums]),
             )
             print(f"  [Stage3-CompRough] {len(comp_rough_paths)} 枚生成完了")
         except Exception as err:
@@ -1366,8 +1423,19 @@ def _run_combined_pipeline(
 
     # ── Stage 5: ベストレンダーを Gemini マルチ参照で 1 枚に合成 ──
     # comp_rough があれば先頭参照として差し込み、構図ガイドとして Gemini に渡す。
-    has_comp_rough = bool(comp_rough_paths)
-    stage5_refs = ([comp_rough_paths[0]] if has_comp_rough else []) + per_char_best
+    # 構図ラフは、体数と識別要素の持ち主が合っている 1 枚だけをガイドにする (2026-11-20 の合同では、
+    # 顔が 3 つある構図ラフや、札の付け先を取り違えた構図ラフがあった)。どれも合わなければガイドなしで合成する。
+    joint_cast = [(rec, forms_map[n]) for rec, n in zip(records, nums)]
+    guide: Path | None = None
+    for candidate in comp_rough_paths:
+        found = check_joint_identity_mixing(candidate, joint_cast)["mixed"]
+        if not found:
+            guide = Path(candidate)
+            break
+        print(f"  [Stage5] 構図ラフ {Path(candidate).name} はガイドに使いません: {' / '.join(found)}")
+    result.stage3_paths["composition_guide"] = [str(guide)] if guide else []
+    has_comp_rough = guide is not None
+    stage5_refs = ([guide] if guide else []) + per_char_best
     _comp_note = " + 構図ラフ参照あり" if has_comp_rough else ""
     print(f"\n[=] Stage 5: キャラクター完成レンダー {len(per_char_best)} 枚を合成 ({_STAGE5_SYNTH_COUNT} 枚, 仕上げ){_comp_note}")
     from src.pipeline import input_images as _input_images
@@ -1391,8 +1459,20 @@ def _run_combined_pipeline(
         detail_refs=[p for n in nums for p in char_data_map[n]["spec"].get("detail_reference_paths", [])],
         inputs=inputs,
         has_revisions=bool(revisions),
+        ref_labels=_joint_ref_labels(
+            records, per_char_best,
+            [char_data_map[n]["spec"].get("detail_reference_paths", []) for n in nums],
+            guide=guide),
     )
     print(f"[Stage5] done - {len(synth_images)} 枚合成完了")
+
+    # 1 体ずつの検査 (Stage 4) では見つけられない、キャラクターどうしの識別要素の取り違えを見る。
+    # 直しはせず、pipeline_summary.json に残して依頼者に見せる。
+    for image in synth_images:
+        mixing = check_joint_identity_mixing(image, joint_cast)
+        if mixing["mixed"]:
+            result.stage5_checks[Path(image).name] = mixing["mixed"]
+            print(f"[WARN] Stage5: {Path(image).name} で識別要素の取り違えが見つかりました: {' / '.join(mixing['mixed'])}")
 
     result.stage5_paths = {
         "synth": [str(p) for p in synth_images],

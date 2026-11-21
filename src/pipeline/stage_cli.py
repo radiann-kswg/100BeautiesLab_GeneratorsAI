@@ -91,6 +91,7 @@ from src.pipeline.image_pipeline import (  # noqa: E402
     _save_stage1,
     _build_multi_char_composition_prompt,
     _compose_multi_char,
+    _joint_ref_labels,
     _fmt_num,
     _ROUGH_COUNT,
     _MULTI_ROUGH_PER_CHAR,
@@ -617,6 +618,10 @@ def cmd_stage5(args: argparse.Namespace) -> None:
             count=args.count or _STAGE5_SYNTH_COUNT,
             detail_refs=[p for ch in state["chars"].values()
                          for p in ch.get("spec", {}).get("detail_reference_paths", [])],
+            ref_labels=_joint_ref_labels(
+                records, bests,
+                [state["chars"][_char_key(n)].get("spec", {}).get("detail_reference_paths", [])
+                 for n in state["nums"]]),
         )
         s5 = state.setdefault("stage5", {"synth": [], "canva": [], "all": []})
         bucket = s5.setdefault("synth", [])
