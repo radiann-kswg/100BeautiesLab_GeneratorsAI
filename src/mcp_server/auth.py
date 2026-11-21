@@ -13,7 +13,7 @@ import os
 import secrets
 import time
 from dataclasses import dataclass
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlparse
 
 from mcp.server.auth.provider import (
     AccessToken,
@@ -29,6 +29,7 @@ from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 PASSPHRASE_ENV = "MCP_AUTH_PASSPHRASE"
 CONSENT_PATH = "/consent"
 PENDING_TTL = 600          # 確認画面を開いてから承認までの猶予（秒）
+MAX_PENDING = 200          # 同時に待たせる認可リクエストの数。超えたら古いものから捨てる
 MAX_ATTEMPTS = 5           # 1 件の認可リクエストで合言葉を試せる回数
 LOCKOUT_FAILURES = 10      # LOCKOUT_WINDOW 秒のあいだにこの回数まちがえたら、全体をしばらく止める
 LOCKOUT_WINDOW = 600
@@ -81,6 +82,8 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
                 error_description=f"{PASSPHRASE_ENV} is not set on this server; authorization is disabled.",
             )
         self._drop_expired()
+        while len(self._pending) >= MAX_PENDING:      # 手続きを大量に始められても、メモリーを使い切らない
+            del self._pending[next(iter(self._pending))]
         request_id = secrets.token_urlsafe(24)
         self._pending[request_id] = _Pending(client.client_id, params, time.time() + PENDING_TTL)
         return f"{self._issuer_url}{CONSENT_PATH}?rid={request_id}"
@@ -90,6 +93,18 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
     def is_pending(self, request_id: str) -> bool:
         self._drop_expired()
         return request_id in self._pending
+
+    def describe_pending(self, request_id: str) -> tuple[str, str]:
+        """確認画面に出す、接続を求めているアプリの名前と、承認後の戻り先のホスト。
+
+        他人が用意した接続（承認すると、その人のアプリへトークンが渡る）に、気付かず合言葉を入れないようにする。
+        """
+        pending = self._pending.get(request_id)
+        if pending is None:
+            return "", ""
+        client = self._clients.get(pending.client_id)
+        return (getattr(client, "client_name", None) or "（名前なし）",
+                urlparse(str(pending.params.redirect_uri)).netloc)
 
     def locked_out(self) -> bool:
         cutoff = time.time() - LOCKOUT_WINDOW
@@ -217,7 +232,8 @@ input,button{{font-size:1rem;padding:.5rem;width:100%;box-sizing:border-box;marg
 .error{{color:#b00020}}</style></head>
 <body><h1>{title}</h1>{body}</body></html>"""
 
-_FORM = """<p>このコネクタを使うには、合言葉を入力してください。</p>{error}
+_FORM = """<p>接続を求めているアプリ: <b>{client}</b><br>承認後の戻り先: <b>{host}</b></p>
+<p>心当たりのある接続なら、合言葉を入力してください。心当たりがなければ、入力せずにこの画面を閉じてください。</p>{error}
 <form method="post" action="{action}"><input type="hidden" name="rid" value="{rid}">
 <input type="password" name="passphrase" autocomplete="current-password" autofocus required>
 <button type="submit">接続する</button></form>"""
@@ -235,7 +251,9 @@ def register_consent_route(mcp, provider: SimpleOAuthProvider, title: str = "MCP
 
     def form(request_id: str, error: str = "", status: int = 200) -> Response:
         note = f'<p class="error">{html.escape(error)}</p>' if error else ""
-        return page(_FORM.format(error=note, action=CONSENT_PATH, rid=html.escape(request_id, quote=True)), status)
+        client, host = provider.describe_pending(request_id)
+        return page(_FORM.format(client=html.escape(client), host=html.escape(host), error=note,
+                                 action=CONSENT_PATH, rid=html.escape(request_id, quote=True)), status)
 
     expired = "<p>この接続の手続きは期限が切れたか、試せる回数を超えました。コネクタの接続をやり直してください。</p>"
 

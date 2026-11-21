@@ -82,6 +82,15 @@ def test_repeated_failures_lock_every_request_for_a_while():
         assert not provider.locked_out()
 
 
+def test_pending_requests_are_capped():
+    provider = auth.SimpleOAuthProvider(ISSUER, "open-sesame")
+    first = _authorize(provider)
+    for _ in range(auth.MAX_PENDING):
+        last = _authorize(provider)
+    assert len(provider._pending) == auth.MAX_PENDING
+    assert not provider.is_pending(first) and provider.is_pending(last)
+
+
 def test_an_expired_request_cannot_be_approved():
     provider = auth.SimpleOAuthProvider(ISSUER, "open-sesame")
     request_id = _authorize(provider)
@@ -94,10 +103,14 @@ def test_consent_page_asks_for_the_passphrase_and_redirects_on_success():
     provider = auth.SimpleOAuthProvider(ISSUER, "open-sesame")
     server = FastMCP("auth-test")
     auth.register_consent_route(server, provider, "テスト <コネクタ>")
+    asyncio.run(provider.register_client(
+        OAuthClientInformationFull(client_id="client-1", redirect_uris=[REDIRECT], client_name="Test <App>")))
     request_id = _authorize(provider)
     with TestClient(server.streamable_http_app(), follow_redirects=False) as http:
         shown = http.get(f"/consent?rid={request_id}")
         assert shown.status_code == 200 and 'type="password"' in shown.text
+        # 誰のアプリへ戻るのかを見せる（他人が用意した接続に合言葉を入れないため）
+        assert "Test &lt;App&gt;" in shown.text and "<b>client.example</b>" in shown.text
         assert "テスト &lt;コネクタ&gt;" in shown.text and shown.headers["cache-control"] == "no-store"
         assert http.get("/consent?rid=unknown").status_code == 400
         wrong = http.post("/consent", data={"rid": request_id, "passphrase": "wrong"})
