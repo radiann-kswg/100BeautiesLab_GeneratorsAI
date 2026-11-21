@@ -36,7 +36,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator, 
 from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions
 from mcp.server.fastmcp import FastMCP
 
-from src.mcp_server import output_sink
+from src.mcp_server import output_sink, state_store
 from src.mcp_server.auth import SimpleOAuthProvider, register_consent_route
 from src.mcp_server.jobs import MANAGER
 from src.utils.dataset import resolve_badge
@@ -51,7 +51,11 @@ ISSUER_URL = os.getenv("MCP_ISSUER_URL", "").rstrip("/")
 DEFAULT_WORK_KEY = "#Works_NumberTales"
 
 # 認可は合言葉 (MCP_AUTH_PASSPHRASE) の確認画面を通す。未設定なら認可をすべて断る
-_oauth_provider = SimpleOAuthProvider(ISSUER_URL) if ISSUER_URL else None
+# サインインの状態とジョブの記録は、HTTP で公開するときだけ GCS にも置く (インスタンスが入れ替わっても残すため)。
+# 手元の stdio やテストでは置かない
+_state = state_store.default_store() if ISSUER_URL else None
+_oauth_provider = SimpleOAuthProvider(ISSUER_URL, store=_state) if ISSUER_URL else None
+MANAGER.use_store(_state)
 _auth_settings = (
     AuthSettings(
         issuer_url=ISSUER_URL,
@@ -829,7 +833,9 @@ async def numbertales_job_status(params: JobStatusInput) -> str:
             {
               "job_id": str,
               "kind": str,
-              "status": "pending"|"running"|"succeeded"|"failed",
+              "status": "pending"|"running"|"succeeded"|"failed"|"interrupted",
+                        # interrupted: サーバーの入れ替わりでジョブが中断された可能性がある。note を利用者に伝え、
+                        # 少し待って照会し直しても変わらなければ、numbertales_list_runs で結果を確かめるか登録し直す
               "created_at": str, "started_at": str, "finished_at": str,
               "result": {                # status == succeeded のとき
                  "status": str,

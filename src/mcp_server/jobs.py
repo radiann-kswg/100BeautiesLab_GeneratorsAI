@@ -3,10 +3,13 @@
 パイプライン（Stage 1〜5）は数分かかる同期処理のため、MCP ツールは
 「ジョブを登録して即 job_id を返す」→「job_status でポーリング」方式を採る。
 
-ジョブはプロセス内メモリに保持する。Cloud Run では
-**min-instances=1 / max-instances=1 / CPU 常時割当** を前提にすること
-（複数インスタンスへスケールすると別インスタンスのジョブが見えない）。
-将来的に複数インスタンス化する場合は Firestore 等の共有ストアへ差し替える。
+ジョブはプロセス内メモリに保持する。Cloud Run では **max-instances=1 / CPU 常時割当** を
+前提にすること（複数インスタンスへスケールすると別インスタンスのジョブが見えない）。
+
+Cloud Run は、ジョブが裏で動いていてもインスタンスを入れ替えることがある（2026-11-21）。``use_store`` で
+置き場（``state_store``）を渡すと、ジョブの記録を外にも書き、入れ替わったあとのインスタンスからも照会できる。
+終わったジョブは結果ごと読める。終わる前にインスタンスが入れ替わったジョブは、``interrupted``（中断）として返す
+（動かしていた処理そのものは引き継げない）。
 """
 
 from __future__ import annotations
@@ -26,6 +29,14 @@ _STATUS_PENDING = "pending"
 _STATUS_RUNNING = "running"
 _STATUS_SUCCEEDED = "succeeded"
 _STATUS_FAILED = "failed"
+_STATUS_INTERRUPTED = "interrupted"    # 別のインスタンスで動いていて、終わった記録が無い
+_FINISHED = (_STATUS_SUCCEEDED, _STATUS_FAILED, "cancelled")
+_STORE_KIND = "job"
+_INTERRUPTED_NOTE = (
+    "このジョブを動かしていたサーバーのインスタンスは、入れ替わりました。処理は引き継がれないので、"
+    "少し待ってもう一度照会しても状態が変わらなければ、中断されています。途中までの画像は partial_result、"
+    "完成画像が残っているかは実行の一覧（list_runs）で確かめ、必要なら同じ指定で登録し直してください。"
+)
 
 
 @dataclass
@@ -43,10 +54,12 @@ class Job:
     error: str = ""
     partial_result: dict[str, Any] | None = None  # 実行中の中間ステージ結果（Stage3/4 完了時に更新）
     confirmation: dict[str, Any] | None = None
+    note: str = ""                    # 状態の補足（中断として返すときの説明）
 
     def snapshot(self) -> dict[str, Any]:
         """外部公開用の辞書スナップショットを返す。"""
         return {
+            **({"note": self.note} if self.note else {}),
             "job_id": self.job_id,
             "kind": self.kind,
             "status": self.status,
@@ -69,6 +82,47 @@ class JobManager:
         self._jobs: dict[str, Job] = {}
         self._lock = threading.Lock()
         self._answers: dict[str, tuple[threading.Event, bool | None]] = {}
+        self._store: Any = None
+        self._instance = uuid.uuid4().hex[:8]     # どのインスタンスが書いた記録かを見分ける
+
+    def use_store(self, store: Any) -> None:
+        """ジョブの記録を外にも置く（``state_store`` の置き場。None なら置かない）。"""
+        self._store = store
+
+    def _persist(self, job: Job) -> None:
+        """ジョブのいまの状態を、置き場へ書く。失敗しても処理は続ける。ロックの外で呼ぶ。"""
+        if self._store is None:
+            return
+        with self._lock:
+            data = {**job.snapshot(), "instance": self._instance, "updated_at": _now()}
+        try:
+            self._store.put(_STORE_KIND, job.job_id, data)
+        except Exception as err:  # noqa: BLE001
+            print(f"[WARN] ジョブの記録を保存できませんでした（{job.job_id}）: {type(err).__name__}")
+
+    def _restore(self, job_id: str) -> Job | None:
+        """メモリーに無いジョブを、置き場から読む。終わっていない記録は、中断として返す。"""
+        if self._store is None:
+            return None
+        try:
+            data = self._store.get(_STORE_KIND, job_id)
+        except Exception:  # noqa: BLE001
+            return None
+        if not isinstance(data, dict) or data.get("job_id") != job_id:
+            return None
+        job = Job(job_id=job_id, kind=str(data.get("kind") or ""),
+                  params=data.get("params") if isinstance(data.get("params"), dict) else {},
+                  status=str(data.get("status") or ""), created_at=str(data.get("created_at") or ""),
+                  started_at=str(data.get("started_at") or ""), finished_at=str(data.get("finished_at") or ""),
+                  result=data.get("result") if isinstance(data.get("result"), dict) else None,
+                  error=str(data.get("error") or ""),
+                  partial_result=data.get("partial_result") if isinstance(data.get("partial_result"), dict) else None)
+        if job.status in _FINISHED:
+            with self._lock:
+                self._jobs.setdefault(job_id, job)     # 終わった記録は変わらないので、覚えておく
+        else:       # 別のインスタンスがまだ終わりかけている場合もあるので、覚えずに、次の照会でも読み直す
+            job.status, job.note = _STATUS_INTERRUPTED, _INTERRUPTED_NOTE
+        return job
 
     def confirm_reference(self, job_id: str, warning: dict, timeout: float = 1800) -> bool | None:
         """警告を公開して回答を待つ。無回答・期限切れは続行許可にならない。"""
@@ -81,12 +135,14 @@ class JobManager:
                                 "instruction": "理由を利用者に表示し、続行/中止を質問してください。回答を推測しないでください。"}
             job.status = "awaiting_confirmation"
             self._answers[request_id] = (event, None)
+        self._persist(job)
         # ponytail: 確認待ちも既存の worker 1 枠を占有する。多数の同時利用が必要なら永続 continuation へ移す。
         event.wait(timeout)
         with self._lock:
             _, answer = self._answers.pop(request_id)
             job.confirmation = None
             job.status = _STATUS_RUNNING
+        self._persist(job)
         return answer
 
     def answer_reference(self, job_id: str, request_id: str, proceed: bool) -> None:
@@ -130,6 +186,7 @@ class JobManager:
         )
         with self._lock:
             self._jobs[job_id] = job
+        self._persist(job)
         self._executor.submit(self._run, job, fn)
         return job
 
@@ -153,11 +210,13 @@ class JobManager:
             ss[stage] = stage_data
             partial["stage_summary"] = ss
             job.partial_result = partial
+        self._persist(job)
 
     def _run(self, job: Job, fn: Callable[[], dict[str, Any]]) -> None:
         with self._lock:
             job.status = _STATUS_RUNNING
             job.started_at = _now()
+        self._persist(job)
         try:
             result = fn()
             with self._lock:
@@ -170,10 +229,12 @@ class JobManager:
                 job.error = f"{type(e).__name__}: {e}\n{traceback.format_exc(limit=4)}"
                 job.status = "cancelled" if isinstance(e, ReferenceCancelled) else _STATUS_FAILED
                 job.finished_at = _now()
+        self._persist(job)
 
     def get(self, job_id: str) -> Job | None:
         with self._lock:
-            return self._jobs.get(job_id)
+            job = self._jobs.get(job_id)
+        return job if job is not None else self._restore(job_id)
 
     def list_recent(self, limit: int = 20) -> list[Job]:
         with self._lock:
