@@ -85,11 +85,14 @@ def _ask_openai_json(system: str, content: list[dict]) -> dict:
     return json.loads((response.choices[0].message.content or "{}").strip())
 
 
-def check_joint_identity_mixing(image_path: "Path | str", characters: "list[tuple[dict, str]]", ask=None) -> dict:
+def check_joint_identity_mixing(image_path: "Path | str", characters: "list[tuple[dict, str]]", ask=None,
+                                renders: "list[Path | str] | None" = None) -> dict:
     """合同の絵 (構図ラフ・完成画像) で、体数が合っているか、識別要素が持ち主以外のキャラクターに
     描かれていないかを OpenAI Vision で見る。
 
     characters は (レコード, 形態) の並び。``{"mixed": [指摘...], "skipped": bool}`` を返す。直しはしない。
+    ``renders`` は characters と同じ順の、検査を通った単体レンダー。渡すと配色の基準として添付し、
+    髪・尾・首輪などの色相が明らかに違う部位も指摘させる (合成で尾や首輪の色が変わることがある)。
     ``ask`` はテスト用の差し替え口 (system と content を受け、JSON の dict を返す)。
     """
     from src.utils.dataset import extract_char_name
@@ -99,11 +102,17 @@ def check_joint_identity_mixing(image_path: "Path | str", characters: "list[tupl
     if loaded is None or (ask is None and not os.environ.get("OPENAI_API_KEY")):
         return {"mixed": [], "skipped": True}
     raw, mime = loaded
-    listed = "\n".join(
-        f"- {extract_char_name(record)} ({form}): 番号 {(record.get('data') or {}).get('Num_Badge') or record_num(record)}"
-        f"; {_identity_tags(record, form)}"
+    listed = "\n".join(     # 番号を添えるのは数字だけのとき。"2-alt" や "2B" は識別子で、絵に描く表記ではない
+        f"- {extract_char_name(record)} ({form}): "
+        + (f"番号 {record_num(record)}; " if str(record_num(record)).isdigit() else "")
+        + _identity_tags(record, form)
         for record, form in characters
     )
+    basis = [(extract_char_name(record), loaded_render)
+             for (record, _), path in zip(characters, renders or [])
+             if path is not None
+             and Path(path).is_file()
+             and (loaded_render := load_reference_bytes(Path(path)))]
     system = (
         "あなたは複数のキャラクターが描かれたイラストの検査AIです。**JSONのみ**を返してください: "
         '{"mixed": ["指摘1", ...]}'
@@ -116,10 +125,17 @@ def check_joint_identity_mixing(image_path: "Path | str", characters: "list[tupl
         "mixed に「<描かれている側の名前> に <持ち主の名前> の <要素>」の形で入れる。\n"
         f"- 描かれているキャラクターが {len(characters)} 体でなければ、mixed に「体数: <何体いるか>。{len(characters)} 体を描く」と入れる。\n"
         "- 設定のうえで両方が持つ特徴 (同じ種族の耳、同じ色の髪など) は入れない。\n"
-        "- 問題が無ければ空配列を返す。"
+        + ("- 2 枚目以降は、各キャラクターの単体レンダー (配色の基準)。1 枚目の検査対象で、髪・尾・耳・瞳・首輪・番号の"
+           "色相が単体レンダーと明らかに違う部位があれば、mixed に「配色: <名前> の <部位> が <検査対象での色> "
+           "(基準は <色>)」と入れる。陰影・照明による濃淡の差、ポーズや構図の違いは入れない。\n" if basis else "")
+        + "- 問題が無ければ空配列を返す。"
     )
     content = [{"type": "text", "text": user}, {"type": "image_url", "image_url": {
         "url": f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"}}]
+    for name, (render_raw, render_mime) in basis:
+        content.append({"type": "text", "text": f"{name} の単体レンダー (配色の基準。検査対象ではない):"})
+        content.append({"type": "image_url", "image_url": {
+            "url": f"data:{render_mime};base64,{base64.b64encode(render_raw).decode('ascii')}"}})
     try:
         answer = (ask or _ask_openai_json)(system, content)
         if not isinstance(answer, dict):
@@ -396,7 +412,7 @@ def _apply_correction_gemini(
             f"- 形態: {form}\n"
             f"- 識別要素: {identity_tags}\n"
             f"{palette_line}"
-            f"- キャラクター番号: #{num_val}\n"
+            + (f"- キャラクター番号: #{num_val}\n" if str(num_val).isdigit() else "") +
             "- 作風（線の太さ・塗りスタイル）は入力画像に合わせること\n"
             f"{IMAGE_TEXT_POLICY}"
             f"{_number_block_if_targeted(record, form, fix_lines)}"
@@ -560,6 +576,7 @@ def correct_rough_images(
 
     corrected: list[Path] = []
     passed: list[Path] = []
+    inspected_passed: list[Path] = []
     needs_regen: list[Path] = []
     analysis_log: list[dict] = []
 
@@ -603,6 +620,7 @@ def correct_rough_images(
         elif overall_ok and not violations and not missing and not comp_issues:
             print(f"[Stage4] rough_{i:02d}: 違反なし → pass-through")
             passed.append(rough_path)
+            inspected_passed.append(rough_path)
         else:
             issues = violations + [f"欠落: {m}" for m in missing] + comp_issues
             is_severe = len(violations) >= _SEVERE_VIOLATION_THRESHOLD
@@ -654,6 +672,23 @@ def correct_rough_images(
 
                 if corrected_paths:
                     corrected.extend(corrected_paths)
+                    for corrected_path in corrected_paths:
+                        if not corrected_path.exists():
+                            continue
+                        recheck = _analyze_rough_with_openai(
+                            corrected_path, char_spec, ref_image_path=ref_image_path, markup_path=markup_path)
+                        recheck_ok = (
+                            recheck.get("overall_ok", False)
+                            and not recheck.get("violations")
+                            and not recheck.get("missing")
+                            and not recheck.get("composition_issues")
+                            and not recheck.get("skipped")
+                        )
+                        if recheck_ok:
+                            inspected_passed.append(corrected_path)
+                            print(f"[Stage4] {corrected_path.name}: 修正後再検査通過")
+                        else:
+                            print(f"[Stage4] {corrected_path.name}: 修正後再検査で未通過")
                 else:
                     print(f"[WARN] Stage4 rough_{i:02d}: 修正失敗 → 元ラフを pass-through")
                     passed.append(rough_path)
@@ -682,6 +717,7 @@ def correct_rough_images(
     return {
         "corrected": corrected,
         "passed": passed,
+        "inspected_passed": inspected_passed,
         "needs_regen": needs_regen,
         "all": all_paths,
     }

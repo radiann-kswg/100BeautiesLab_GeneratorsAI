@@ -86,7 +86,7 @@ from src.pipeline.final_generator import generate_final_images  # noqa: E402
 _ROUGH_COUNT = 5               # Stage 3 (単体): ラフ生成枚数
 _MULTI_ROUGH_PER_CHAR = 3     # Stage 3 (合同): キャラクターごとのラフ枚数
 _STAGE3_COMP_ROUGH_COUNT = 2   # Stage 3 comp rough: 全体構図ラフ枚数（探索フェーズ）
-_STAGE5_SYNTH_COUNT = 3        # Stage 5: 最終合成バリアント枚数（仕上げフェーズ・単体の完成 3 枚に揃える）
+_STAGE5_SYNTH_COUNT = 2        # Stage 5: 合同の完成画像の上限。構図ラフ 1 枚につき 1 枚（_synth_plans を参照）
 
 
 def _fmt_num(num: int | str | None) -> str:
@@ -119,7 +119,7 @@ class MultiCharPipelineResult:
     stage3_paths: dict[str, list[str]] = field(default_factory=dict)
     stage4_paths: dict[str, list[str]] = field(default_factory=dict)
     stage5_paths: dict[str, list[str]] = field(default_factory=dict)
-    stage5_checks: dict[str, list[str]] = field(default_factory=dict)   # 完成画像ごとの、識別要素の取り違えの指摘
+    stage5_checks: dict[str, list[str]] = field(default_factory=dict)   # 完成画像ごとの、体数・識別要素の取り違え・配色の指摘
     input_images: list[dict] = field(default_factory=list)   # 依頼者が渡した入力画像の記録 (役割・出所・渡したステージ)
     status: str = "pending"
     errors: list[str] = field(default_factory=list)
@@ -377,7 +377,7 @@ def plan_pipeline(
         "notes": [
             "base_prompt は Stage 1 の LLM が加工する前の土台です。本番のプロンプトは実行フォルダーの stage1_prompt/ に残ります。",
             "未指定の曖昧フィールドは候補を表示しています。選択が必要な場合は field_overrides で明示してください。",
-            "画像生成の回数の目安: 単体はラフ 5・修正 最大 5・合成 3。合同は 1 体につきラフ 3・修正 最大 3、構図ラフ 2、合成 3。",
+            "画像生成の回数の目安: 単体はラフ 5・修正 最大 5・合成 3。合同は 1 体につきラフ 3・修正 最大 3、構図ラフ 2、合成 最大 2（検査を通った構図ラフ 1 枚につき 1）。",
         ],
     }
 
@@ -978,6 +978,34 @@ def _joint_ref_labels(
     return labels
 
 
+def _checked_guides(comp_rough_paths: list[Path], joint_cast: list[tuple[dict, str]],
+                    renders: "list[Path | None]") -> list[Path]:
+    """構図ラフのうち、体数と識別要素の持ち主が合っているものを、合成のガイドとして返す。
+
+    2026-11-20 の合同では、顔が 3 つある構図ラフや、札の付け先を取り違えた構図ラフがあった。
+    """
+    guides: list[Path] = []
+    for candidate in comp_rough_paths:
+        mixing = check_joint_identity_mixing(candidate, joint_cast, renders=renders)
+        found = mixing["mixed"]
+        if not mixing["skipped"] and not found:
+            guides.append(Path(candidate))
+            continue
+        reason = "検査がスキップされました" if mixing["skipped"] else (' / '.join(found) or "検査失敗")
+        print(f"  [Stage5] 構図ラフ {Path(candidate).name} はガイドに使いません: {reason}")
+    return guides
+
+
+def _synth_plans(guides: list[Path]) -> list[tuple[Path | None, int]]:
+    """合同の完成画像を、どのガイドで何枚描くか。
+
+    ガイド 1 枚につき 1 枚。同じガイドで繰り返すと、プロンプトも参照も同じなのでガイドの写しが並ぶ
+    (2026-11-21 の確認で、同じガイドから描いた完成 2 枚の差は、色 0.6/255・線 0.1% だった)。
+    検査を通ったガイドが無ければ、ガイドなしで上限の枚数を描く (構図は 1 枚ごとに変わる)。
+    """
+    return [(guide, 1) for guide in guides[:_STAGE5_SYNTH_COUNT]] or [(None, _STAGE5_SYNTH_COUNT)]
+
+
 def _compose_multi_char(
     base_record: dict,
     form: str,
@@ -1123,7 +1151,7 @@ def _run_combined_pipeline(
       char_NNN/stage2_db/      — キャラクターごとの DB サマリー
       char_NNN/stage4_correct/ — キャラクターごとの違反修正結果
       stage3_comp_rough/       — 全キャラ構図ラフ (Stage3 と同時に _STAGE3_COMP_ROUGH_COUNT 枚, 探索)
-      stage5_final/            — 全キャラ合成完成画像 _STAGE5_SYNTH_COUNT 枚 (仕上げ)
+      stage5_final/            — 全キャラ合成完成画像。検査を通った構図ラフ 1 枚につき 1 枚、最大 _STAGE5_SYNTH_COUNT 枚 (仕上げ)
 
     Returns
     -------
@@ -1377,6 +1405,7 @@ def _run_combined_pipeline(
     # ── Stage 4: キャラクターごとに個別違反修正 ──
     print(f"\n[=] Stage 4: キャラクターごとに違反修正 (OpenAI Vision + Gemini i2i/T2I)")
     per_char_best: list[Path] = []  # Stage 5 に渡す各キャラのベスト 1 枚
+    per_char_inspected: list[Path | None] = []  # 配色検査用。キャラクター順に合格画像だけを対応付ける
     all_stage4_paths: dict[str, list[str]] = {}
 
     for rec in records:
@@ -1410,6 +1439,8 @@ def _run_combined_pipeline(
             # 修正も通過もなければ元ラフの先頭をフォールバック
             per_char_best.extend(rough_paths[:1])
             print(f"  [Stage4] #{_fmt_num(n)}: フォールバック → {rough_paths[0].name}")
+        inspected = (corrected.get("inspected_passed") or [])[:1]
+        per_char_inspected.extend(inspected or [None])
 
     result.stage4_paths = all_stage4_paths
     result.stage4_paths["best_per_char"] = [str(p) for p in per_char_best]
@@ -1421,63 +1452,57 @@ def _run_combined_pipeline(
             print(f"[WARN] stage_callback(stage4) error: {_cb_err}")
 
     # ── Stage 5: ベストレンダーを Gemini マルチ参照で 1 枚に合成 ──
-    # comp_rough があれば先頭参照として差し込み、構図ガイドとして Gemini に渡す。
-    # 構図ラフは、体数と識別要素の持ち主が合っている 1 枚だけをガイドにする (2026-11-20 の合同では、
-    # 顔が 3 つある構図ラフや、札の付け先を取り違えた構図ラフがあった)。どれも合わなければガイドなしで合成する。
+    # 検査を通った構図ラフを先頭参照として差し込み、構図ガイドとして Gemini に渡す。完成はガイド 1 枚につき 1 枚。
     joint_cast = [(rec, forms_map[n]) for rec, n in zip(records, nums)]
-    guide: Path | None = None
-    for candidate in comp_rough_paths:
-        mixing = check_joint_identity_mixing(candidate, joint_cast)
-        found = mixing["mixed"]
-        if not mixing["skipped"] and not found:
-            guide = Path(candidate)
-            break
-        reason = "検査がスキップされました" if mixing["skipped"] else (' / '.join(found) or "検査失敗")
-        print(f"  [Stage5] 構図ラフ {Path(candidate).name} はガイドに使いません: {reason}")
-    result.stage3_paths["composition_guide"] = [str(guide)] if guide else []
-    has_comp_rough = guide is not None
-    stage5_refs = ([guide] if guide else []) + per_char_best
-    _comp_note = " + 構図ラフ参照あり" if has_comp_rough else ""
-    print(f"\n[=] Stage 5: キャラクター完成レンダー {len(per_char_best)} 枚を合成 ({_STAGE5_SYNTH_COUNT} 枚, 仕上げ){_comp_note}")
+    guides = _checked_guides(comp_rough_paths, joint_cast, per_char_inspected)
+    plans = _synth_plans(guides)
+    result.stage3_paths["composition_guide"] = [str(guide) for guide, _ in plans if guide]
+    _comp_note = f" + 構図ラフ参照 {len(guides)} 枚" if guides else "（構図ラフ参照なし）"
+    print(f"\n[=] Stage 5: キャラクター完成レンダー {len(per_char_best)} 枚を合成 "
+          f"({sum(count for _, count in plans)} 枚, 仕上げ){_comp_note}")
     from src.pipeline import input_images as _input_images
-    composition_prompt = _build_multi_char_composition_prompt(
-        records, forms_map, scene, has_comp_rough=has_comp_rough,
-        ref_offset=sum(1 for image in _input_images.for_stage(inputs, 5) if image["kind"] != "reference"),
-    )
     from src.pipeline.design_reference import design_reference_block
-    composition_prompt += "\n".join(
-        design_reference_block(char_data_map[n]["spec"]["design_reference"]) for n in nums
-    )
-    composition_prompt = _append_revision_instructions(composition_prompt, revisions)
     stage5_dir = pipeline_dir / "stage5_final"
-    synth_images = _compose_multi_char(
-        records[0], primary_form,
-        char_renders=stage5_refs,
-        composition_prompt=composition_prompt,
-        synth_dir=stage5_dir / "synth",
-        work_key=work_key,
-        count=_STAGE5_SYNTH_COUNT,
-        detail_refs=[p for n in nums for p in char_data_map[n]["spec"].get("detail_reference_paths", [])],
-        inputs=inputs,
-        has_revisions=bool(revisions),
-        ref_labels=_joint_ref_labels(
-            records, per_char_best,
-            [char_data_map[n]["spec"].get("detail_reference_paths", []) for n in nums],
-            guide=guide),
-    )
+    synth_images: list[Path] = []
+    for plan_index, (guide, synth_count) in enumerate(plans):
+        if plan_index:
+            time.sleep(float(os.environ.get("GEMINI_IMAGE_SLEEP", "6")))   # レートリミット対策 (同じガイドの中は合成側で待つ)
+        composition_prompt = _build_multi_char_composition_prompt(
+            records, forms_map, scene, has_comp_rough=guide is not None,
+            ref_offset=sum(1 for image in _input_images.for_stage(inputs, 5) if image["kind"] != "reference"),
+        )
+        composition_prompt += "\n".join(
+            design_reference_block(char_data_map[n]["spec"]["design_reference"]) for n in nums
+        )
+        composition_prompt = _append_revision_instructions(composition_prompt, revisions)
+        synth_images += _compose_multi_char(
+            records[0], primary_form,
+            char_renders=([guide] if guide else []) + per_char_best,
+            composition_prompt=composition_prompt,
+            synth_dir=stage5_dir / "synth",
+            work_key=work_key,
+            count=synth_count,
+            detail_refs=[p for n in nums for p in char_data_map[n]["spec"].get("detail_reference_paths", [])],
+            inputs=inputs,
+            has_revisions=bool(revisions),
+            ref_labels=_joint_ref_labels(
+                records, per_char_best,
+                [char_data_map[n]["spec"].get("detail_reference_paths", []) for n in nums],
+                guide=guide),
+        )
     print(f"[Stage5] done - {len(synth_images)} 枚合成完了")
 
     # 1 体ずつの検査 (Stage 4) では見つけられない、キャラクターどうしの識別要素の取り違えを見る。
     # 直しはせず、pipeline_summary.json に残して依頼者に見せる。
     for image in synth_images:
-        mixing = check_joint_identity_mixing(image, joint_cast)
+        mixing = check_joint_identity_mixing(image, joint_cast, renders=per_char_inspected)
         if mixing["mixed"]:
             try:
                 image_key = str(image.resolve().relative_to(pipeline_dir.resolve()))
             except ValueError:
                 image_key = str(image)
             result.stage5_checks[image_key] = mixing["mixed"]
-            print(f"[WARN] Stage5: {image_key} で識別要素の取り違えが見つかりました: {' / '.join(mixing['mixed'])}")
+            print(f"[WARN] Stage5: {image_key} の検査で指摘がありました: {' / '.join(mixing['mixed'])}")
 
     result.stage5_paths = {
         "synth": [str(p) for p in synth_images],

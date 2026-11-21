@@ -2682,7 +2682,21 @@ def _build_number_print_block(record: dict[str, Any], form: str) -> str:
         return ""
 
     lines: list[str] = ["[番号印字仕様 (必須・最優先)]"]
-    if num_token:
+    if num_token and not num_token.isdigit():
+        # "2-alt" や "777.Jackpot" はレコードの識別子で、絵に描く表記ではない (バイナの表記は「Bi 2 nor」)。
+        # 「番号は厳密に 2-alt」と渡すと、ラフに「Bi 2 alt」と描かれ、Stage 4 もそれを正しいと判定した。
+        lines.append(
+            "- このキャラクターに描く番号の表記は、下の原典指定と公式の部位図のとおり。"
+            f"レコードの識別子 \"{num_token}\" は表記ではないので、絵には描かないこと。"
+            " 字形・線幅・間隔・切れ目・装飾は公式の部位図と原典指定を再現し、別番号や汎用フォントへ置き換えないこと。"
+        )
+        lines.append(
+            "- Draw the number marking exactly as the official specification below and the official part"
+            f" diagram show it. The record identifier \"{num_token}\" is not the marking: never write it in the image."
+            " Match the official glyph shape, stroke width, spacing and gaps. Do not substitute another number"
+            " or a generic font."
+        )
+    elif num_token:
         lines.append(
             f"- このキャラクターの番号は厳密に \"{num_token}\" です。"
             " 番号の字形・線幅・間隔・切れ目・装飾は公式の部位図と原典指定を再現し、"
@@ -2693,6 +2707,7 @@ def _build_number_print_block(record: dict[str, Any], form: str) -> str:
             " Match the official glyph shape, stroke width, spacing and gaps, including any"
             " stylized motif specified by the DB. Do not substitute another number or a generic font."
         )
+    if num_token:
         # NumberMarkLocation (db_record 由来、旧スキーマ) があればキャラ固有の印字位置を使う。
         # 廃止済み (2026-07-11 DB・API大幅整備 その18) のため、
         # AppearanceDetail(#Element_NumberMark) からのフォールバックを次点で使う。
