@@ -1,12 +1,18 @@
-"""Simple in-memory OAuth 2.0 Authorization Server Provider for FastMCP.
+"""Simple OAuth 2.0 Authorization Server Provider for FastMCP.
 
 個人専用サーバ向け。認可リクエストは、合言葉（環境変数 ``MCP_AUTH_PASSPHRASE``）を
 確認画面（``/consent``）で入力したときだけ承認する。合言葉が未設定のサーバーは、認可をすべて断る
 （URL を知っているだけでは、課金を伴う生成を呼べないようにするため）。
-トークンはプロセス内メモリに保持されるためサービス再起動でリセットされる。
+
+サインインの状態（登録されたクライアント、アクセストークン、リフレッシュトークン）は、プロセスのメモリーに持つ。
+``store``（``state_store`` の置き場）を渡すと外にも保存し、インスタンスが入れ替わったあとも同じサインインを通す。
+保存する名前は、合言葉を鍵にしたトークンのハッシュ（トークンそのものは置かない）。合言葉を変えると、
+保存済みの状態はどれも一致しなくなり、全員が再サインインになる。
 """
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import hmac
 import html
 import os
@@ -33,6 +39,12 @@ MAX_PENDING = 200          # 同時に待たせる認可リクエストの数。
 MAX_ATTEMPTS = 5           # 1 件の認可リクエストで合言葉を試せる回数
 LOCKOUT_FAILURES = 10      # LOCKOUT_WINDOW 秒のあいだにこの回数まちがえたら、全体をしばらく止める
 LOCKOUT_WINDOW = 600
+MAX_CONSENT_BODY_BYTES = 4096
+ACCESS_TTL = 86400         # アクセストークンの有効期間（24 時間）
+REFRESH_TTL = 30 * 86400   # リフレッシュトークンの有効期間。使うたびに、そこから 30 日に延びる
+MISS_TTL = 60              # 保存先に無かった名前を覚えておく秒数（でたらめなトークンで保存先を読ませ続けないため）
+MAX_MISSES = 512
+_CLIENT, _ACCESS, _REFRESH = "oauth-client", "oauth-access", "oauth-refresh"
 
 
 @dataclass
@@ -51,9 +63,11 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
     ``passphrase`` を省くと環境変数 ``MCP_AUTH_PASSPHRASE`` を読む。
     """
 
-    def __init__(self, issuer_url: str = "", passphrase: str | None = None) -> None:
+    def __init__(self, issuer_url: str = "", passphrase: str | None = None, store=None) -> None:
         self._issuer_url = issuer_url.rstrip("/")
         self._passphrase = (os.getenv(PASSPHRASE_ENV, "") if passphrase is None else passphrase).strip()
+        self._store = store if self._passphrase else None     # 合言葉が無いサーバーは認可を断るので、保存もしない
+        self._misses: dict[tuple[str, str], float] = {}
         self._clients: dict[str, OAuthClientInformationFull] = {}
         self._auth_codes: dict[str, AuthorizationCode] = {}
         self._access_tokens: dict[str, AccessToken] = {}
@@ -61,13 +75,54 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         self._pending: dict[str, _Pending] = {}
         self._failures: list[float] = []
 
+    # ── インスタンスが入れ替わっても残す状態 ──────────────────────
+
+    def _name(self, value: str) -> str:
+        """保存に使う名前。値そのものではなく、合言葉を鍵にしたハッシュ。"""
+        return hmac.new(self._passphrase.encode("utf-8"), value.encode("utf-8"), hashlib.sha256).hexdigest()
+
+    async def _save(self, kind: str, value: str, data: dict) -> None:
+        if self._store is not None:
+            name = self._name(value)
+            self._misses.pop((kind, name), None)
+            await asyncio.to_thread(self._store.put, kind, name, data)
+
+    async def _load(self, kind: str, value: str) -> dict | None:
+        if self._store is None:
+            return None
+        key, now = (kind, self._name(value)), time.time()
+        if self._misses.get(key, 0) > now:
+            return None
+        data = await asyncio.to_thread(self._store.get, *key)
+        if data is None:
+            if len(self._misses) >= MAX_MISSES:
+                self._misses = {k: until for k, until in self._misses.items() if until > now}
+                while len(self._misses) >= MAX_MISSES:
+                    del self._misses[next(iter(self._misses))]
+            self._misses[key] = now + MISS_TTL
+        return data
+
+    async def _forget(self, kind: str, value: str) -> None:
+        if self._store is not None:
+            await asyncio.to_thread(self._store.delete, kind, self._name(value))
+
     async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
-        return self._clients.get(client_id)
+        client = self._clients.get(client_id)
+        if client is None:
+            data = await self._load(_CLIENT, client_id)
+            if data is not None:
+                try:
+                    client = OAuthClientInformationFull.model_validate(data)
+                except ValueError:
+                    return None
+                self._clients[client_id] = client
+        return client
 
     async def register_client(
         self, client_info: OAuthClientInformationFull
     ) -> OAuthClientInformationFull:
         self._clients[client_info.client_id] = client_info
+        await self._save(_CLIENT, client_info.client_id, client_info.model_dump(mode="json", exclude_none=True))
         return client_info
 
     async def authorize(
@@ -163,19 +218,10 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         self._auth_codes.pop(authorization_code.code, None)
         access_token = secrets.token_urlsafe(32)
         refresh_token = secrets.token_urlsafe(32)
-        expires_in = 86400  # 24 時間
+        expires_in = ACCESS_TTL
 
-        self._access_tokens[access_token] = AccessToken(
-            token=access_token,
-            client_id=client.client_id,
-            scopes=authorization_code.scopes,
-            expires_at=int(time.time() + expires_in),
-        )
-        self._refresh_tokens[refresh_token] = RefreshToken(
-            token=refresh_token,
-            client_id=client.client_id,
-            scopes=authorization_code.scopes,
-        )
+        await self._keep_access(access_token, client.client_id, authorization_code.scopes)
+        await self._keep_refresh(refresh_token, client.client_id, authorization_code.scopes)
         return OAuthToken(
             access_token=access_token,
             token_type="bearer",
@@ -184,10 +230,38 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
             scope=" ".join(authorization_code.scopes),
         )
 
+    async def _keep_access(self, token: str, client_id: str, scopes: list[str]) -> None:
+        expires_at = int(time.time() + ACCESS_TTL)
+        self._access_tokens[token] = AccessToken(token=token, client_id=client_id, scopes=scopes,
+                                                 expires_at=expires_at)
+        await self._save(_ACCESS, token, {"client_id": client_id, "scopes": scopes, "expires_at": expires_at})
+
+    async def _keep_refresh(self, token: str, client_id: str, scopes: list[str]) -> None:
+        expires_at = int(time.time() + REFRESH_TTL)
+        self._refresh_tokens[token] = RefreshToken(token=token, client_id=client_id, scopes=scopes,
+                                                   expires_at=expires_at)
+        await self._save(_REFRESH, token, {"client_id": client_id, "scopes": scopes, "expires_at": expires_at})
+
+    async def _stored_token(self, kind: str, token: str) -> dict | None:
+        """保存先のトークンの記録。形が違うものと期限切れは、無いものとして扱う（期限切れは消す）。"""
+        data = await self._load(kind, token)
+        if data is None:
+            return None
+        if not (isinstance(data.get("client_id"), str) and isinstance(data.get("scopes"), list)
+                and isinstance(data.get("expires_at"), int)):
+            return None
+        if data["expires_at"] < time.time():
+            await self._forget(kind, token)
+            return None
+        return data
+
     async def load_access_token(self, token: str) -> AccessToken | None:
         tok = self._access_tokens.get(token)
         if tok is None:
-            return None
+            data = await self._stored_token(_ACCESS, token)
+            if data is None:
+                return None
+            tok = self._access_tokens[token] = AccessToken(token=token, **data)
         if tok.expires_at and tok.expires_at < time.time():
             return None
         return tok
@@ -197,7 +271,15 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         client: OAuthClientInformationFull,
         refresh_token: str,
     ) -> RefreshToken | None:
-        return self._refresh_tokens.get(refresh_token)
+        tok = self._refresh_tokens.get(refresh_token)
+        if tok is None:
+            data = await self._stored_token(_REFRESH, refresh_token)
+            if data is None:
+                return None
+            tok = self._refresh_tokens[refresh_token] = RefreshToken(token=refresh_token, **data)
+        if tok.expires_at and tok.expires_at < time.time():
+            return None
+        return tok
 
     async def exchange_refresh_token(
         self,
@@ -206,15 +288,12 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         scopes: list[str],
     ) -> OAuthToken:
         new_access = secrets.token_urlsafe(32)
-        expires_in = 86400
+        expires_in = ACCESS_TTL
         effective_scopes = scopes if scopes else refresh_token.scopes
 
-        self._access_tokens[new_access] = AccessToken(
-            token=new_access,
-            client_id=client.client_id,
-            scopes=effective_scopes,
-            expires_at=int(time.time() + expires_in),
-        )
+        await self._keep_access(new_access, client.client_id, effective_scopes)
+        # 同じリフレッシュトークンを使い続ける。使われたので、期限をここから 30 日に延ばす
+        await self._keep_refresh(refresh_token.token, refresh_token.client_id, refresh_token.scopes)
         return OAuthToken(
             access_token=new_access,
             token_type="bearer",
@@ -262,7 +341,12 @@ def register_consent_route(mcp, provider: SimpleOAuthProvider, title: str = "MCP
         if request.method == "GET":
             request_id = request.query_params.get("rid", "")
             return form(request_id) if provider.is_pending(request_id) else page(expired, 400)
-        fields = parse_qs((await request.body()).decode("utf-8", errors="replace"))
+        body = bytearray()
+        async for chunk in request.stream():
+            if len(body) + len(chunk) > MAX_CONSENT_BODY_BYTES:
+                return page("<p>フォームの内容が大きすぎます。</p>", 413)
+            body.extend(chunk)
+        fields = parse_qs(body.decode("utf-8", errors="replace"))
         request_id = (fields.get("rid") or [""])[0]
         if provider.locked_out():
             return page("<p>合言葉のまちがいが続いたため、しばらく受け付けません。10 分ほど待ってからやり直してください。</p>", 429)
