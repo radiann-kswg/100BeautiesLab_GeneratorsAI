@@ -163,6 +163,11 @@ def test_joint_check_compares_colours_with_the_single_renders(tmp_path):
     cg.check_joint_identity_mixing(image, characters, ask=ask)
     assert "配色:" not in seen["content"][0]["text"] and len(seen["content"]) == 2     # レンダーが無ければ配色は見ない
 
+    cg.check_joint_identity_mixing(image, characters, ask=ask,
+                                   renders=[render_20, None])
+    texts = [part["text"] for part in seen["content"] if part["type"] == "text"]
+    assert texts[1:] == ["20(ハツカ) の単体レンダー (配色の基準。検査対象ではない):"]
+
 
 def test_each_checked_composition_rough_gets_one_final(tmp_path, monkeypatch):
     # 2026-11-21 の確認で、同じ構図ラフをガイドに 3 回合成した完成のうち 2 枚が、ほぼ同じ絵になった

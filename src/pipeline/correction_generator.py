@@ -110,7 +110,9 @@ def check_joint_identity_mixing(image_path: "Path | str", characters: "list[tupl
     )
     basis = [(extract_char_name(record), loaded_render)
              for (record, _), path in zip(characters, renders or [])
-             if Path(path).is_file() and (loaded_render := load_reference_bytes(Path(path)))]
+             if path is not None
+             and Path(path).is_file()
+             and (loaded_render := load_reference_bytes(Path(path)))]
     system = (
         "あなたは複数のキャラクターが描かれたイラストの検査AIです。**JSONのみ**を返してください: "
         '{"mixed": ["指摘1", ...]}'
@@ -574,6 +576,7 @@ def correct_rough_images(
 
     corrected: list[Path] = []
     passed: list[Path] = []
+    inspected_passed: list[Path] = []
     needs_regen: list[Path] = []
     analysis_log: list[dict] = []
 
@@ -617,6 +620,7 @@ def correct_rough_images(
         elif overall_ok and not violations and not missing and not comp_issues:
             print(f"[Stage4] rough_{i:02d}: 違反なし → pass-through")
             passed.append(rough_path)
+            inspected_passed.append(rough_path)
         else:
             issues = violations + [f"欠落: {m}" for m in missing] + comp_issues
             is_severe = len(violations) >= _SEVERE_VIOLATION_THRESHOLD
@@ -668,6 +672,23 @@ def correct_rough_images(
 
                 if corrected_paths:
                     corrected.extend(corrected_paths)
+                    for corrected_path in corrected_paths:
+                        if not corrected_path.exists():
+                            continue
+                        recheck = _analyze_rough_with_openai(
+                            corrected_path, char_spec, ref_image_path=ref_image_path, markup_path=markup_path)
+                        recheck_ok = (
+                            recheck.get("overall_ok", False)
+                            and not recheck.get("violations")
+                            and not recheck.get("missing")
+                            and not recheck.get("composition_issues")
+                            and not recheck.get("skipped")
+                        )
+                        if recheck_ok:
+                            inspected_passed.append(corrected_path)
+                            print(f"[Stage4] {corrected_path.name}: 修正後再検査通過")
+                        else:
+                            print(f"[Stage4] {corrected_path.name}: 修正後再検査で未通過")
                 else:
                     print(f"[WARN] Stage4 rough_{i:02d}: 修正失敗 → 元ラフを pass-through")
                     passed.append(rough_path)
@@ -696,6 +717,7 @@ def correct_rough_images(
     return {
         "corrected": corrected,
         "passed": passed,
+        "inspected_passed": inspected_passed,
         "needs_regen": needs_regen,
         "all": all_paths,
     }

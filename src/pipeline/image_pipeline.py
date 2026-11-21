@@ -979,7 +979,7 @@ def _joint_ref_labels(
 
 
 def _checked_guides(comp_rough_paths: list[Path], joint_cast: list[tuple[dict, str]],
-                    renders: list[Path]) -> list[Path]:
+                    renders: "list[Path | None]") -> list[Path]:
     """構図ラフのうち、体数と識別要素の持ち主が合っているものを、合成のガイドとして返す。
 
     2026-11-20 の合同では、顔が 3 つある構図ラフや、札の付け先を取り違えた構図ラフがあった。
@@ -1405,6 +1405,7 @@ def _run_combined_pipeline(
     # ── Stage 4: キャラクターごとに個別違反修正 ──
     print(f"\n[=] Stage 4: キャラクターごとに違反修正 (OpenAI Vision + Gemini i2i/T2I)")
     per_char_best: list[Path] = []  # Stage 5 に渡す各キャラのベスト 1 枚
+    per_char_inspected: list[Path | None] = []  # 配色検査用。キャラクター順に合格画像だけを対応付ける
     all_stage4_paths: dict[str, list[str]] = {}
 
     for rec in records:
@@ -1438,6 +1439,8 @@ def _run_combined_pipeline(
             # 修正も通過もなければ元ラフの先頭をフォールバック
             per_char_best.extend(rough_paths[:1])
             print(f"  [Stage4] #{_fmt_num(n)}: フォールバック → {rough_paths[0].name}")
+        inspected = (corrected.get("inspected_passed") or [])[:1]
+        per_char_inspected.extend(inspected or [None])
 
     result.stage4_paths = all_stage4_paths
     result.stage4_paths["best_per_char"] = [str(p) for p in per_char_best]
@@ -1451,7 +1454,7 @@ def _run_combined_pipeline(
     # ── Stage 5: ベストレンダーを Gemini マルチ参照で 1 枚に合成 ──
     # 検査を通った構図ラフを先頭参照として差し込み、構図ガイドとして Gemini に渡す。完成はガイド 1 枚につき 1 枚。
     joint_cast = [(rec, forms_map[n]) for rec, n in zip(records, nums)]
-    guides = _checked_guides(comp_rough_paths, joint_cast, per_char_best)
+    guides = _checked_guides(comp_rough_paths, joint_cast, per_char_inspected)
     plans = _synth_plans(guides)
     result.stage3_paths["composition_guide"] = [str(guide) for guide, _ in plans if guide]
     _comp_note = f" + 構図ラフ参照 {len(guides)} 枚" if guides else "（構図ラフ参照なし）"
@@ -1492,7 +1495,7 @@ def _run_combined_pipeline(
     # 1 体ずつの検査 (Stage 4) では見つけられない、キャラクターどうしの識別要素の取り違えを見る。
     # 直しはせず、pipeline_summary.json に残して依頼者に見せる。
     for image in synth_images:
-        mixing = check_joint_identity_mixing(image, joint_cast, renders=per_char_best)
+        mixing = check_joint_identity_mixing(image, joint_cast, renders=per_char_inspected)
         if mixing["mixed"]:
             try:
                 image_key = str(image.resolve().relative_to(pipeline_dir.resolve()))

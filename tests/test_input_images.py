@@ -168,6 +168,7 @@ def test_each_stage_gets_only_the_images_for_its_role(tmp_path, monkeypatch, pai
     corrected = correction_generator.correct_rough_images(
         record, "corefolder", rough_results=rough, char_spec={}, prompts=prompts, pipeline_dir=tmp_path, inputs=inputs)
     assert seen["markup"].name == "markup_01.png" and corrected["passed"] == rough["gemini"]
+    assert corrected["inspected_passed"] == rough["gemini"]
 
     # Stage 5: 起点はラフ案の前、参考画像は公式の後ろ。赤入れと構図参考は渡さない
     final = final_generator.generate_final_images(
