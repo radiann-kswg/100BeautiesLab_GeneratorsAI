@@ -159,6 +159,10 @@ NT_MODULE=src.pipeline.natural_parser ./bin/ntimg.sh "コアフォルダ姿の25
 > ./bin/ntimg.sh --nums 20,2-alt --forms humanoid,corefolder --scene "..."
 > ```
 
+合同の完成後は、`pipeline_summary.json` の `stage5_checks`（コネクタではジョブ結果の `stage5_checks`）を見る。
+番号・ラベル・タグが持ち主以外のキャラクターに描かれていた指摘があれば、完成画像と一緒に依頼者へ伝え、
+改稿（下の「改稿」）で直すかどうかを聞く。自動では描き直さない。
+
 ### E. バッチ生成（複数キャラを個別に量産）
 
 `src.batch_generate` を使う。**必ず先に `--dry-run` で対象を確認**してから本実行する。

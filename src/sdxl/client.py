@@ -9,7 +9,7 @@ gcloud on Windows の既知の癖 (NumberTales-GeneratorsAI の 2026-07-14 ワ�
   - PowerShell のクォート破壊対策として、shell=False の引数リストで subprocess を呼ぶ。
 
 .env (docs/setup.md 参照):
-  SDXL_GCP_PROJECT      (default: claude-radiannkswg)
+  SDXL_GCP_PROJECT      (未設定なら gcloud の既定のプロジェクト)
   SDXL_VM_NAME          (default: lora-l4-trial)
   SDXL_VM_ZONE          (default: asia-east1-b)
   SDXL_REMOTE_WORKDIR   (default: /home/s-chi/sdxl-infer)
@@ -50,7 +50,7 @@ class SdxlVmClient:
 
     def __init__(self, dry_run: bool = False) -> None:
         self.dry_run = dry_run
-        self.project = _cfg("SDXL_GCP_PROJECT", "claude-radiannkswg")
+        self.project = _cfg("SDXL_GCP_PROJECT")  # 空なら --project を付けず、gcloud の既定に任せる
         self.vm_name = _cfg("SDXL_VM_NAME", "lora-l4-trial")
         self.zone = _cfg("SDXL_VM_ZONE", "asia-east1-b")
         self.workdir = _cfg("SDXL_REMOTE_WORKDIR", "/home/s-chi/sdxl-infer")
@@ -63,7 +63,7 @@ class SdxlVmClient:
     # ── low-level ──────────────────────────────
 
     def _run(self, args: list[str], timeout: int = 300) -> subprocess.CompletedProcess:
-        cmd = [_gcloud_bin(), *args, f"--project={self.project}"]
+        cmd = [_gcloud_bin(), *args] + ([f"--project={self.project}"] if self.project else [])
         if self.dry_run:
             print(f"[sdxl:dry-run] {' '.join(cmd)}")
             return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")

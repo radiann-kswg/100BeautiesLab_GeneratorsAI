@@ -40,6 +40,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 from src.utils.dataset import (  # noqa: E402
     extract_color_palette,
+    generation_ai_hints,
     IMAGE_TEXT_POLICY,
     _build_number_print_block,
     _format_color_palette_lines,
@@ -53,6 +54,83 @@ def _number_block_if_targeted(record: dict, form: str, fixes: str) -> str:
     """i2i 最小修正は「それ以外は起点画像に忠実」が主眼。番号が修正対象のときだけ
     字形ブロックを足し、無関係な修正で番号を描き直させない。"""
     return _build_number_print_block(record, form) if _NUMBER_FIX_RE.search(fixes or "") else ""
+
+
+def _identity_tags(record: dict, form: str, limit: int = 8) -> str:
+    """維持させる識別要素の一覧。common だけでは種族の 1 語しか無いレコードがあるので
+    (髪・瞳が形態別にだけ書かれている。CreationsDB #67)、その形態の体の特徴と付属物も足す。"""
+    hints = generation_ai_hints(record)
+    common = hints.get("common") or {}
+    form_hints = (hints.get("forms") or {}).get(form) or {}
+    if form_hints.get("ai_tags"):
+        tags = [*(common.get("identity_tags") or []), *(common.get("immutable_traits") or []),
+                *(form_hints.get("ai_tags") or [])]
+    else:
+        # ai_tags が未収録の旧レコードだけ、旧 silhouette_notes をフォールバックに使う。
+        notes = form_hints.get("silhouette_notes") or {}
+        tags = [*(common.get("identity_tags") or []), *(common.get("immutable_traits") or []),
+                *(notes.get("body_description") or []), *(notes.get("attached_items") or [])]
+    return ", ".join(list(dict.fromkeys(tag for tag in tags if isinstance(tag, str) and tag.strip()))[:limit])
+
+
+def _ask_openai_json(system: str, content: list[dict]) -> dict:
+    from openai import OpenAI
+
+    response = OpenAI(api_key=os.environ["OPENAI_API_KEY"]).chat.completions.create(
+        model=os.environ.get("GPT_MODEL", "gpt-4o"),
+        messages=[{"role": "system", "content": system}, {"role": "user", "content": content}],
+        max_tokens=400,
+        response_format={"type": "json_object"},
+    )
+    return json.loads((response.choices[0].message.content or "{}").strip())
+
+
+def check_joint_identity_mixing(image_path: "Path | str", characters: "list[tuple[dict, str]]", ask=None) -> dict:
+    """合同の絵 (構図ラフ・完成画像) で、体数が合っているか、識別要素が持ち主以外のキャラクターに
+    描かれていないかを OpenAI Vision で見る。
+
+    characters は (レコード, 形態) の並び。``{"mixed": [指摘...], "skipped": bool}`` を返す。直しはしない。
+    ``ask`` はテスト用の差し替え口 (system と content を受け、JSON の dict を返す)。
+    """
+    from src.utils.dataset import extract_char_name
+    from src.utils.image_io import load_reference_bytes
+
+    loaded = load_reference_bytes(Path(image_path)) if Path(image_path).is_file() else None
+    if loaded is None or (ask is None and not os.environ.get("OPENAI_API_KEY")):
+        return {"mixed": [], "skipped": True}
+    raw, mime = loaded
+    listed = "\n".join(
+        f"- {extract_char_name(record)} ({form}): 番号 {(record.get('data') or {}).get('Num_Badge') or record_num(record)}"
+        f"; {_identity_tags(record, form)}"
+        for record, form in characters
+    )
+    system = (
+        "あなたは複数のキャラクターが描かれたイラストの検査AIです。**JSONのみ**を返してください: "
+        '{"mixed": ["指摘1", ...]}'
+    )
+    user = (
+        f"この画像には、次の {len(characters)} 体のキャラクターが 1 体ずつ描かれているはずです。\n"
+        f"[キャラクターと識別要素]\n{listed}\n\n"
+        "[検査のしかた]\n"
+        "- あるキャラクターの番号・名前の表記・ラベル・タグ・首輪・紋章・髪飾りが、別のキャラクターにも描かれていれば、"
+        "mixed に「<描かれている側の名前> に <持ち主の名前> の <要素>」の形で入れる。\n"
+        f"- 描かれているキャラクターが {len(characters)} 体でなければ、mixed に「体数: <何体いるか>。{len(characters)} 体を描く」と入れる。\n"
+        "- 設定のうえで両方が持つ特徴 (同じ種族の耳、同じ色の髪など) は入れない。\n"
+        "- 問題が無ければ空配列を返す。"
+    )
+    content = [{"type": "text", "text": user}, {"type": "image_url", "image_url": {
+        "url": f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"}}]
+    try:
+        answer = (ask or _ask_openai_json)(system, content)
+        if not isinstance(answer, dict):
+            return {"mixed": [], "skipped": True}
+        found = answer.get("mixed")
+    except Exception as err:
+        print(f"[WARN] Stage5 識別要素の取り違えの検査に失敗: {err}")
+        return {"mixed": [], "skipped": True}
+    if not isinstance(found, list) or not all(isinstance(item, str) for item in found):
+        return {"mixed": [], "skipped": True}
+    return {"mixed": [item for item in found if item], "skipped": False}
 
 
 def _palette_lines(spec: dict, limit: int = 6) -> str:
@@ -170,6 +248,11 @@ def _analyze_rough_with_openai(
         f"{spec.get('appearance_detail_spec', '')}\n"
         f"{chirality_section}\n"
         "構図として明らかに破綻している点があれば composition_issues に追加してください。\n"
+        "この絵は対象のキャラクター 1 体だけを描くものです。同じキャラクターが 2 体以上いる、または別のキャラクターが"
+        "一緒に描かれている場合は、composition_issues に「体数: <何体いるか>。1 体だけを描く」と追加してください"
+        "（鏡や水面への映り込みは数えません）。\n"
+        "同じ番号・ラベル・タグが 2 か所以上に描かれている場合は、violations に「重複: <要素> が <何か所>」と追加してください"
+        "（設定で複数あるものは除きます）。\n"
         "問題がなければ overall_ok: true として violations / missing / composition_issues は空リストにしてください。"
     )
 
@@ -294,9 +377,7 @@ def _apply_correction_gemini(
         print(f"[Stage4] rough_{index:02d}: 違反 {len(violations)} 件 → T2I (フル再生成)")
     else:
         # i2i 専用: 最小限の修正指示のみ。ソース画像の作風・構図を最大限維持させる。
-        hints = record.get("ai_hints") or {}
-        _common = hints.get("common") or {}
-        identity_tags = ", ".join(((_common.get("identity_tags") or []) + (_common.get("immutable_traits") or []))[:6])
+        identity_tags = _identity_tags(record, form)
         num_val = record_num(record)
         palette_summary = _record_palette_summary(record, form)
         palette_line = f"- 配色 (DB実測値): {palette_summary}\n" if palette_summary else ""
@@ -375,11 +456,7 @@ def _apply_correction_openai(
 
     violations = analysis.get("violations") or []
     comp_issues = analysis.get("composition_issues") or []
-    hints = record.get("ai_hints") or {}
-    _common = hints.get("common") or {}
-    identity_tags = ", ".join((
-        (_common.get("identity_tags") or []) + (_common.get("immutable_traits") or [])
-    )[:6])
+    identity_tags = _identity_tags(record, form)
     num_val = record_num(record)
     palette_summary = _record_palette_summary(record, form)
     palette_line = f"Color palette (from DB, keep): {palette_summary}\n" if palette_summary else ""

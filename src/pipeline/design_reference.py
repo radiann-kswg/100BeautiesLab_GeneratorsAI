@@ -120,8 +120,9 @@ def collect_design_reference(
             return saved["design_reference"]
         if saved.get("status") == "cancelled":
             raise ReferenceCancelled("この実行は中止済みです。新規実行してください。")
+    number = f"#{record_num(record)} " if _is_numbertales(record) else ""    # 番号で呼ぶのは NumberTales だけ
     head = (
-        f"公式設定画像の #{record_num(record)} {extract_char_name(record)} の {form} 形態だけを観察してください。"
+        f"公式設定画像の {number}{extract_char_name(record)} の {form} 形態だけを観察してください。"
         "他キャラクターの特徴は含めないでください。以下の AIHints 文面が正典です。\n"
         "画像観察で AIHints を上書きしないでください。他形態の特徴を混ぜないでください。\n"
     )

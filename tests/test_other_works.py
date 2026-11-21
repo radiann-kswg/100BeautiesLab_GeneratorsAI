@@ -102,6 +102,7 @@ def test_stage2_uses_appearance_detail_as_canon_only_for_works_without_ai_hints(
     data = db_collector.collect_character_data("Mouse", "humanoid", tmp_path / "sar", _SAR)
     assert data["spec"]["char_num"] == "Mouse" and data["spec"]["work_title"] == "獣爾騎兵"
     assert data["spec"]["design_reference"]["observations"] == ["丸い耳"]
+    mouse = find_character("Mouse", _SAR)        # 上流が AIHints を足すと、正典の書き方が変わる
     if mouse.get("ai_hints"):
         assert "AIHints 文面が正典" in prompts[0] and "[DB部位別仕様] が正典" not in prompts[0]
     else:

@@ -69,6 +69,8 @@ HOST=127.0.0.1
 PORT=8000
 # OAuth discovery の issuer URL（GCE のドメインに合わせる）
 MCP_ISSUER_URL=https://mcp.numbertales-radiann.net
+# コネクタの接続時に確認画面で入力する合言葉（未設定だと接続をすべて断る）
+MCP_AUTH_PASSPHRASE=your_passphrase
 
 # 出力シンク（GCE ローカルに保存する場合は local、Drive/GCS を使う場合は変更）
 OUTPUT_SINK=local
@@ -348,12 +350,12 @@ GCE VM を **使うときだけ起動する SSH/CLI 実行基盤** として使�
 > Drive への出力は MCP サーバー（`numbertales_*` ツール）経由でのみ行われる（`src/mcp_server/output_sink.py`）。
 > CLI 直叩きの出力は VM 内 `output/` に残り、Drive には上がらない。
 
-以下の例は VM `generators-ai`（`us-central1-f`）。自分の環境に合わせて読み替えること。
+以下の例は VM `generators-ai`。`<ZONE>`（VM のゾーン）と `<PROJECT_ID>` は自分の環境の値に読み替えること。
 
 ### 7.1 事前スナップショット
 
 ```bash
-gcloud compute disks snapshot generators-ai --zone=us-central1-f \
+gcloud compute disks snapshot generators-ai --zone=<ZONE> \
   --snapshot-names=generators-ai-pre-vmsetup-$(date +%Y%m%d) --storage-location=us
 ```
 
@@ -362,8 +364,8 @@ gcloud compute disks snapshot generators-ai --zone=us-central1-f \
 clone（サブモジュール含む・公開リポジトリ）→ venv → `requirements-mcp.txt` → 自己チェック（API 未呼び出し）。何度実行しても壊れない。
 
 ```bash
-gcloud compute scp scripts/setup_gce_vm.sh generators-ai:~/setup_gce_vm.sh --zone=us-central1-f
-gcloud compute ssh generators-ai --zone=us-central1-f --command 'bash ~/setup_gce_vm.sh'
+gcloud compute scp scripts/setup_gce_vm.sh generators-ai:~/setup_gce_vm.sh --zone=<ZONE>
+gcloud compute ssh generators-ai --zone=<ZONE> --command 'bash ~/setup_gce_vm.sh'
 ```
 
 期待: `imports OK` / `image_pipeline --help OK` / `stage_cli --help OK`（この時点では `.env なし`）。
@@ -378,10 +380,10 @@ $keys = 'GEMINI_API_KEY','OPENAI_API_KEY','IMAGEN_MODEL','GEMINI_REFERENCE_MODEL
 $lines = @(Get-Content .env | Where-Object { $_ -match '^[A-Z_]+=' -and ($keys -contains ($_ -split '=',2)[0]) }) + 'OUTPUT_SINK=drive','MCP_TRANSPORT=stdio','OUTPUT_BASE_DIR=output'
 [IO.File]::WriteAllText("$PWD\.env.vm", ($lines -join "`n") + "`n", (New-Object Text.UTF8Encoding $false))
 # 先に VM 側で 600 の空ファイルを作る（scp の上書きは既存の権限を保つ）。失敗したら転送しない
-gcloud compute ssh generators-ai --zone=us-central1-f --command 'install -m 600 /dev/null /opt/100beautieslab/.env'
-if ($LASTEXITCODE -eq 0) { gcloud compute scp .env.vm generators-ai:/opt/100beautieslab/.env --zone=us-central1-f }
+gcloud compute ssh generators-ai --zone=<ZONE> --command 'install -m 600 /dev/null /opt/100beautieslab/.env'
+if ($LASTEXITCODE -eq 0) { gcloud compute scp .env.vm generators-ai:/opt/100beautieslab/.env --zone=<ZONE> }
 Remove-Item .env.vm
-gcloud compute ssh generators-ai --zone=us-central1-f --command 'bash ~/setup_gce_vm.sh'
+gcloud compute ssh generators-ai --zone=<ZONE> --command 'bash ~/setup_gce_vm.sh'
 ```
 
 - `.env.vm` は **BOM なし・LF** で作る。BOM 付きだと dotenv が先頭キーを読めず、CRLF だと §7.5 の `. ./.env` が値の末尾に `\r` を残す。
@@ -391,7 +393,7 @@ gcloud compute ssh generators-ai --zone=us-central1-f --command 'bash ~/setup_gc
 ### 7.4 dry-run（課金ゼロ）
 
 ```bash
-gcloud compute ssh generators-ai --zone=us-central1-f --command \
+gcloud compute ssh generators-ai --zone=<ZONE> --command \
   'cd /opt/100beautieslab && .venv/bin/python -m src.batch_generate --nums 57 --forms corefolder --provider gemini --dry-run'
 ```
 
@@ -402,7 +404,7 @@ gcloud compute ssh generators-ai --zone=us-central1-f --command \
 ### 7.5 Claude Code から stdio MCP で接続
 
 ```bash
-claude mcp add --transport stdio numbertales-vm -- gcloud compute ssh generators-ai --zone=us-central1-f --project=claude-radiannkswg --quiet --ssh-flag=-T --command "cd /opt/100beautieslab && set -a && . ./.env && set +a && exec .venv/bin/python -m src.mcp_server.server"
+claude mcp add --transport stdio numbertales-vm -- gcloud compute ssh generators-ai --zone=<ZONE> --project=<PROJECT_ID> --quiet --ssh-flag=-T --command "cd /opt/100beautieslab && set -a && . ./.env && set +a && exec .venv/bin/python -m src.mcp_server.server"
 claude mcp list
 ```
 

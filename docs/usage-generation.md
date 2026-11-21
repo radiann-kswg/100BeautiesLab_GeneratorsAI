@@ -20,7 +20,7 @@ MCP (Adobe / Canva) との連携は [`usage-mcp-canva-adobe.md`](usage-mcp-canva
 | Stage 1 | コマンド解析 + ベースプロンプト生成 (シーン未指定時はキャラクターに合ったシーンを自動生成) | OpenAI GPT-4o + Gemini Flash |
 | Stage 2 | キャラクター選定 + 創作 DB から原典画像・特徴を取得 | manifest.jsonl + 参照画像索引 |
 | Stage 3 | ラフ生成 (単体: **5 案** / 合同: キャラ別 **3 枚×N 人** + **全体構図ラフ 1 枚**) | Adobe 非 Firefly (構図ガイド) + Gemini Imagen |
-| Stage 4 | 違反特徴の除去 + 構図修正 (単体・合同ともキャラ別に実行) | OpenAI Vision (違反分析) + Gemini i2i (修正適用) |
+| Stage 4 | 違反特徴の除去 + 構図修正 (単体・合同ともキャラ別に実行。体数が 1 体でない、同じ番号・ラベルが重複している場合も指摘する) | OpenAI Vision (違反分析) + Gemini i2i (修正適用) |
 | Stage 5 | 完成画像 **3 枚**生成 → Canva 仕上げ | Gemini (マルチ参照合成) + Canva Connect API |
 
 ```bash
@@ -415,7 +415,7 @@ python -m src.sdxl.generate --badge 57 --form corefolder --count 3 `
 
 | env | 役割 |
 | --- | --- |
-| `SDXL_GCP_PROJECT` | GCP プロジェクト (default: `claude-radiannkswg`) |
+| `SDXL_GCP_PROJECT` | GCP プロジェクト (未設定なら gcloud の既定のプロジェクト) |
 | `SDXL_VM_NAME` / `SDXL_VM_ZONE` | 推論 VM (default: `lora-l4-trial` / `asia-east1-b`) |
 | `SDXL_REMOTE_WORKDIR` | VM 上の作業ディレクトリ (default: `/home/s-chi/sdxl-infer`) |
 | `SDXL_REMOTE_BASE_MODEL` | (必須) VM 上の Illustrious-XL チェックポイント絶対パス |
@@ -557,8 +557,10 @@ Stage 1 の要約や i2i の `prompt_override` でも、Gemini/OpenAI の送信�
 - Stage 2: 原点全体図と公式部位図を役割付きで観察する。部位図では字形、全体図では位置を確認。
 - Stage 3/5: 部位図は `attr/...` の拡大資料として添付。部位図の分だけ通常の添付枠を増やす。
 - Stage 4: 全体図に加えて部位図そのものを Vision へ添付し、字形・線幅・間隔・切れ目の違いも修正対象にする。
-- 合同合成: 各キャラの部位仕様・部位図を明示添付する。通しCLIと分割CLIで共通。
-- 参照を添付できても、生成モデルの完全な字形再現は保証されない。Stage 5 の出力を再検査する自動ループはない。
+- 合同のラフ: 場面は全員で共有するので、キャラ別のラフのプロンプトの先頭に `[このラフに描く人数]`（そのキャラ 1 体だけ、番号・ラベル・タグは原典の指定部位と数を維持し、指定外へ重複しない）を添える。Stage 4 の修正・描き直しにも同じ指定が渡る。
+- 合同合成: 各キャラの部位仕様・部位図を明示添付する。通しCLIと分割CLIで共通。単体レンダーと部位図のラベルには持ち主の名前を入れ、プロンプトの `[識別要素の持ち主]` で「番号・ラベル・タグは持ち主にだけ描き、原典指定外へ重複しない」と指定する（持ち主の書かれていない参照から、別のキャラクターへ写るのを防ぐ）。
+- 合同の構図ラフと完成画像は、体数が合っているか、識別要素が持ち主以外に描かれていないかを OpenAI Vision で 1 枚ずつ見る（通しCLIとコネクタ）。構図ラフは、検査を通った 1 枚だけを合成のガイドにする（どれも通らなければガイドなしで合成する）。完成画像の指摘は `pipeline_summary.json` の `stage5_checks` に残す（直しは行わない）。
+- 参照を添付できても、生成モデルの完全な字形再現は保証されない。Stage 5 の出力を検査して描き直す自動ループはない。
 
 > **重要**: 番号印字ブロック (5) と禁止語ブロック (8) は2026-06-09に再強化済み。詳細は [`AGENTS.md`](../AGENTS.md) の `output レイアウト規約` セクションを参照。
 

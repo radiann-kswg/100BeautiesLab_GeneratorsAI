@@ -47,7 +47,9 @@ job_status(job_id) → {"status": "succeeded", "result": {"outputs": [ {url …}
 | `MCP_TRANSPORT` | `stdio` | `stdio`（ローカル）/ `streamable-http`（リモート） |
 | `PORT` | `8080` | HTTP 待受ポート（Cloud Run が注入） |
 | `HOST` | `0.0.0.0` | 待受ホスト |
-| `MCP_ISSUER_URL` | — | HTTP 運用時の公開 URL（OAuth discovery issuer）。例: `https://mcp.numbertales-radiann.net` |
+| `MCP_ISSUER_URL` | — | HTTP 運用時の公開 URL（OAuth discovery issuer）。例: `https://mcp.numbertales-radiann.net`。HTTP で動かすときは必須（未設定だと起動を断る） |
+| `MCP_AUTH_PASSPHRASE` | — | HTTP 運用時の合言葉。コネクタの接続時に確認画面（`/consent`）で入力する。未設定だと接続（OAuth の認可）をすべて断る |
+| `MCP_ALLOW_UNAUTHENTICATED` | — | `1` で、`MCP_ISSUER_URL` なし（認証なし）の HTTP を許す。手元の検証専用 |
 | `OUTPUT_SINK` | `local` | `local` / `drive` / `gcs` |
 | `DRIVE_FOLDER_ID` | — | `OUTPUT_SINK=drive` 時のアップロード先フォルダ ID |
 | `DRIVE_CLIENT_ID` | — | Drive OAuth クライアント ID（GCP Console で発行） |
@@ -135,8 +137,9 @@ ChatGPT Web はローカル TOML を読まない。Developer mode のカスタ�
 既存サーバーの HTTPS `/mcp` URL を登録する。利用アカウントの対応と管理者設定を確認し、
 OAuth 接続後にツール一覧・`numbertales_list_runs` を確認する。
 リモートの完成画像は GCS / Drive シンクのリンクで取得する。
-**現在の `SimpleOAuthProvider` は認可を自動承認する個人用実装であり、利用者を本人確認しない。**
-OAuth 接続成功だけをアクセス制限の証拠にしない。既存のアクセス制限下で検証し、
+**`SimpleOAuthProvider` は個人用の実装で、接続のたびに合言葉（`MCP_AUTH_PASSPHRASE`）の確認画面を通す。**
+合言葉を知っている人を同じ利用者として扱い、利用者ごとの本人確認はしない。合言葉は 1 件の接続で 5 回まで、
+全体で 10 分に 10 回まちがえると、しばらく受け付けない。
 不特定利用者に公開する場合は本人確認する認証基盤への置換が必要。
 
 公式仕様: [Codex MCP](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)、
@@ -164,10 +167,11 @@ OAuth 接続成功だけをアクセス制限の証拠にしない。既存の�
 docker build -t numbertales-mcp .
 docker run --rm -p 8080:8080 \
   -e MCP_TRANSPORT=streamable-http \
+  -e MCP_ALLOW_UNAUTHENTICATED=1 \
   -e OUTPUT_SINK=local \
   --env-file .env \
   numbertales-mcp
-# → http://localhost:8080/mcp で待受
+# → http://localhost:8080/mcp で待受（MCP_ALLOW_UNAUTHENTICATED=1 は認証なし。手元の検証専用）
 ```
 
 ---
@@ -189,12 +193,15 @@ gcloud services enable run.googleapis.com artifactregistry.googleapis.com \
 ### 5.2 Secret Manager にシークレットを登録
 
 Cloud Run の Revision 作成時にすべての `--set-secrets` 参照先が存在しないとデプロイが失敗します。
-**初回デプロイ前に 10 件すべてを登録してください。**
+**初回デプロイ前に 11 件すべてを登録してください。**
 
 ```bash
 # ── LLM API キー ────────────────────────────────────────
 printf '%s' "$GEMINI_API_KEY"      | gcloud secrets create GEMINI_API_KEY      --data-file=-
 printf '%s' "$OPENAI_API_KEY"      | gcloud secrets create OPENAI_API_KEY      --data-file=-
+
+# ── コネクタの合言葉（接続時に確認画面で入力する）────────
+printf '%s' "$MCP_AUTH_PASSPHRASE" | gcloud secrets create MCP_AUTH_PASSPHRASE --data-file=-
 
 # ── Canva Connect API ────────────────────────────────────
 printf '%s' "$CANVA_ACCESS_TOKEN"  | gcloud secrets create CANVA_ACCESS_TOKEN  --data-file=-
@@ -236,8 +243,8 @@ gcloud run deploy numbertales-mcp \
   --no-cpu-throttling \
   --timeout 3600 \
   --min-instances 1 --max-instances 1 \
-  --set-env-vars MCP_TRANSPORT=streamable-http,OUTPUT_SINK=drive,DRIVE_FOLDER_ID=xxxx \
-  --set-secrets GEMINI_API_KEY=GEMINI_API_KEY:latest,OPENAI_API_KEY=OPENAI_API_KEY:latest,CANVA_ACCESS_TOKEN=CANVA_ACCESS_TOKEN:latest
+  --set-env-vars MCP_TRANSPORT=streamable-http,MCP_ISSUER_URL=https://SERVICE_URL,OUTPUT_SINK=drive,DRIVE_FOLDER_ID=xxxx \
+  --set-secrets MCP_AUTH_PASSPHRASE=MCP_AUTH_PASSPHRASE:latest,GEMINI_API_KEY=GEMINI_API_KEY:latest,OPENAI_API_KEY=OPENAI_API_KEY:latest,CANVA_ACCESS_TOKEN=CANVA_ACCESS_TOKEN:latest
 ```
 
 > **`--min-instances 1 --max-instances 1` は必須**です。ジョブはプロセス内メモリに
@@ -249,8 +256,8 @@ gcloud run deploy numbertales-mcp \
 
 デプロイ後の URL（例 `https://numbertales-mcp-xxxx.run.app/mcp`）を、Claude の
 コネクタ設定で **カスタム（リモート / Streamable HTTP）MCP** として追加します。
-公開アクセスを避けるため、Cloud Run の認証 + IAM、または前段の認証プロキシを
-かけることを推奨します。
+接続の途中で合言葉の確認画面が開くので、`MCP_AUTH_PASSPHRASE` の値を入力します
+（デプロイし直したあとの再サインインでも同じ）。URL は公開の場に書かないでください。
 
 ---
 
@@ -282,6 +289,7 @@ MCP_TRANSPORT=streamable-http
 HOST=127.0.0.1
 PORT=8000
 MCP_ISSUER_URL=https://mcp.numbertales-radiann.net
+MCP_AUTH_PASSPHRASE=your_passphrase   # コネクタの接続時に入力する合言葉
 OUTPUT_SINK=local          # GCE ローカル保存（または drive / gcs）
 ```
 
@@ -311,7 +319,7 @@ DNS の A レコードを GCE の静的外部 IP に向けると Caddy が自動
 
 1. `claude.ai/customize/connectors` → **「+」→「Add custom connector」**
 2. URL に `https://YOUR_DOMAIN/mcp` を入力
-3. **「Add」** で確定 → 会話の「+」→ Connectors でトグル ON
+3. **「Add」** で確定 → 合言葉の確認画面で `MCP_AUTH_PASSPHRASE` の値を入力 → 会話の「+」→ Connectors でトグル ON
 
 ---
 
@@ -338,6 +346,12 @@ src/**  /  requirements*.txt  /  Dockerfile
 |---|---|---|
 | `GCP_WIF_PROVIDER` | `projects/…/locations/global/workloadIdentityPools/…/providers/…` | Workload Identity Federation |
 | `GCP_SERVICE_ACCOUNT` | `sa-name@PROJECT_ID.iam.gserviceaccount.com` | デプロイ用 SA |
+| `GCP_PROJECT_ID` | プロジェクト ID | イメージの置き場と配置先 |
+| `MCP_ISSUER_URL` | `https://…run.app`（Cloud Run のサービスの URL。末尾に `/mcp` を付けない） | OAuth の issuer。未設定だと認証が無効になるため、ワークフローが最初に止める |
+| `GCS_BUCKET` | バケット名 | 中間画像・入力画像・改稿の起点の置き場 |
+
+このリポジトリは公開で、Actions のログも公開される。プロジェクト ID・コネクタの URL・バケット名を
+シークレットに置くのは、ワークフローのファイルとログの両方に出さないため（ログでは伏せ字になる）。
 
 ### 7.3 GCP 側の前提
 
@@ -346,7 +360,7 @@ src/**  /  requirements*.txt  /  Dockerfile
 | WIF プール | GitHub Actions リポジトリを `attribute.repository == "org/repo"` で許可 |
 | SA に付与するロール | `roles/run.admin` / `roles/artifactregistry.writer` / `roles/iam.serviceAccountUser` / `roles/secretmanager.secretAccessor` |
 | Artifact Registry | `asia-northeast1` に `numbertales-mcp`（Docker 形式）を作成済み |
-| Secret Manager | **§5.2 の 10 件すべてが登録済み**（未登録だと Revision 作成で `not found` エラー） |
+| Secret Manager | **§5.2 の 11 件すべてが登録済み**（コネクタの合言葉 `MCP_AUTH_PASSPHRASE` を含む）（未登録だと Revision 作成で `not found` エラー） |
 
 ### 7.4 よくあるCI失敗パターン
 

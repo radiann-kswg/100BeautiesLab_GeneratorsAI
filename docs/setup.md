@@ -141,6 +141,10 @@ CANVA_EXPORT_FORMAT=png                # 書き出し形式 (png/jpg/pdf)
 # 出力先
 OUTPUT_BASE_DIR=output                 # 互換のため OUTPUT_DIR も読まれる
 
+# MCP サーバをリモート HTTP で動かす場合 (docs/mcp-server.md)
+MCP_ISSUER_URL=                        # 公開 URL。HTTP で動かすときは必須
+MCP_AUTH_PASSPHRASE=                   # コネクタの接続時に確認画面で入力する合言葉。未設定だと接続をすべて断る
+
 # MCP サーバ出力シンク（GCE / Cloud Run でリモート実行する場合）
 OUTPUT_SINK=local                      # local / drive / gcs
 DRIVE_FOLDER_ID=                       # OUTPUT_SINK=drive 時: アップロード先 Drive フォルダ ID

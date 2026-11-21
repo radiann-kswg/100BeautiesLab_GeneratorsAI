@@ -243,7 +243,7 @@ def test_joint_uses_inputs_only_in_the_final_composition(tmp_path, painter):
     assert "- 参照3 (構図ガイド)" in shifted and "- 参照4: " in shifted and "- 参照5: " in shifted
     assert "参照4〜5のデザインに忠実に描く" in shifted and "キャラクターの完成イラストに揃える" in shifted
     plain = image_pipeline._build_multi_char_composition_prompt(records57, forms, "", has_comp_rough=True)
-    assert "- 参照1 (構図ガイド)" in plain and "参照2以降のデザインに忠実に描く" in plain and "全参照画像に揃える" in plain
+    assert "- 参照1 (構図ガイド)" in plain and "参照2〜3のデザインに忠実に描く" in plain and "全参照画像に揃える" in plain
 
 
 def test_invalid_inputs_stop_the_pipeline_before_any_paid_step(tmp_path, monkeypatch, painter):
