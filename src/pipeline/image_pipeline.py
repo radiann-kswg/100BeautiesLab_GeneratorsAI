@@ -119,7 +119,7 @@ class MultiCharPipelineResult:
     stage3_paths: dict[str, list[str]] = field(default_factory=dict)
     stage4_paths: dict[str, list[str]] = field(default_factory=dict)
     stage5_paths: dict[str, list[str]] = field(default_factory=dict)
-    stage5_checks: dict[str, list[str]] = field(default_factory=dict)   # 完成画像ごとの、識別要素の取り違えの指摘
+    stage5_checks: dict[str, list[str]] = field(default_factory=dict)   # 完成画像ごとの、体数・識別要素の取り違え・配色の指摘
     input_images: list[dict] = field(default_factory=list)   # 依頼者が渡した入力画像の記録 (役割・出所・渡したステージ)
     status: str = "pending"
     errors: list[str] = field(default_factory=list)
@@ -1427,7 +1427,7 @@ def _run_combined_pipeline(
     joint_cast = [(rec, forms_map[n]) for rec, n in zip(records, nums)]
     guide: Path | None = None
     for candidate in comp_rough_paths:
-        mixing = check_joint_identity_mixing(candidate, joint_cast)
+        mixing = check_joint_identity_mixing(candidate, joint_cast, renders=per_char_best)
         found = mixing["mixed"]
         if not mixing["skipped"] and not found:
             guide = Path(candidate)
@@ -1470,14 +1470,14 @@ def _run_combined_pipeline(
     # 1 体ずつの検査 (Stage 4) では見つけられない、キャラクターどうしの識別要素の取り違えを見る。
     # 直しはせず、pipeline_summary.json に残して依頼者に見せる。
     for image in synth_images:
-        mixing = check_joint_identity_mixing(image, joint_cast)
+        mixing = check_joint_identity_mixing(image, joint_cast, renders=per_char_best)
         if mixing["mixed"]:
             try:
                 image_key = str(image.resolve().relative_to(pipeline_dir.resolve()))
             except ValueError:
                 image_key = str(image)
             result.stage5_checks[image_key] = mixing["mixed"]
-            print(f"[WARN] Stage5: {image_key} で識別要素の取り違えが見つかりました: {' / '.join(mixing['mixed'])}")
+            print(f"[WARN] Stage5: {image_key} の検査で指摘がありました: {' / '.join(mixing['mixed'])}")
 
     result.stage5_paths = {
         "synth": [str(p) for p in synth_images],

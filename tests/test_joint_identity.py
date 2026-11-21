@@ -82,7 +82,7 @@ def test_joint_mixing_check_reports_marks_drawn_on_the_wrong_character(tmp_path,
 
     result = cg.check_joint_identity_mixing(image, characters, ask=ask)
     assert result == {"mixed": ["20(ハツカ) に バイナ の「試用」ラベル"], "skipped": False}
-    assert "20(ハツカ) (corefolder): 番号 20" in seen["text"] and "バイナ (corefolder): 番号 2B" in seen["text"]
+    assert "20(ハツカ) (corefolder): 番号 20" in seen["text"] and "バイナ (corefolder): Fox" in seen["text"]
     assert "試用" in seen["text"] and seen["image"] == "data:image/png;base64,"
     assert "2 体でなければ" in seen["text"]            # 体数も見る (構図ラフに顔が 3 つあった)
     assert cg.check_joint_identity_mixing(image, characters, ask=lambda *a: {"mixed": "x"}) == {"mixed": [], "skipped": True}
@@ -129,3 +129,36 @@ def test_per_character_roughs_are_told_to_draw_one_figure_and_stage4_counts_them
     text = seen["messages"][1]["content"][0]["text"]
     assert "体数: <何体いるか>" in text and "重複: <要素>" in text
     assert result["composition_issues"] == ["体数: 2 体。1 体だけを描く"] and result["skipped"] is False
+
+
+def test_record_identifier_is_not_given_as_the_number_to_draw():
+    # 2026-11-21 の合同で、バイナのラフの 1 枚に「Bi 2 alt」と描かれ、Stage 4 も通った。
+    # 「番号は厳密に 2-alt」という指定が、描く側にも検査する側にも渡っていた
+    from src.utils.dataset import _build_number_print_block
+
+    binor = _build_number_print_block(find_character("2-alt", WORK), "corefolder")
+    assert "厳密に" not in binor and 'exactly "2-alt"' not in binor
+    assert '識別子 "2-alt" は表記ではない' in binor and "never write it in the image" in binor
+    assert "Bi 2 nor" in binor and "表示箇所と数は以下の原典指定に従う" in binor     # 描く表記は原典指定から
+    hatsuka = _build_number_print_block(find_character(20, WORK), "corefolder")
+    assert '番号は厳密に "20" です' in hatsuka and "識別子" not in hatsuka
+
+
+def test_joint_check_compares_colours_with_the_single_renders(tmp_path):
+    # 2026-11-21 の合同の完成 3 枚目で、バイナの尾がオレンジに、ハツカの首輪が黒になった
+    image, render_20, render_2b = (_png(tmp_path / name) for name in ("final.png", "r20.png", "r2b.png"))
+    characters = [(find_character(20, WORK), "corefolder"), (find_character("2-alt", WORK), "corefolder")]
+    seen: dict = {}
+
+    def ask(system, content):
+        seen["content"] = content
+        return {"mixed": ["配色: バイナ の 尾 が オレンジ (基準は 銀灰色)"]}
+
+    result = cg.check_joint_identity_mixing(image, characters, ask=ask, renders=[render_20, tmp_path / "missing.png"])
+    assert result == {"mixed": ["配色: バイナ の 尾 が オレンジ (基準は 銀灰色)"], "skipped": False}
+    texts = [part["text"] for part in seen["content"] if part["type"] == "text"]
+    assert "配色: <名前> の <部位>" in texts[0] and texts[1:] == ["20(ハツカ) の単体レンダー (配色の基準。検査対象ではない):"]
+    assert sum(part["type"] == "image_url" for part in seen["content"]) == 2      # 開けないレンダーは添付しない
+    assert "番号 20; " in texts[0] and "番号 2" not in texts[0].replace("番号 20", "")   # 識別子 (2-alt・2B) は番号として渡さない
+    cg.check_joint_identity_mixing(image, characters, ask=ask)
+    assert "配色:" not in seen["content"][0]["text"] and len(seen["content"]) == 2     # レンダーが無ければ配色は見ない

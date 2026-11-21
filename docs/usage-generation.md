@@ -523,7 +523,7 @@ python -m src.batch_generate --nums 15,22,49,57 --forms both --provider both --s
 | 2.5  | `[参照N｜役割]` (API 送信時・各画像の直前)             | 添付画像ごとに「起点画像（前回生成）」「下絵・ラフ」「公式原典」の役割ラベルをテキストパートとして挟む。原典以外の配色・崩れ・蛇足を引き継がせないための明示。合同合成は「キャラクター単体レンダー」 | `gemini/generate.py` の `REF_LABEL_*` / `extra_ref_label` (プロンプト本文ではなく `contents` に差し込む) |
 | 3    | `[素体特徴]`                                          | 不変特徴 (耳・尻尾・髪色・瞳色)                                                                               | `ai_hints.common.immutable_traits` / `identity_tags`                           |
 | 4    | `[今回の姿]`                                          | 現在形態のタグ（未収録時のみ旧自然文記述） | `ai_hints.forms.{form}.ai_tags` → `natural_language_description` |
-| 5    | **`[番号印字仕様 (必須・最優先)]`**                   | 番号の位置・個数・色・原典の字形（線幅・間隔・切れ目・装飾）を保持。NumberTales のみ（他作品は出さない） | AppearanceDetail の NumberMark / identity_tags / immutable_traits / ai_tags（未収録時は outfit_features / silhouette_notes）から抽出 |
+| 5    | **`[番号印字仕様 (必須・最優先)]`**                   | 番号の位置・個数・色・原典の字形（線幅・間隔・切れ目・装飾）を保持。NumberTales のみ（他作品は出さない）。`Num` が数字だけでないレコード（`2-alt` など）では、識別子を番号として渡さず、「表記は原典指定のとおり。識別子は描かない」と指定する | AppearanceDetail の NumberMark / identity_tags / immutable_traits / ai_tags（未収録時は outfit_features / silhouette_notes）から抽出 |
 | 6    | `[形態固定ルール]`                                    | 形態固有の immutable_constraints / 形態共通データセット (`required_shape_keywords[]`)                         | `Works_NumberTales.json` + `ai_hints.forms.{form}.immutable_constraints`       |
 | 6.8  | **`[配色仕様 (DB実測値・遵守すること)]`**             | 作者が設定画に描いたカラーチップ由来の HEX を Role (主色/補助色/差し色/副色) 別に列挙し、`AppliesTo` の適用部位を併記 (例: `- 主色 #E8F152 : arm, foot`)。参照画像と矛盾して見える場合は参照画像を優先させる | `db_record.ColorPalette` / `data.ColorPalette`（不在時は `ai_hints.common.palette_priority` へフォールバック） |
 | 7    | `[現在形態の重点要素]`                                | `ai_tags` 未収録時のみ旧 `outfit_features` / `silhouette_notes` を提示 | `ai_hints.forms.{form}.outfit_features` / `silhouette_notes` |
@@ -559,7 +559,7 @@ Stage 1 の要約や i2i の `prompt_override` でも、Gemini/OpenAI の送信�
 - Stage 4: 全体図に加えて部位図そのものを Vision へ添付し、字形・線幅・間隔・切れ目の違いも修正対象にする。
 - 合同のラフ: 場面は全員で共有するので、キャラ別のラフのプロンプトの先頭に `[このラフに描く人数]`（そのキャラ 1 体だけ、番号・ラベル・タグは原典の指定部位と数を維持し、指定外へ重複しない）を添える。Stage 4 の修正・描き直しにも同じ指定が渡る。
 - 合同合成: 各キャラの部位仕様・部位図を明示添付する。通しCLIと分割CLIで共通。単体レンダーと部位図のラベルには持ち主の名前を入れ、プロンプトの `[識別要素の持ち主]` で「番号・ラベル・タグは持ち主にだけ描き、原典指定外へ重複しない」と指定する（持ち主の書かれていない参照から、別のキャラクターへ写るのを防ぐ）。
-- 合同の構図ラフと完成画像は、体数が合っているか、識別要素が持ち主以外に描かれていないかを OpenAI Vision で 1 枚ずつ見る（通しCLIとコネクタ）。構図ラフは、検査を通った 1 枚だけを合成のガイドにする（どれも通らなければガイドなしで合成する）。完成画像の指摘は `pipeline_summary.json` の `stage5_checks` に残す（直しは行わない）。
+- 合同の構図ラフと完成画像は、体数が合っているか、識別要素が持ち主以外に描かれていないか、髪・尾・首輪などの色相が検査を通った単体レンダーと明らかに違わないかを OpenAI Vision で 1 枚ずつ見る（通しCLIとコネクタ）。構図ラフは、検査を通った 1 枚だけを合成のガイドにする（どれも通らなければガイドなしで合成する）。完成画像の指摘は `pipeline_summary.json` の `stage5_checks` に残す（直しは行わない）。
 - 参照を添付できても、生成モデルの完全な字形再現は保証されない。Stage 5 の出力を検査して描き直す自動ループはない。
 
 > **重要**: 番号印字ブロック (5) と禁止語ブロック (8) は2026-06-09に再強化済み。詳細は [`AGENTS.md`](../AGENTS.md) の `output レイアウト規約` セクションを参照。
