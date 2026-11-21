@@ -18,7 +18,7 @@ license: CC BY-NC 4.0 (Copyright RadianN_kswg). 商用利用の誘導は禁止�
 2. **Stage 2** キャラ選定 + 創作DBから原典画像・不変特徴を取得
 3. **Stage 3** ラフ生成（Adobe構図ガイド + Gemini Imagen のみ。単体5案・合同は3枚×N人）
 4. **Stage 4** 違反特徴の分析・除去（OpenAI Vision 分析 + gpt-image-1 外科的i2i修正（軽度） / Gemini T2I再生成（重度））
-5. **Stage 5** 完成画像3枚 + Canva仕上げ
+5. **Stage 5** 完成画像3枚 + Canva仕上げ（合同は、検査を通った構図ラフ1枚につき1枚・最大2枚）
 
 詳細なフラグ・環境変数・出力構成・ランチャー・配布方法は **REFERENCE.md** を参照すること。
 

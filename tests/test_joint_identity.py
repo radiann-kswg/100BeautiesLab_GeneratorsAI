@@ -162,3 +162,18 @@ def test_joint_check_compares_colours_with_the_single_renders(tmp_path):
     assert "番号 20; " in texts[0] and "番号 2" not in texts[0].replace("番号 20", "")   # 識別子 (2-alt・2B) は番号として渡さない
     cg.check_joint_identity_mixing(image, characters, ask=ask)
     assert "配色:" not in seen["content"][0]["text"] and len(seen["content"]) == 2     # レンダーが無ければ配色は見ない
+
+
+def test_each_checked_composition_rough_gets_one_final(tmp_path, monkeypatch):
+    # 2026-11-21 の確認で、同じ構図ラフをガイドに 3 回合成した完成のうち 2 枚が、ほぼ同じ絵になった
+    roughs = [_png(tmp_path / f"comp_{i}.png") for i in range(3)]
+    verdicts = {"comp_0.png": {"mixed": [], "skipped": False},
+                "comp_1.png": {"mixed": ["体数: 3 体。2 体を描く"], "skipped": False},
+                "comp_2.png": {"mixed": [], "skipped": True}}
+    monkeypatch.setattr(image_pipeline, "check_joint_identity_mixing",
+                        lambda image, cast, renders=None: verdicts[Path(image).name])
+    guides = image_pipeline._checked_guides(roughs, [], [])
+    assert guides == [roughs[0]]                                    # 指摘のあるラフと、検査できなかったラフは使わない
+    assert image_pipeline._synth_plans(guides) == [(roughs[0], 1)]
+    assert image_pipeline._synth_plans(roughs) == [(roughs[0], 1), (roughs[1], 1)]      # 上限は 2 枚
+    assert image_pipeline._synth_plans([]) == [(None, 2)]           # ガイドが無ければ、ガイドなしで 2 枚
