@@ -925,7 +925,7 @@ def _build_multi_char_composition_prompt(
         "",
         "[識別要素の持ち主]",
         "- 番号・名前の表記・ラベル・タグ・首輪・紋章・髪飾りなどの識別要素は、持ち主のキャラクターにだけ描く。"
-        "ほかのキャラクターへ写さず、数も増やさない。",
+        "ほかのキャラクターへ写さず、原典指定外への重複も増やさない。",
         "- 公式部位図は、ラベルに名前のあるキャラクターだけの部位。そのキャラクターの指定位置にだけ描く。",
         "",
         "[共通作風]",
@@ -947,7 +947,7 @@ def _solo_rough_note(name: str) -> str:
         "[このラフに描く人数]\n"
         f"- {name} 1 体だけを描く。場面にほかのキャラクターが出てきても、このラフには描かない"
         "（全員を 1 枚に描くのは、あとの合成で行う）。同じキャラクターを 2 体描かない。\n"
-        f"- {name} の番号・ラベル・タグは、設定の位置に 1 つずつ描く。同じものを 2 か所以上に描かない。"
+        f"- {name} の番号・ラベル・タグは原典の指定部位と数を維持し、指定外へ重複を描かない。"
     )
 
 
@@ -1427,11 +1427,13 @@ def _run_combined_pipeline(
     joint_cast = [(rec, forms_map[n]) for rec, n in zip(records, nums)]
     guide: Path | None = None
     for candidate in comp_rough_paths:
-        found = check_joint_identity_mixing(candidate, joint_cast)["mixed"]
-        if not found:
+        mixing = check_joint_identity_mixing(candidate, joint_cast)
+        found = mixing["mixed"]
+        if not mixing["skipped"] and not found:
             guide = Path(candidate)
             break
-        print(f"  [Stage5] 構図ラフ {Path(candidate).name} はガイドに使いません: {' / '.join(found)}")
+        reason = "検査がスキップされました" if mixing["skipped"] else (' / '.join(found) or "検査失敗")
+        print(f"  [Stage5] 構図ラフ {Path(candidate).name} はガイドに使いません: {reason}")
     result.stage3_paths["composition_guide"] = [str(guide)] if guide else []
     has_comp_rough = guide is not None
     stage5_refs = ([guide] if guide else []) + per_char_best
@@ -1470,8 +1472,12 @@ def _run_combined_pipeline(
     for image in synth_images:
         mixing = check_joint_identity_mixing(image, joint_cast)
         if mixing["mixed"]:
-            result.stage5_checks[Path(image).name] = mixing["mixed"]
-            print(f"[WARN] Stage5: {Path(image).name} で識別要素の取り違えが見つかりました: {' / '.join(mixing['mixed'])}")
+            try:
+                image_key = str(image.resolve().relative_to(pipeline_dir.resolve()))
+            except ValueError:
+                image_key = str(image)
+            result.stage5_checks[image_key] = mixing["mixed"]
+            print(f"[WARN] Stage5: {image_key} で識別要素の取り違えが見つかりました: {' / '.join(mixing['mixed'])}")
 
     result.stage5_paths = {
         "synth": [str(p) for p in synth_images],

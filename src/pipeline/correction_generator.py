@@ -40,6 +40,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 from src.utils.dataset import (  # noqa: E402
     extract_color_palette,
+    generation_ai_hints,
     IMAGE_TEXT_POLICY,
     _build_number_print_block,
     _format_color_palette_lines,
@@ -58,11 +59,17 @@ def _number_block_if_targeted(record: dict, form: str, fixes: str) -> str:
 def _identity_tags(record: dict, form: str, limit: int = 8) -> str:
     """維持させる識別要素の一覧。common だけでは種族の 1 語しか無いレコードがあるので
     (髪・瞳が形態別にだけ書かれている。CreationsDB #67)、その形態の体の特徴と付属物も足す。"""
-    hints = record.get("ai_hints") or {}
+    hints = generation_ai_hints(record)
     common = hints.get("common") or {}
-    notes = ((hints.get("forms") or {}).get(form) or {}).get("silhouette_notes") or {}
-    tags = [*(common.get("identity_tags") or []), *(common.get("immutable_traits") or []),
-            *(notes.get("body_description") or []), *(notes.get("attached_items") or [])]
+    form_hints = (hints.get("forms") or {}).get(form) or {}
+    if form_hints.get("ai_tags"):
+        tags = [*(common.get("identity_tags") or []), *(common.get("immutable_traits") or []),
+                *(form_hints.get("ai_tags") or [])]
+    else:
+        # ai_tags が未収録の旧レコードだけ、旧 silhouette_notes をフォールバックに使う。
+        notes = form_hints.get("silhouette_notes") or {}
+        tags = [*(common.get("identity_tags") or []), *(common.get("immutable_traits") or []),
+                *(notes.get("body_description") or []), *(notes.get("attached_items") or [])]
     return ", ".join(list(dict.fromkeys(tag for tag in tags if isinstance(tag, str) and tag.strip()))[:limit])
 
 
@@ -114,11 +121,16 @@ def check_joint_identity_mixing(image_path: "Path | str", characters: "list[tupl
     content = [{"type": "text", "text": user}, {"type": "image_url", "image_url": {
         "url": f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"}}]
     try:
-        found = (ask or _ask_openai_json)(system, content).get("mixed")
+        answer = (ask or _ask_openai_json)(system, content)
+        if not isinstance(answer, dict):
+            return {"mixed": [], "skipped": True}
+        found = answer.get("mixed")
     except Exception as err:
         print(f"[WARN] Stage5 識別要素の取り違えの検査に失敗: {err}")
         return {"mixed": [], "skipped": True}
-    return {"mixed": [str(item) for item in found if item] if isinstance(found, list) else [], "skipped": False}
+    if not isinstance(found, list) or not all(isinstance(item, str) for item in found):
+        return {"mixed": [], "skipped": True}
+    return {"mixed": [item for item in found if item], "skipped": False}
 
 
 def _palette_lines(spec: dict, limit: int = 6) -> str:

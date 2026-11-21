@@ -85,7 +85,9 @@ def test_joint_mixing_check_reports_marks_drawn_on_the_wrong_character(tmp_path,
     assert "20(ハツカ) (corefolder): 番号 20" in seen["text"] and "バイナ (corefolder): 番号 2B" in seen["text"]
     assert "試用" in seen["text"] and seen["image"] == "data:image/png;base64,"
     assert "2 体でなければ" in seen["text"]            # 体数も見る (構図ラフに顔が 3 つあった)
-    assert cg.check_joint_identity_mixing(image, characters, ask=lambda *a: {"mixed": "x"})["mixed"] == []
+    assert cg.check_joint_identity_mixing(image, characters, ask=lambda *a: {"mixed": "x"}) == {"mixed": [], "skipped": True}
+    assert cg.check_joint_identity_mixing(image, characters, ask=lambda *a: {}) == {"mixed": [], "skipped": True}
+    assert cg.check_joint_identity_mixing(image, characters, ask=lambda *a: {"mixed": ["ok", 123]}) == {"mixed": [], "skipped": True}
 
     def broken(*_args):
         raise RuntimeError("vision down")
@@ -99,7 +101,9 @@ def test_joint_mixing_check_reports_marks_drawn_on_the_wrong_character(tmp_path,
 def test_per_character_roughs_are_told_to_draw_one_figure_and_stage4_counts_them(tmp_path, monkeypatch):
     # 2026-11-20 の合同では、「寄り添って寝る」場面を受けたキャラ別のラフに 2 体が描かれ、Stage 4 を素通りした
     note = image_pipeline._solo_rough_note("バイナ")
-    assert note.startswith("[このラフに描く人数]") and "バイナ 1 体だけを描く" in note and "1 つずつ描く" in note
+    assert note.startswith("[このラフに描く人数]")
+    assert "バイナ 1 体だけを描く" in note
+    assert "原典の指定部位と数を維持" in note and "指定外へ重複" in note
     plan = image_pipeline.plan_pipeline([20, "2-alt"], ["corefolder", "corefolder"], scene="ソファで寄り添って寝る", out_dir=str(tmp_path))
     for character, name in zip(plan["characters"], ("20(ハツカ)", "バイナ")):
         assert character["base_prompt"].startswith(f"[このラフに描く人数]\n- {name} 1 体だけを描く")

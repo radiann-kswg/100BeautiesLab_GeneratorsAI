@@ -411,7 +411,7 @@ def _run_and_publish(result: Any) -> dict[str, Any]:
         "pipeline_dir": run_dir,
         "scene_used": rd.get("scene_used", ""),
         "errors": rd.get("errors", []),
-        # 合同の完成画像で、識別要素が持ち主以外のキャラクターに描かれていた指摘 (ファイル名ごと。無ければ空)
+        # 合同の完成画像で、識別要素が持ち主以外のキャラクターに描かれていた指摘 (実行フォルダー相対パスごと。無ければ空)
         "stage5_checks": rd.get("stage5_checks") or {},
         "image_count": image_count,
         "outputs": outputs,
