@@ -415,7 +415,7 @@ python -m src.sdxl.generate --badge 57 --form corefolder --count 3 `
 
 | env | 役割 |
 | --- | --- |
-| `SDXL_GCP_PROJECT` | GCP プロジェクト (default: `claude-radiannkswg`) |
+| `SDXL_GCP_PROJECT` | GCP プロジェクト (未設定なら gcloud の既定のプロジェクト) |
 | `SDXL_VM_NAME` / `SDXL_VM_ZONE` | 推論 VM (default: `lora-l4-trial` / `asia-east1-b`) |
 | `SDXL_REMOTE_WORKDIR` | VM 上の作業ディレクトリ (default: `/home/s-chi/sdxl-infer`) |
 | `SDXL_REMOTE_BASE_MODEL` | (必須) VM 上の Illustrious-XL チェックポイント絶対パス |

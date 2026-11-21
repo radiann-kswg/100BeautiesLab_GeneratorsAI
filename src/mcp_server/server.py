@@ -37,7 +37,7 @@ from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions
 from mcp.server.fastmcp import FastMCP
 
 from src.mcp_server import output_sink
-from src.mcp_server.auth import SimpleOAuthProvider
+from src.mcp_server.auth import SimpleOAuthProvider, register_consent_route
 from src.mcp_server.jobs import MANAGER
 from src.utils.dataset import resolve_badge
 
@@ -50,7 +50,8 @@ PORT = int(os.getenv("PORT", "8080"))
 ISSUER_URL = os.getenv("MCP_ISSUER_URL", "").rstrip("/")
 DEFAULT_WORK_KEY = "#Works_NumberTales"
 
-_oauth_provider = SimpleOAuthProvider() if ISSUER_URL else None
+# 認可は合言葉 (MCP_AUTH_PASSPHRASE) の確認画面を通す。未設定なら認可をすべて断る
+_oauth_provider = SimpleOAuthProvider(ISSUER_URL) if ISSUER_URL else None
 _auth_settings = (
     AuthSettings(
         issuer_url=ISSUER_URL,
@@ -76,6 +77,8 @@ mcp = FastMCP(
     auth=_auth_settings,
     lifespan=_server_lifespan,
 )
+if _oauth_provider:
+    register_consent_route(mcp, _oauth_provider, "100BeautiesLab. GeneratorsAI")
 
 
 # ── 列挙・共通モデル ────────────────────────────────────────────
@@ -1214,6 +1217,12 @@ def _normalize_transport(raw: Optional[str]) -> str:
 
 def main() -> None:
     transport = _normalize_transport(os.getenv("MCP_TRANSPORT"))
+    if transport != "stdio" and not ISSUER_URL and os.getenv("MCP_ALLOW_UNAUTHENTICATED") != "1":
+        # MCP_ISSUER_URL が無いと OAuth が無効になり、認証なしで公開されてしまう
+        raise SystemExit(
+            "[ERROR] HTTP で動かすには MCP_ISSUER_URL (公開 URL) と MCP_AUTH_PASSPHRASE (合言葉) が必要です。"
+            "手元の検証で認証なしにする場合だけ MCP_ALLOW_UNAUTHENTICATED=1 を指定してください。"
+        )
     mcp.run(transport=transport)
 
 

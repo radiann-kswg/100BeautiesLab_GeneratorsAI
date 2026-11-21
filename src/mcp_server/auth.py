@@ -1,36 +1,64 @@
 """Simple in-memory OAuth 2.0 Authorization Server Provider for FastMCP.
 
-個人専用サーバ向け: 認可リクエストを自動承認する（ログイン画面なし）。
+個人専用サーバ向け。認可リクエストは、合言葉（環境変数 ``MCP_AUTH_PASSPHRASE``）を
+確認画面（``/consent``）で入力したときだけ承認する。合言葉が未設定のサーバーは、認可をすべて断る
+（URL を知っているだけでは、課金を伴う生成を呼べないようにするため）。
 トークンはプロセス内メモリに保持されるためサービス再起動でリセットされる。
 """
 from __future__ import annotations
 
+import hmac
+import html
+import os
 import secrets
 import time
+from dataclasses import dataclass
+from urllib.parse import parse_qs
 
 from mcp.server.auth.provider import (
     AccessToken,
     AuthorizationCode,
     AuthorizationParams,
+    AuthorizeError,
     OAuthAuthorizationServerProvider,
     RefreshToken,
     construct_redirect_uri,
 )
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 
+PASSPHRASE_ENV = "MCP_AUTH_PASSPHRASE"
+CONSENT_PATH = "/consent"
+PENDING_TTL = 600          # 確認画面を開いてから承認までの猶予（秒）
+MAX_ATTEMPTS = 5           # 1 件の認可リクエストで合言葉を試せる回数
+LOCKOUT_FAILURES = 10      # LOCKOUT_WINDOW 秒のあいだにこの回数まちがえたら、全体をしばらく止める
+LOCKOUT_WINDOW = 600
+
+
+@dataclass
+class _Pending:
+    client_id: str
+    params: AuthorizationParams
+    expires_at: float
+    attempts: int = 0
+
 
 class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
     """個人用 MCP サーバ向け in-memory OAuth 2.0 プロバイダ。
 
-    認可フローを自動承認する（ユーザー確認画面なし）。
-    単一ユーザーの個人サーバを想定した最小実装。
+    単一ユーザーの個人サーバを想定した最小実装。認可は合言葉の確認画面を通す。
+    ``issuer_url`` はこのサーバーの公開 URL（確認画面へのリダイレクト先を組み立てる）。
+    ``passphrase`` を省くと環境変数 ``MCP_AUTH_PASSPHRASE`` を読む。
     """
 
-    def __init__(self) -> None:
+    def __init__(self, issuer_url: str = "", passphrase: str | None = None) -> None:
+        self._issuer_url = issuer_url.rstrip("/")
+        self._passphrase = (os.getenv(PASSPHRASE_ENV, "") if passphrase is None else passphrase).strip()
         self._clients: dict[str, OAuthClientInformationFull] = {}
         self._auth_codes: dict[str, AuthorizationCode] = {}
         self._access_tokens: dict[str, AccessToken] = {}
         self._refresh_tokens: dict[str, RefreshToken] = {}
+        self._pending: dict[str, _Pending] = {}
+        self._failures: list[float] = []
 
     async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
         return self._clients.get(client_id)
@@ -46,24 +74,61 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
         client: OAuthClientInformationFull,
         params: AuthorizationParams,
     ) -> str:
-        # 個人サーバ: 確認画面なしで即承認し、認可コードを返す
+        # 合言葉の確認画面へ送る。認可コードは、合言葉が合ったときに approve() が発行する
+        if not self._passphrase:
+            raise AuthorizeError(
+                error="access_denied",
+                error_description=f"{PASSPHRASE_ENV} is not set on this server; authorization is disabled.",
+            )
+        self._drop_expired()
+        request_id = secrets.token_urlsafe(24)
+        self._pending[request_id] = _Pending(client.client_id, params, time.time() + PENDING_TTL)
+        return f"{self._issuer_url}{CONSENT_PATH}?rid={request_id}"
+
+    # ── 合言葉の確認 ───────────────────────────────────────────────
+
+    def is_pending(self, request_id: str) -> bool:
+        self._drop_expired()
+        return request_id in self._pending
+
+    def locked_out(self) -> bool:
+        cutoff = time.time() - LOCKOUT_WINDOW
+        self._failures = [stamp for stamp in self._failures if stamp > cutoff]
+        return len(self._failures) >= LOCKOUT_FAILURES
+
+    def approve(self, request_id: str, passphrase: str) -> str | None:
+        """合言葉が合えば認可コードを発行し、クライアントへ戻るリダイレクト先を返す。合わなければ None。"""
+        self._drop_expired()
+        pending = self._pending.get(request_id)
+        if pending is None or self.locked_out():
+            return None
+        if not hmac.compare_digest(passphrase.encode("utf-8"), self._passphrase.encode("utf-8")):
+            self._failures.append(time.time())
+            pending.attempts += 1
+            if pending.attempts >= MAX_ATTEMPTS:
+                del self._pending[request_id]
+            return None
+        del self._pending[request_id]
+        params = pending.params
         code = secrets.token_urlsafe(32)
-        scopes = list(params.scopes or [])
         self._auth_codes[code] = AuthorizationCode(
             code=code,
-            client_id=client.client_id,
+            client_id=pending.client_id,
             redirect_uri=params.redirect_uri,
-            redirect_uri_provided_explicitly=params.redirect_uri is not None,
+            redirect_uri_provided_explicitly=params.redirect_uri_provided_explicitly,
             expires_at=time.time() + 300,  # 5 分
-            scopes=scopes,
+            scopes=list(params.scopes or []),
             code_challenge=params.code_challenge,
             code_challenge_method="S256",
         )
-        return construct_redirect_uri(
-            str(params.redirect_uri),
-            code=code,
-            state=params.state,
-        )
+        return construct_redirect_uri(str(params.redirect_uri), code=code, state=params.state)
+
+    def _drop_expired(self) -> None:
+        now = time.time()
+        for request_id in [key for key, item in self._pending.items() if item.expires_at < now]:
+            del self._pending[request_id]
+
+    # ── トークン ───────────────────────────────────────────────────
 
     async def load_authorization_code(
         self,
@@ -142,3 +207,50 @@ class SimpleOAuthProvider(OAuthAuthorizationServerProvider):
             refresh_token=refresh_token.token,
             scope=" ".join(effective_scopes),
         )
+
+
+_PAGE = """<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex"><title>{title}</title>
+<style>body{{font-family:sans-serif;max-width:26rem;margin:4rem auto;padding:0 1rem;line-height:1.7}}
+input,button{{font-size:1rem;padding:.5rem;width:100%;box-sizing:border-box;margin-top:.5rem}}
+.error{{color:#b00020}}</style></head>
+<body><h1>{title}</h1>{body}</body></html>"""
+
+_FORM = """<p>このコネクタを使うには、合言葉を入力してください。</p>{error}
+<form method="post" action="{action}"><input type="hidden" name="rid" value="{rid}">
+<input type="password" name="passphrase" autocomplete="current-password" autofocus required>
+<button type="submit">接続する</button></form>"""
+
+
+def register_consent_route(mcp, provider: SimpleOAuthProvider, title: str = "MCP コネクタ") -> None:
+    """合言葉の確認画面（GET で表示、POST で照合）を FastMCP サーバーに足す。"""
+    from starlette.requests import Request
+    from starlette.responses import HTMLResponse, RedirectResponse, Response
+
+    headers = {"Cache-Control": "no-store", "X-Frame-Options": "DENY", "Referrer-Policy": "no-referrer"}
+
+    def page(body: str, status: int = 200) -> Response:
+        return HTMLResponse(_PAGE.format(title=html.escape(title), body=body), status_code=status, headers=headers)
+
+    def form(request_id: str, error: str = "", status: int = 200) -> Response:
+        note = f'<p class="error">{html.escape(error)}</p>' if error else ""
+        return page(_FORM.format(error=note, action=CONSENT_PATH, rid=html.escape(request_id, quote=True)), status)
+
+    expired = "<p>この接続の手続きは期限が切れたか、試せる回数を超えました。コネクタの接続をやり直してください。</p>"
+
+    @mcp.custom_route(CONSENT_PATH, methods=["GET", "POST"])
+    async def consent(request: Request) -> Response:
+        if request.method == "GET":
+            request_id = request.query_params.get("rid", "")
+            return form(request_id) if provider.is_pending(request_id) else page(expired, 400)
+        fields = parse_qs((await request.body()).decode("utf-8", errors="replace"))
+        request_id = (fields.get("rid") or [""])[0]
+        if provider.locked_out():
+            return page("<p>合言葉のまちがいが続いたため、しばらく受け付けません。10 分ほど待ってからやり直してください。</p>", 429)
+        redirect = provider.approve(request_id, (fields.get("passphrase") or [""])[0])
+        if redirect:
+            return RedirectResponse(redirect, status_code=302, headers={"Cache-Control": "no-store"})
+        if provider.is_pending(request_id):
+            return form(request_id, "合言葉が違います。", 401)
+        return page(expired, 400)

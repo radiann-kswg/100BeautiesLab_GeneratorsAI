@@ -13,10 +13,11 @@ on:
   workflow_dispatch:  # GitHub UI から手動実行できるようにする
 
 env:
-  PROJECT_ID: claude-radiannkswg
+  # プロジェクト ID・コネクタの URL・バケット名は、リポジトリのシークレットから読む (公開リポジトリに書かない)
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
   REGION: asia-northeast1
   SERVICE: generators-ai
-  IMAGE: asia-northeast1-docker.pkg.dev/claude-radiannkswg/numbertales-mcp/numbertales-mcp
+  IMAGE: asia-northeast1-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/numbertales-mcp/numbertales-mcp
 
 jobs:
   build-and-deploy:
@@ -27,6 +28,20 @@ jobs:
       id-token: write   # Workload Identity Federation に必要
 
     steps:
+      # 未設定のまま進むと、MCP_ISSUER_URL が空 = OAuth 無効のサービスを配置してしまう
+      - name: Check deploy settings
+        env:
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          MCP_ISSUER_URL: ${{ secrets.MCP_ISSUER_URL }}
+          GCS_BUCKET: ${{ secrets.GCS_BUCKET }}
+        run: |
+          for name in GCP_PROJECT_ID MCP_ISSUER_URL GCS_BUCKET; do
+            if [ -z "${!name}" ]; then
+              echo "::error::リポジトリのシークレット ${name} が未設定です (docs/mcp-server.md 7.2)"
+              exit 1
+            fi
+          done
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -65,7 +80,7 @@ jobs:
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
         with:
-          project_id: claude-radiannkswg
+          project_id: ${{ env.PROJECT_ID }}
 
       # ── Cloud Run デプロイ ───────────────────────────────────────
       - name: Deploy to Cloud Run
@@ -85,10 +100,11 @@ jobs:
           env_vars: |
             MCP_TRANSPORT=streamable-http
             OUTPUT_SINK=drive
-            MCP_ISSUER_URL=https://generators-ai-amotdscyfq-an.a.run.app
-            GCS_BUCKET=generators-ai-outputs
+            MCP_ISSUER_URL=${{ secrets.MCP_ISSUER_URL }}
+            GCS_BUCKET=${{ secrets.GCS_BUCKET }}
             GCS_PREFIX=numbertales
           secrets: |
+            MCP_AUTH_PASSPHRASE=MCP_AUTH_PASSPHRASE:latest
             GEMINI_API_KEY=GEMINI_API_KEY:latest
             OPENAI_API_KEY=OPENAI_API_KEY:latest
             CANVA_ACCESS_TOKEN=CANVA_ACCESS_TOKEN:latest
@@ -100,7 +116,6 @@ jobs:
             DRIVE_CLIENT_SECRET=DRIVE_CLIENT_SECRET:latest
             DRIVE_REFRESH_TOKEN=DRIVE_REFRESH_TOKEN:latest
 
-      - name: Show deployed URL
-        run: |
-          echo "MCP server deployed!"
-          echo "Cloud Run URL: $(gcloud run services describe ${{ env.SERVICE }} --region ${{ env.REGION }} --format='value(status.url)')"
+      # コネクタの URL は公開のログに出さない (確認は gcloud run services describe で行う)
+      - name: Done
+        run: echo "MCP server deployed."
