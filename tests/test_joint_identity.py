@@ -210,3 +210,80 @@ def test_colour_check_is_told_what_not_to_report(tmp_path):
     for expected in ("そのキャラクター自身の単体レンダーとは別の色相", "明るさや彩度だけの差 (銀と銀白、濃淡)",
                      "閉じた目や隠れて見えない部位", "そのキャラクターの単体レンダーに無い部位"):
         assert expected in texts[0], expected
+
+
+def test_rejected_composition_rough_is_redrawn_once(tmp_path, monkeypatch):
+    # 2026-11-21 の確認 (#35 の配置後) で、構図ラフ 2 枚のうち 1 枚が検査に落ち、完成が 1 枚だけになった
+    roughs = [_png(tmp_path / "comp_0.png"), _png(tmp_path / "comp_1.png"), _png(tmp_path / "comp_2.png")]
+    verdicts = {"comp_0.png": {"mixed": ["20(ハツカ) に バイナ の 試用ラベル"], "skipped": False},
+                "comp_1.png": {"mixed": [], "skipped": False},
+                "comp_2.png": {"mixed": [], "skipped": True},
+                "redo_0.png": {"mixed": [], "skipped": False}}
+    monkeypatch.setattr(image_pipeline, "check_joint_identity_mixing",
+                        lambda image, cast, renders=None: verdicts[Path(image).name])
+    asked: list[tuple[int, list[str]]] = []
+
+    def redraw(index, found):
+        asked.append((index, found))
+        return [_png(tmp_path / f"redo_{index}.png")]
+
+    guides = image_pipeline._checked_guides(roughs, [], [], redraw=redraw)
+    # 指摘のあった 1 枚だけを、指摘を添えて描き直す。検査できなかった 1 枚は描き直さない
+    assert asked == [(0, ["20(ハツカ) に バイナ の 試用ラベル"])]
+    assert [path.name for path in guides] == ["redo_0.png", "comp_1.png"]
+    # 描き直しても指摘が残れば使わない。描き直しに失敗しても、ほかの構図ラフは使う
+    verdicts["redo_0.png"] = {"mixed": ["体数: 3 体。2 体を描く"], "skipped": False}
+    assert [path.name for path in image_pipeline._checked_guides(roughs, [], [], redraw=redraw)] == ["comp_1.png"]
+
+    def failing(index, found):
+        raise RuntimeError("generation failed")
+
+    assert [path.name for path in image_pipeline._checked_guides(roughs, [], [], redraw=failing)] == ["comp_1.png"]
+
+
+def test_empty_first_composition_rough_keeps_second_variant(tmp_path, monkeypatch):
+    # 先頭の生成が空配列でも、残った 2 番目の構図ラフは variant=1 として再描画する
+    second = _png(tmp_path / "comp_1.png")
+    verdicts = {
+        "comp_1.png": {"mixed": ["斜め上からの寄りではなく正面引きになっている"], "skipped": False},
+        "redo_1.png": {"mixed": [], "skipped": False},
+    }
+    monkeypatch.setattr(image_pipeline, "check_joint_identity_mixing",
+                        lambda image, cast, renders=None: verdicts[Path(image).name])
+    asked: list[tuple[int, list[str]]] = []
+
+    def redraw(variant, found):
+        asked.append((variant, found))
+        return [_png(tmp_path / f"redo_{variant}.png")]
+
+    guides = image_pipeline._checked_guides([(second, 1)], [], [], redraw=redraw)
+    assert asked == [(1, ["斜め上からの寄りではなく正面引きになっている"])]
+    assert [path.name for path in guides] == ["redo_1.png"]
+
+
+def test_stage4_compares_accessory_colours_with_the_official_image(tmp_path, monkeypatch):
+    # 20 のコアフォルダの首輪は橙 (公式画像)。2026-11-21 の 2 回目の合同では、暗い首輪のラフが Stage 4 を通った
+    seen: dict = {}
+
+    class _Completions:
+        @staticmethod
+        def create(**kwargs):
+            seen.update(kwargs)
+            message = type("M", (), {"content": '{"violations": [], "missing": [], "composition_issues": []}'})
+            return type("R", (), {"choices": [type("C", (), {"message": message})]})
+
+    class _OpenAI:
+        def __init__(self, **_kwargs):
+            self.chat = type("Chat", (), {"completions": _Completions})
+
+    import openai
+
+    monkeypatch.setattr(openai, "OpenAI", _OpenAI)
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    cg._analyze_rough_with_openai(_png(tmp_path / "rough.png"), {"form": "corefolder", "char_name": "20(ハツカ)"},
+                                  ref_image_path=_png(tmp_path / "official.png"))
+    text = seen["messages"][1]["content"][0]["text"]
+    assert "「配色: <要素> が <検査対象での色> (原典は <色>)」" in text and "橙の首輪が黒" in text
+    # 原典の画像が無いときは、色を照らす基準が無いので求めない
+    cg._analyze_rough_with_openai(_png(tmp_path / "rough.png"), {"form": "corefolder", "char_name": "20(ハツカ)"})
+    assert "原典は <色>" not in seen["messages"][1]["content"][0]["text"]
