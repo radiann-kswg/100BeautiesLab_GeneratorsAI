@@ -182,3 +182,31 @@ def test_each_checked_composition_rough_gets_one_final(tmp_path, monkeypatch):
     assert image_pipeline._synth_plans(guides) == [(roughs[0], 1)]
     assert image_pipeline._synth_plans(roughs) == [(roughs[0], 1), (roughs[1], 1)]      # 上限は 2 枚
     assert image_pipeline._synth_plans([]) == [(None, 2)]           # ガイドが無ければ、ガイドなしで 2 枚
+
+
+def test_composition_roughs_get_different_composition_notes():
+    # 2026-11-21 の確認 (#34 の配置後) で、構図ラフ 2 枚がほぼ同じ構図になり、完成 2 枚も似た絵になった
+    first, second = (image_pipeline._comp_rough_variant_note(index) for index in range(2))
+    assert first != second and "引きの構図" in first and "斜め上から見下ろす" in second
+    for note in (first, second):
+        assert note.startswith("\n\n[この構図ラフの構図]") and "識別要素の持ち主は変えない" in note
+    # 依頼者が構図を指定したときは、その指定を守って寄り引きだけを変える
+    asked = [image_pipeline._comp_rough_variant_note(index, "横並びで正面から") for index in range(2)]
+    assert all("依頼の構図: 横並びで正面から。これを守り" in note for note in asked) and asked[0] != asked[1]
+    assert "斜め上から見下ろす" not in asked[1]
+
+
+def test_colour_check_is_told_what_not_to_report(tmp_path):
+    # 同じ確認で、配色の指摘 3 件がどれも誤検出だった (銀と銀白、閉じた瞳、ほかのキャラクターの首輪)
+    hatsuka = find_character(20, WORK)
+    texts: list[str] = []
+
+    def ask(system, content):
+        texts.extend(part["text"] for part in content if part["type"] == "text")
+        return {"mixed": []}
+
+    cg.check_joint_identity_mixing(_png(tmp_path / "joint.png"), [(hatsuka, "corefolder")], ask=ask,
+                                   renders=[_png(tmp_path / "render.png")])
+    for expected in ("そのキャラクター自身の単体レンダーとは別の色相", "明るさや彩度だけの差 (銀と銀白、濃淡)",
+                     "閉じた目や隠れて見えない部位", "そのキャラクターの単体レンダーに無い部位"):
+        assert expected in texts[0], expected

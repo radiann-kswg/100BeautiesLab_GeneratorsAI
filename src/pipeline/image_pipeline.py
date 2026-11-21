@@ -978,6 +978,26 @@ def _joint_ref_labels(
     return labels
 
 
+#: 構図ラフ 1 枚ごとの構図の指示。同じプロンプト・同じ参照で 2 枚描くと、ほぼ同じ構図が 2 枚できる
+#: (2026-11-21 の確認で、構図ラフどうしの差が完成画像どうしの差と同じだった)。場面の指定は変えない。
+_COMP_ROUGH_VARIANTS = (
+    "カメラは正面、目の高さ。全員の全身と周りの様子が入る、引きの構図。",
+    "カメラは斜め上から見下ろす。キャラクターに寄った構図。左右の並びは、最初に挙げたキャラクターを画面の右側に置く。",
+)
+
+
+def _comp_rough_variant_note(index: int, composition: str = "") -> str:
+    """構図ラフ ``index`` 枚目 (0 始まり) に足す構図の指示。依頼者が構図を指定していれば、寄り引きだけを変える。"""
+    if composition.strip():
+        hint = (f"依頼の構図: {composition.strip()}。これを守り、"
+                + ("全員の全身が入る引きの絵にする。", "キャラクターに寄った絵にする。")[index % 2])
+    else:
+        hint = _COMP_ROUGH_VARIANTS[index % len(_COMP_ROUGH_VARIANTS)]
+    return ("\n\n[この構図ラフの構図]\n"
+            f"- {hint}\n"
+            "- 場面の指定 (誰が何をしているか、キャラクターどうしの関係) と、識別要素の持ち主は変えない。")
+
+
 def _checked_guides(comp_rough_paths: list[Path], joint_cast: list[tuple[dict, str]],
                     renders: "list[Path | None]") -> list[Path]:
     """構図ラフのうち、体数と識別要素の持ち主が合っているものを、合成のガイドとして返す。
@@ -1371,18 +1391,21 @@ def _run_combined_pipeline(
         comp_ref_images = [per_char_roughs[n][0] for n in nums]
         comp_rough_prompt = _build_multi_char_composition_prompt(records, forms_map, scene)
         try:
-            comp_rough_paths = _compose_multi_char(
-                records[0], primary_form,
-                char_renders=comp_ref_images,
-                composition_prompt=comp_rough_prompt,
-                synth_dir=comp_rough_dir,
-                work_key=work_key,
-                count=_STAGE3_COMP_ROUGH_COUNT,
-                detail_refs=[p for n in nums for p in char_data_map[n]["spec"].get("detail_reference_paths", [])],
-                ref_labels=_joint_ref_labels(
-                    records, comp_ref_images,
-                    [char_data_map[n]["spec"].get("detail_reference_paths", []) for n in nums]),
-            )
+            for variant in range(_STAGE3_COMP_ROUGH_COUNT):     # 1 枚ずつ、別の構図の指示を足して描く
+                if variant:
+                    time.sleep(float(os.environ.get("GEMINI_IMAGE_SLEEP", "6")))   # レートリミット対策
+                comp_rough_paths += _compose_multi_char(
+                    records[0], primary_form,
+                    char_renders=comp_ref_images,
+                    composition_prompt=comp_rough_prompt + _comp_rough_variant_note(variant, composition),
+                    synth_dir=comp_rough_dir,
+                    work_key=work_key,
+                    count=1,
+                    detail_refs=[p for n in nums for p in char_data_map[n]["spec"].get("detail_reference_paths", [])],
+                    ref_labels=_joint_ref_labels(
+                        records, comp_ref_images,
+                        [char_data_map[n]["spec"].get("detail_reference_paths", []) for n in nums]),
+                )
             print(f"  [Stage3-CompRough] {len(comp_rough_paths)} 枚生成完了")
         except Exception as err:
             print(f"  [WARN] Stage3-CompRough: {type(err).__name__}: {err}")
